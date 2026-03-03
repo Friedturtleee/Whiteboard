@@ -1,0 +1,141 @@
+<!DOCTYPE html>
+<html lang="zh-TW">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>CP Whiteboard — 競程白板</title>
+    <link rel="stylesheet" href="css/colors.css">
+    <link rel="stylesheet" href="css/main.css">
+    <link rel="stylesheet" href="css/toolbar.css">
+    <link rel="stylesheet" href="css/panels.css">
+</head>
+<body>
+    <!-- Main Canvas -->
+    <canvas id="main-canvas"></canvas>
+    <!-- Text editing overlay -->
+    <textarea id="text-edit-overlay"></textarea>
+
+    <!-- Top Bar (zoom & actions) -->
+    <div id="top-bar">
+        <button class="top-bar-btn" id="btn-undo" data-tooltip="復原 (Ctrl+Z)">
+            <svg viewBox="0 0 24 24"><path d="M9 14L4 9l5-5"/><path d="M4 9h10.5a5.5 5.5 0 0 1 0 11H11"/></svg>
+        </button>
+        <button class="top-bar-btn" id="btn-redo" data-tooltip="重做 (Ctrl+Shift+Z)">
+            <svg viewBox="0 0 24 24"><path d="M15 14l5-5-5-5"/><path d="M20 9H9.5a5.5 5.5 0 0 0 0 11H13"/></svg>
+        </button>
+        <span style="width:1px;height:20px;background:var(--border-color)"></span>
+        <button class="top-bar-btn" id="btn-zoom-out" data-tooltip="縮小">
+            <svg viewBox="0 0 24 24"><line x1="5" y1="12" x2="19" y2="12"/></svg>
+        </button>
+        <span class="zoom-display" id="zoom-display" data-tooltip="點擊重置">100%</span>
+        <button class="top-bar-btn" id="btn-zoom-in" data-tooltip="放大">
+            <svg viewBox="0 0 24 24"><line x1="12" y1="5" x2="12" y2="19"/><line x1="5" y1="12" x2="19" y2="12"/></svg>
+        </button>
+        <span style="width:1px;height:20px;background:var(--border-color)"></span>
+        <button class="top-bar-btn" id="btn-export-json" data-tooltip="匯出 JSON">
+            <svg viewBox="0 0 24 24"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" y1="15" x2="12" y2="3"/></svg>
+        </button>
+        <button class="top-bar-btn" id="btn-import-json" data-tooltip="匯入 JSON">
+            <svg viewBox="0 0 24 24"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="17 8 12 3 7 8"/><line x1="12" y1="3" x2="12" y2="15"/></svg>
+        </button>
+        <button class="top-bar-btn" id="btn-export-png" data-tooltip="匯出 PNG">
+            <svg viewBox="0 0 24 24"><rect x="3" y="3" width="18" height="18" rx="2"/><circle cx="8.5" cy="8.5" r="1.5"/><path d="M21 15l-5-5L5 21"/></svg>
+        </button>
+    </div>
+
+    <!-- Left Toolbar -->
+    <div id="toolbar">
+        <button class="toolbar-btn active" data-tool="select" data-tooltip="選取 (V)">
+            <svg viewBox="0 0 24 24"><path d="M4 4l7 19 3-8 8-3z"/></svg>
+        </button>
+        <button class="toolbar-btn" data-tool="pan" data-tooltip="平移 (H)">
+            <svg viewBox="0 0 24 24"><path d="M12 2l0 20M2 12l20 0M12 2l-3 3m3-3l3 3M12 22l-3-3m3 3l3-3M2 12l3-3m-3 3l3 3M22 12l-3-3m3 3l-3 3"/></svg>
+        </button>
+        <div class="toolbar-separator"></div>
+        <button class="toolbar-btn" data-tool="rectangle" data-tooltip="矩形 (R)">
+            <svg viewBox="0 0 24 24"><rect x="3" y="5" width="18" height="14" rx="1"/></svg>
+        </button>
+        <button class="toolbar-btn" data-tool="circle" data-tooltip="圓形 (C)">
+            <svg viewBox="0 0 24 24"><circle cx="12" cy="12" r="9"/></svg>
+        </button>
+        <button class="toolbar-btn" data-tool="line" data-tooltip="線段 (L)">
+            <svg viewBox="0 0 24 24"><line x1="5" y1="19" x2="19" y2="5"/></svg>
+        </button>
+        <button class="toolbar-btn" data-tool="arrow" data-tooltip="箭頭 (A)">
+            <svg viewBox="0 0 24 24"><line x1="5" y1="19" x2="19" y2="5"/><polyline points="10 5 19 5 19 14"/></svg>
+        </button>
+        <button class="toolbar-btn" data-tool="text" data-tooltip="文字 (T)">
+            <svg viewBox="0 0 24 24"><polyline points="4 7 4 4 20 4 20 7"/><line x1="12" y1="4" x2="12" y2="20"/><line x1="8" y1="20" x2="16" y2="20"/></svg>
+        </button>
+        <div class="toolbar-separator"></div>
+        <button class="toolbar-btn" data-tool="matrix" data-tooltip="矩陣">
+            <svg viewBox="0 0 24 24"><rect x="3" y="3" width="7" height="7" rx="1"/><rect x="14" y="3" width="7" height="7" rx="1"/><rect x="3" y="14" width="7" height="7" rx="1"/><rect x="14" y="14" width="7" height="7" rx="1"/></svg>
+        </button>
+        <button class="toolbar-btn" data-tool="stack" data-tooltip="堆疊">
+            <svg viewBox="0 0 24 24"><rect x="5" y="14" width="14" height="4" rx="1"/><rect x="5" y="8" width="14" height="4" rx="1"/><rect x="5" y="2" width="14" height="4" rx="1"/></svg>
+        </button>
+        <button class="toolbar-btn" data-tool="queue" data-tooltip="佇列">
+            <svg viewBox="0 0 24 24"><rect x="2" y="8" width="5" height="8" rx="1"/><rect x="9" y="8" width="5" height="8" rx="1"/><rect x="16" y="8" width="5" height="8" rx="1"/><path d="M23 12l-2-2m2 2l-2 2"/></svg>
+        </button>
+        <div class="toolbar-separator"></div>
+        <button class="toolbar-btn" data-tool="tree" data-tooltip="樹">
+            <svg viewBox="0 0 24 24"><circle cx="12" cy="5" r="2.5"/><circle cx="6" cy="14" r="2.5"/><circle cx="18" cy="14" r="2.5"/><line x1="12" y1="7.5" x2="6" y2="11.5"/><line x1="12" y1="7.5" x2="18" y2="11.5"/></svg>
+        </button>
+        <button class="toolbar-btn" data-tool="graph" data-tooltip="圖論">
+            <svg viewBox="0 0 24 24"><circle cx="5" cy="6" r="2.5"/><circle cx="19" cy="6" r="2.5"/><circle cx="5" cy="18" r="2.5"/><circle cx="19" cy="18" r="2.5"/><line x1="7.5" y1="6" x2="16.5" y2="6"/><line x1="5" y1="8.5" x2="5" y2="15.5"/><line x1="19" y1="8.5" x2="19" y2="15.5"/><line x1="7.5" y1="18" x2="16.5" y2="18"/><line x1="7" y1="7.5" x2="17" y2="16.5"/></svg>
+        </button>
+    </div>
+
+    <!-- Property Panel (right) -->
+    <div id="property-panel">
+        <div class="panel-section">
+            <div class="panel-section-title">位置 & 大小</div>
+            <div class="panel-row"><label>X</label><input type="number" id="prop-x"></div>
+            <div class="panel-row"><label>Y</label><input type="number" id="prop-y"></div>
+            <div class="panel-row"><label>寬</label><input type="number" id="prop-w" min="1"></div>
+            <div class="panel-row"><label>高</label><input type="number" id="prop-h" min="1"></div>
+            <div class="panel-row"><label>旋轉</label><input type="number" id="prop-rot" min="-360" max="360" step="1">°</div>
+        </div>
+        <div class="panel-section">
+            <div class="panel-section-title">色彩</div>
+            <div class="color-grid" id="color-grid"></div>
+        </div>
+        <div class="panel-section">
+            <div class="panel-section-title">樣式</div>
+            <div class="panel-row">
+                <label>透明度</label>
+                <input type="range" id="prop-opacity" min="0" max="100" value="100">
+                <span class="range-value" id="prop-opacity-val">100%</span>
+            </div>
+            <div class="panel-row">
+                <label>飽和度</label>
+                <input type="range" id="prop-saturation" min="0" max="100" value="100">
+                <span class="range-value" id="prop-saturation-val">100%</span>
+            </div>
+            <div class="panel-row">
+                <label>線寬</label>
+                <input type="range" id="prop-stroke-width" min="1" max="10" value="2">
+                <span class="range-value" id="prop-stroke-width-val">2</span>
+            </div>
+        </div>
+    </div>
+
+    <!-- Layer Panel (bottom-right) -->
+    <div id="layer-panel">
+        <div class="layer-panel-header">
+            <span>圖層</span>
+            <div>
+                <button id="layer-up" title="上移">↑</button>
+                <button id="layer-down" title="下移">↓</button>
+            </div>
+        </div>
+        <div class="layer-list" id="layer-list"></div>
+    </div>
+
+    <!-- Hidden file input for JSON import -->
+    <input type="file" id="json-file-input" accept=".json" style="display:none">
+
+    <!-- JS Modules -->
+    <script type="module" src="js/app.js"></script>
+</body>
+</html>

@@ -1,0 +1,36 @@
+/* ===== 16 Muted Base Colors ===== */
+:root {
+    --color-1:  hsl(0,   40%, 50%);   /* 紅 */
+    --color-2:  hsl(25,  40%, 50%);   /* 橙 */
+    --color-3:  hsl(45,  40%, 50%);   /* 黃 */
+    --color-4:  hsl(75,  35%, 45%);   /* 黃綠 */
+    --color-5:  hsl(120, 30%, 45%);   /* 綠 */
+    --color-6:  hsl(165, 30%, 45%);   /* 青綠 */
+    --color-7:  hsl(190, 35%, 48%);   /* 青 */
+    --color-8:  hsl(210, 35%, 50%);   /* 天藍 */
+    --color-9:  hsl(235, 30%, 50%);   /* 藍 */
+    --color-10: hsl(260, 30%, 50%);   /* 靛 */
+    --color-11: hsl(285, 30%, 50%);   /* 紫 */
+    --color-12: hsl(320, 30%, 50%);   /* 粉紫 */
+    --color-13: hsl(345, 35%, 50%);   /* 粉紅 */
+    --color-14: hsl(30,  25%, 40%);   /* 棕 */
+    --color-15: hsl(0,   0%,  75%);   /* 淺灰 */
+    --color-16: hsl(0,   0%,  95%);   /* 白 */
+
+    /* Theme */
+    --bg-primary:   #1e1e1e;
+    --bg-secondary: #252526;
+    --bg-tertiary:  #2d2d2d;
+    --bg-hover:     #3a3a3a;
+    --bg-active:    #4a4a4a;
+    --border-color: #404040;
+    --text-primary: #e0e0e0;
+    --text-secondary: #a0a0a0;
+    --text-muted:   #707070;
+    --accent:       hsl(210, 35%, 50%);
+    --accent-hover: hsl(210, 40%, 58%);
+    --grid-color:   rgba(200, 200, 200, 0.08);
+    --grid-color-major: rgba(200, 200, 200, 0.15);
+    --selection-color: rgba(80, 140, 200, 0.25);
+    --selection-border: rgba(80, 140, 200, 0.7);
+}
