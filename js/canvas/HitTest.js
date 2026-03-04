@@ -20,6 +20,18 @@ export class HitTest {
      * Returns: { type: 'resize'|'rotate', index, cursor } or null.
      */
     static hitTestHandles(el, wx, wy, camera) {
+        // ── Line / Arrow: only two endpoint handles ──────────────────────────
+        if (el.shapeType === 'line' || el.shapeType === 'arrow') {
+            const tol = 8 / camera.zoom;
+            const x1 = el.x,               y1 = el.y;
+            const x2 = el.x + el.width,    y2 = el.y + el.height;
+            if (Math.hypot(wx - x1, wy - y1) < tol)
+                return { type: 'endpoint', index: 0, cursor: 'crosshair' };
+            if (Math.hypot(wx - x2, wy - y2) < tol)
+                return { type: 'endpoint', index: 1, cursor: 'crosshair' };
+            return null;
+        }
+
         const bounds = el.getBounds();
         if (!bounds) return null;
         const tol = 6 / camera.zoom;

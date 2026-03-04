@@ -31,6 +31,23 @@ export class Element {
         return { x: this.x, y: this.y, w: this.width, h: this.height };
     }
 
+    /**
+     * Returns connection port positions in world coords, for line/arrow snapping.
+     * Each port: { id, x, y }
+     * Default: center + 4 cardinal points. Override for special shapes.
+     */
+    getConnectionPorts() {
+        const b = this.getBounds();
+        const cx = b.x + b.w / 2, cy = b.y + b.h / 2;
+        return [
+            { id: 'center', x: cx,          y: cy          },
+            { id: 'top',    x: cx,          y: b.y         },
+            { id: 'right',  x: b.x + b.w,  y: cy          },
+            { id: 'bottom', x: cx,          y: b.y + b.h   },
+            { id: 'left',   x: b.x,         y: cy          },
+        ];
+    }
+
     /** Point-in-element test (world coords). Override for non-rect shapes. */
     containsPoint(wx, wy, camera) {
         const b = this.getBounds();

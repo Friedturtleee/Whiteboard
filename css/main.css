@@ -155,3 +155,51 @@ label {
 [data-tooltip]:hover::after {
     opacity: 1;
 }
+
+/* ===== Loading Screen ===== */
+#loading-screen {
+    position: fixed;
+    inset: 0;
+    background: #1e1e1e;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    z-index: 99999;
+    transition: opacity 0.4s ease;
+}
+#loading-screen.fade-out {
+    opacity: 0;
+    pointer-events: none;
+}
+.loading-content {
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    gap: 16px;
+}
+.loading-logo {
+    font-family: 'Consolas', monospace;
+    font-size: 36px;
+    font-weight: 700;
+    color: hsl(210, 35%, 50%);
+    letter-spacing: 4px;
+}
+.loading-bar {
+    width: 160px;
+    height: 3px;
+    background: #333;
+    border-radius: 2px;
+    overflow: hidden;
+}
+.loading-fill {
+    height: 100%;
+    width: 0%;
+    background: hsl(210, 35%, 50%);
+    border-radius: 2px;
+    transition: width 0.3s ease;
+}
+.loading-text {
+    font-size: 12px;
+    color: #707070;
+    letter-spacing: 1px;
+}

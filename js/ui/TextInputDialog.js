@@ -80,6 +80,28 @@ export class TextInputDialog {
         textarea.placeholder = opts.placeholder || '在此輸入...';
         textarea.value = opts.defaultText || '';
 
+        // Real-time preview — debounced so heavy rebuilds (tree/graph) don't lag
+        let _previewTimer = null;
+        const _fireInput = () => {
+            if (!opts.onInput) return;
+            if (_previewTimer) clearTimeout(_previewTimer);
+            _previewTimer = setTimeout(() => {
+                const text = textarea.value;
+                const type = typeSelect ? typeSelect.value : null;
+                const mode = modeSelect ? modeSelect.value : null;
+                const directed = checkbox ? checkbox.checked : false;
+                opts.onInput(text, type, mode, directed);
+            }, 180);
+        };
+        textarea.addEventListener('input', _fireInput);
+        if (typeSelect)  typeSelect.addEventListener('change', _fireInput);
+        if (modeSelect)  modeSelect.addEventListener('change', _fireInput);
+        // checkbox change triggers immediate refresh
+        if (checkbox) checkbox.addEventListener('change', () => {
+            if (_previewTimer) clearTimeout(_previewTimer);
+            if (opts.onInput) opts.onInput(textarea.value, typeSelect?.value, modeSelect?.value, checkbox.checked);
+        });
+
         const actions = document.createElement('div');
         actions.className = 'modal-actions';
 

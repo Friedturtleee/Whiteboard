@@ -13,17 +13,22 @@
 export class TreeParser {
     /**
      * Parse parent-format text.
-     * Returns: { root, nodes: Map<value, { value, children: [], parent, x, y, meta }> }
+     * Returns: { root, nodes: Map<value, node>, error?: string }
      */
     static parseParentFormat(text) {
         const lines = text.trim().split('\n').map(l => l.trim()).filter(l => l);
-        if (lines.length === 0) return null;
+        if (lines.length === 0) return { root: null, nodes: new Map(), error: '輸入為空' };
 
         const n = parseInt(lines[0]);
-        if (isNaN(n)) return null;
+        if (isNaN(n)) return { root: null, nodes: new Map(), error: '第一行必須是節點數量 N' };
+
+        if (lines.length - 1 < n) {
+            return { root: null, nodes: new Map(), error: `需要 ${n} 行節點資料，但只有 ${lines.length - 1} 行` };
+        }
 
         const nodes = new Map();
         const childSet = new Set();
+        const errors = [];
 
         // Helper to get or create node
         const getNode = (val) => {
@@ -35,7 +40,10 @@ export class TreeParser {
 
         for (let i = 1; i < lines.length && i <= n; i++) {
             const parts = lines[i].split(/\s+/);
-            if (parts.length < 2) continue;
+            if (parts.length < 2) {
+                errors.push(`第 ${i + 1} 行格式錯誤，需要「值 父值」`);
+                continue;
+            }
             const nodeVal = parts[0];
             const parentVal = parts[1];
 
@@ -48,6 +56,13 @@ export class TreeParser {
                 const parentNode = getNode(parentVal);
                 node.parent = parentNode;
                 parentNode.children.push(node);
+            }
+        }
+
+        // Validate: check all parent references exist as declared nodes
+        for (const [val, node] of nodes) {
+            if (node.parent && !childSet.has(node.parent.value) && node.parent.children.length > 0) {
+                // Parent is only referenced implicitly — this is fine (it becomes root)
             }
         }
 
@@ -72,7 +87,22 @@ export class TreeParser {
             root = nodes.values().next().value;
         }
 
-        return { root, nodes };
+        // Check for cycles or disconnected nodes
+        if (root) {
+            const visited = new Set();
+            const countNodes = (n) => {
+                if (!n || visited.has(n.value)) return;
+                visited.add(n.value);
+                for (const c of n.children) countNodes(c);
+            };
+            countNodes(root);
+            if (visited.size < nodes.size) {
+                errors.push(`有 ${nodes.size - visited.size} 個節點無法從根到達（可能存在無效的父節點引用）`);
+            }
+        }
+
+        const error = errors.length > 0 ? errors.join('\n') : null;
+        return { root, nodes, error };
     }
 
     /**

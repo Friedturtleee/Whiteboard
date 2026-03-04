@@ -67,6 +67,41 @@ export class PropertyPanel {
         bind('prop-saturation', 'saturation', v => Number(v) / 100);
         bind('prop-stroke-width', 'strokeWidth', Number);
 
+        // Draw style selector (for shapes)
+        const drawStyleSelect = document.getElementById('prop-draw-style');
+        if (drawStyleSelect) {
+            drawStyleSelect.addEventListener('change', () => {
+                const val = drawStyleSelect.value;
+                const sel = this.app.selectionManager;
+                for (const el of sel.selectedElements) {
+                    if (el.drawStyle !== undefined) {
+                        const old = el.drawStyle;
+                        el.drawStyle = val;
+                        this.app.history.pushPropertyChange(el, 'drawStyle', old, val);
+                    }
+                }
+                this.app.renderer.markDirty();
+            });
+        }
+
+        // Cell size slider (for matrix)
+        const cellSizeInput = document.getElementById('prop-cell-size');
+        const cellSizeVal = document.getElementById('prop-cell-size-val');
+        if (cellSizeInput) {
+            cellSizeInput.addEventListener('input', () => {
+                const val = Number(cellSizeInput.value);
+                if (cellSizeVal) cellSizeVal.textContent = val;
+                const sel = this.app.selectionManager;
+                for (const el of sel.selectedElements) {
+                    if (el.cellSize !== undefined) {
+                        el.cellSize = val;
+                        el._updateSize();
+                    }
+                }
+                this.app.renderer.markDirty();
+            });
+        }
+
         // Range display values
         const rangeDisplay = (inputId, displayId, suffix = '') => {
             const inp = document.getElementById(inputId);
@@ -78,6 +113,23 @@ export class PropertyPanel {
         rangeDisplay('prop-opacity', 'prop-opacity-val', '%');
         rangeDisplay('prop-saturation', 'prop-saturation-val', '%');
         rangeDisplay('prop-stroke-width', 'prop-stroke-width-val', '');
+
+        // Font family selector (for text elements)
+        const fontSelect = document.getElementById('prop-font-family');
+        if (fontSelect) {
+            fontSelect.addEventListener('change', () => {
+                const val = fontSelect.value;
+                const sel = this.app.selectionManager;
+                for (const el of sel.selectedElements) {
+                    if (el.fontFamily !== undefined) {
+                        const old = el.fontFamily;
+                        el.fontFamily = val;
+                        this.app.history.pushPropertyChange(el, 'fontFamily', old, val);
+                    }
+                }
+                this.app.renderer.markDirty();
+            });
+        }
     }
 
     update() {
@@ -112,6 +164,48 @@ export class PropertyPanel {
         const swVal = document.getElementById('prop-stroke-width-val');
         if (swVal) swVal.textContent = el.strokeWidth;
 
+        // Draw style row: show only for shape elements
+        const drawStyleRow = document.getElementById('draw-style-row');
+        const drawStyleSelect = document.getElementById('prop-draw-style');
+        if (drawStyleRow && drawStyleSelect) {
+            if (el.drawStyle !== undefined) {
+                drawStyleRow.style.display = '';
+                drawStyleSelect.value = el.drawStyle;
+            } else {
+                drawStyleRow.style.display = 'none';
+            }
+        }
+
+        // Cell size row: show only for matrix elements
+        const cellSizeRow = document.getElementById('cell-size-row');
+        const cellSizeInput = document.getElementById('prop-cell-size');
+        const cellSizeValSpan = document.getElementById('prop-cell-size-val');
+        if (cellSizeRow) {
+            if (el.cellSize !== undefined) {
+                cellSizeRow.style.display = '';
+                if (cellSizeInput) cellSizeInput.value = el.cellSize;
+                if (cellSizeValSpan) cellSizeValSpan.textContent = el.cellSize;
+            } else {
+                cellSizeRow.style.display = 'none';
+            }
+        }
+
         this._updateColorSelection(el.color);
+
+        // Font family row: show only for text elements
+        const fontFamilyRow = document.getElementById('font-family-row');
+        const fontSelect = document.getElementById('prop-font-family');
+        if (fontFamilyRow) {
+            if (el.fontFamily !== undefined) {
+                fontFamilyRow.style.display = '';
+                if (fontSelect) {
+                    // Match current value (may not be in list — fallback gracefully)
+                    const opts = Array.from(fontSelect.options).map(o => o.value);
+                    fontSelect.value = opts.includes(el.fontFamily) ? el.fontFamily : opts[0];
+                }
+            } else {
+                fontFamilyRow.style.display = 'none';
+            }
+        }
     }
 }

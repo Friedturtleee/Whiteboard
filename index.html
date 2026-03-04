@@ -3,86 +3,90 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>CP Whiteboard — 競程白板</title>
+    <title>CP WhiteBoard — 競程白板</title>
+    <link rel="icon" type="image/svg+xml" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Crect x='2' y='4' width='28' height='24' rx='3' fill='%231e1e1e' stroke='%23e0e0e0' stroke-width='2'/%3E%3Ctext x='16' y='20' text-anchor='middle' fill='%2356b3e6' font-family='Consolas,monospace' font-size='14' font-weight='bold'%3ECP%3C/text%3E%3Cline x1='6' y1='26' x2='26' y2='26' stroke='%23888' stroke-width='1.5'/%3E%3Crect x='12' y='26' width='8' height='2' rx='1' fill='%23888'/%3E%3C/svg%3E">
     <link rel="stylesheet" href="css/colors.css">
     <link rel="stylesheet" href="css/main.css">
     <link rel="stylesheet" href="css/toolbar.css">
     <link rel="stylesheet" href="css/panels.css">
+    <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Material+Symbols+Outlined:opsz,wght,FILL,GRAD@20..48,100..700,0..1,-50..200">
+    <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500&family=Roboto:wght@300;400&family=Fira+Code:wght@300;400&family=JetBrains+Mono:wght@300;400&family=Space+Mono&display=swap">
 </head>
 <body>
+    <!-- Loading Screen -->
+    <div id="loading-screen">
+        <div class="loading-content">
+            <div class="loading-logo">CP</div>
+            <div class="loading-bar"><div class="loading-fill" id="loading-fill"></div></div>
+            <div class="loading-text" id="loading-text">載入中…</div>
+        </div>
+    </div>
+
     <!-- Main Canvas -->
     <canvas id="main-canvas"></canvas>
     <!-- Text editing overlay -->
     <textarea id="text-edit-overlay"></textarea>
 
-    <!-- Top Bar (zoom & actions) -->
+    <!-- Top Bar (actions) -->
     <div id="top-bar">
         <button class="top-bar-btn" id="btn-undo" data-tooltip="復原 (Ctrl+Z)">
-            <svg viewBox="0 0 24 24"><path d="M9 14L4 9l5-5"/><path d="M4 9h10.5a5.5 5.5 0 0 1 0 11H11"/></svg>
+            <span class="material-symbols-outlined">undo</span>
         </button>
         <button class="top-bar-btn" id="btn-redo" data-tooltip="重做 (Ctrl+Shift+Z)">
-            <svg viewBox="0 0 24 24"><path d="M15 14l5-5-5-5"/><path d="M20 9H9.5a5.5 5.5 0 0 0 0 11H13"/></svg>
-        </button>
-        <span style="width:1px;height:20px;background:var(--border-color)"></span>
-        <button class="top-bar-btn" id="btn-zoom-out" data-tooltip="縮小">
-            <svg viewBox="0 0 24 24"><line x1="5" y1="12" x2="19" y2="12"/></svg>
-        </button>
-        <span class="zoom-display" id="zoom-display" data-tooltip="點擊重置">100%</span>
-        <button class="top-bar-btn" id="btn-zoom-in" data-tooltip="放大">
-            <svg viewBox="0 0 24 24"><line x1="12" y1="5" x2="12" y2="19"/><line x1="5" y1="12" x2="19" y2="12"/></svg>
+            <span class="material-symbols-outlined">redo</span>
         </button>
         <span style="width:1px;height:20px;background:var(--border-color)"></span>
         <button class="top-bar-btn" id="btn-export-json" data-tooltip="匯出 JSON">
-            <svg viewBox="0 0 24 24"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" y1="15" x2="12" y2="3"/></svg>
+            <span class="material-symbols-outlined">download</span>
         </button>
         <button class="top-bar-btn" id="btn-import-json" data-tooltip="匯入 JSON">
-            <svg viewBox="0 0 24 24"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="17 8 12 3 7 8"/><line x1="12" y1="3" x2="12" y2="15"/></svg>
+            <span class="material-symbols-outlined">upload</span>
         </button>
         <button class="top-bar-btn" id="btn-export-png" data-tooltip="匯出 PNG">
-            <svg viewBox="0 0 24 24"><rect x="3" y="3" width="18" height="18" rx="2"/><circle cx="8.5" cy="8.5" r="1.5"/><path d="M21 15l-5-5L5 21"/></svg>
+            <span class="material-symbols-outlined">image</span>
         </button>
     </div>
 
     <!-- Left Toolbar -->
     <div id="toolbar">
         <button class="toolbar-btn active" data-tool="select" data-tooltip="選取 (V)">
-            <svg viewBox="0 0 24 24"><path d="M4 4l7 19 3-8 8-3z"/></svg>
+            <span class="material-symbols-outlined">near_me</span>
         </button>
         <button class="toolbar-btn" data-tool="pan" data-tooltip="平移 (H)">
-            <svg viewBox="0 0 24 24"><path d="M12 2l0 20M2 12l20 0M12 2l-3 3m3-3l3 3M12 22l-3-3m3 3l3-3M2 12l3-3m-3 3l3 3M22 12l-3-3m3 3l-3 3"/></svg>
+            <span class="material-symbols-outlined">pan_tool</span>
         </button>
         <div class="toolbar-separator"></div>
         <button class="toolbar-btn" data-tool="rectangle" data-tooltip="矩形 (R)">
-            <svg viewBox="0 0 24 24"><rect x="3" y="5" width="18" height="14" rx="1"/></svg>
+            <span class="material-symbols-outlined">rectangle</span>
         </button>
         <button class="toolbar-btn" data-tool="circle" data-tooltip="圓形 (C)">
-            <svg viewBox="0 0 24 24"><circle cx="12" cy="12" r="9"/></svg>
+            <span class="material-symbols-outlined">circle</span>
         </button>
         <button class="toolbar-btn" data-tool="line" data-tooltip="線段 (L)">
-            <svg viewBox="0 0 24 24"><line x1="5" y1="19" x2="19" y2="5"/></svg>
+            <span class="material-symbols-outlined">show_chart</span>
         </button>
         <button class="toolbar-btn" data-tool="arrow" data-tooltip="箭頭 (A)">
-            <svg viewBox="0 0 24 24"><line x1="5" y1="19" x2="19" y2="5"/><polyline points="10 5 19 5 19 14"/></svg>
+            <span class="material-symbols-outlined">trending_flat</span>
         </button>
         <button class="toolbar-btn" data-tool="text" data-tooltip="文字 (T)">
-            <svg viewBox="0 0 24 24"><polyline points="4 7 4 4 20 4 20 7"/><line x1="12" y1="4" x2="12" y2="20"/><line x1="8" y1="20" x2="16" y2="20"/></svg>
+            <span class="material-symbols-outlined">title</span>
         </button>
         <div class="toolbar-separator"></div>
         <button class="toolbar-btn" data-tool="matrix" data-tooltip="矩陣">
-            <svg viewBox="0 0 24 24"><rect x="3" y="3" width="7" height="7" rx="1"/><rect x="14" y="3" width="7" height="7" rx="1"/><rect x="3" y="14" width="7" height="7" rx="1"/><rect x="14" y="14" width="7" height="7" rx="1"/></svg>
+            <span class="material-symbols-outlined">grid_on</span>
         </button>
         <button class="toolbar-btn" data-tool="stack" data-tooltip="堆疊">
-            <svg viewBox="0 0 24 24"><rect x="5" y="14" width="14" height="4" rx="1"/><rect x="5" y="8" width="14" height="4" rx="1"/><rect x="5" y="2" width="14" height="4" rx="1"/></svg>
+            <span class="material-symbols-outlined">layers</span>
         </button>
         <button class="toolbar-btn" data-tool="queue" data-tooltip="佇列">
-            <svg viewBox="0 0 24 24"><rect x="2" y="8" width="5" height="8" rx="1"/><rect x="9" y="8" width="5" height="8" rx="1"/><rect x="16" y="8" width="5" height="8" rx="1"/><path d="M23 12l-2-2m2 2l-2 2"/></svg>
+            <span class="material-symbols-outlined">queue</span>
         </button>
         <div class="toolbar-separator"></div>
         <button class="toolbar-btn" data-tool="tree" data-tooltip="樹">
-            <svg viewBox="0 0 24 24"><circle cx="12" cy="5" r="2.5"/><circle cx="6" cy="14" r="2.5"/><circle cx="18" cy="14" r="2.5"/><line x1="12" y1="7.5" x2="6" y2="11.5"/><line x1="12" y1="7.5" x2="18" y2="11.5"/></svg>
+            <span class="material-symbols-outlined">account_tree</span>
         </button>
         <button class="toolbar-btn" data-tool="graph" data-tooltip="圖論">
-            <svg viewBox="0 0 24 24"><circle cx="5" cy="6" r="2.5"/><circle cx="19" cy="6" r="2.5"/><circle cx="5" cy="18" r="2.5"/><circle cx="19" cy="18" r="2.5"/><line x1="7.5" y1="6" x2="16.5" y2="6"/><line x1="5" y1="8.5" x2="5" y2="15.5"/><line x1="19" y1="8.5" x2="19" y2="15.5"/><line x1="7.5" y1="18" x2="16.5" y2="18"/><line x1="7" y1="7.5" x2="17" y2="16.5"/></svg>
+            <span class="material-symbols-outlined">hub</span>
         </button>
     </div>
 
@@ -90,11 +94,58 @@
     <div id="property-panel">
         <div class="panel-section">
             <div class="panel-section-title">位置 & 大小</div>
-            <div class="panel-row"><label>X</label><input type="number" id="prop-x"></div>
-            <div class="panel-row"><label>Y</label><input type="number" id="prop-y"></div>
-            <div class="panel-row"><label>寬</label><input type="number" id="prop-w" min="1"></div>
-            <div class="panel-row"><label>高</label><input type="number" id="prop-h" min="1"></div>
-            <div class="panel-row"><label>旋轉</label><input type="number" id="prop-rot" min="-360" max="360" step="1">°</div>
+            <div class="panel-row">
+                <div class="num-field">
+                    <span class="num-label">X</span>
+                    <input type="number" id="prop-x">
+                    <div class="num-spinners">
+                        <button onclick="const i=this.closest('.num-field').querySelector('input');i.stepUp();i.dispatchEvent(new Event('input'))">&#9652;</button>
+                        <button onclick="const i=this.closest('.num-field').querySelector('input');i.stepDown();i.dispatchEvent(new Event('input'))">&#9662;</button>
+                    </div>
+                </div>
+                <div class="num-field">
+                    <span class="num-label">Y</span>
+                    <input type="number" id="prop-y">
+                    <div class="num-spinners">
+                        <button onclick="const i=this.closest('.num-field').querySelector('input');i.stepUp();i.dispatchEvent(new Event('input'))">&#9652;</button>
+                        <button onclick="const i=this.closest('.num-field').querySelector('input');i.stepDown();i.dispatchEvent(new Event('input'))">&#9662;</button>
+                    </div>
+                </div>
+            </div>
+            <div class="panel-row">
+                <div class="num-field">
+                    <span class="num-label">W</span>
+                    <input type="number" id="prop-w" min="1">
+                    <div class="num-spinners">
+                        <button onclick="const i=this.closest('.num-field').querySelector('input');i.stepUp();i.dispatchEvent(new Event('input'))">&#9652;</button>
+                        <button onclick="const i=this.closest('.num-field').querySelector('input');i.stepDown();i.dispatchEvent(new Event('input'))">&#9662;</button>
+                    </div>
+                </div>
+                <div class="num-field">
+                    <span class="num-label">H</span>
+                    <input type="number" id="prop-h" min="1">
+                    <div class="num-spinners">
+                        <button onclick="const i=this.closest('.num-field').querySelector('input');i.stepUp();i.dispatchEvent(new Event('input'))">&#9652;</button>
+                        <button onclick="const i=this.closest('.num-field').querySelector('input');i.stepDown();i.dispatchEvent(new Event('input'))">&#9662;</button>
+                    </div>
+                </div>
+            </div>
+            <div class="panel-row">
+                <div class="num-field">
+                    <span class="num-label">∠</span>
+                    <input type="number" id="prop-rot" min="-360" max="360" step="1">
+                    <span class="num-suffix">°</span>
+                    <div class="num-spinners">
+                        <button onclick="const i=this.closest('.num-field').querySelector('input');i.stepUp();i.dispatchEvent(new Event('input'))">&#9652;</button>
+                        <button onclick="const i=this.closest('.num-field').querySelector('input');i.stepDown();i.dispatchEvent(new Event('input'))">&#9662;</button>
+                    </div>
+                </div>
+            </div>
+            <div class="panel-row" id="cell-size-row" style="display:none">
+                <label>格大小</label>
+                <input type="range" id="prop-cell-size" min="24" max="80" value="42">
+                <span class="range-value" id="prop-cell-size-val">42</span>
+            </div>
         </div>
         <div class="panel-section">
             <div class="panel-section-title">色彩</div>
@@ -102,6 +153,14 @@
         </div>
         <div class="panel-section">
             <div class="panel-section-title">樣式</div>
+            <div class="panel-row" id="draw-style-row" style="display:none">
+                <label>填充</label>
+                <select id="prop-draw-style">
+                    <option value="stroke">空心</option>
+                    <option value="fill">實心</option>
+                    <option value="dashed">虛線</option>
+                </select>
+            </div>
             <div class="panel-row">
                 <label>透明度</label>
                 <input type="range" id="prop-opacity" min="0" max="100" value="100">
@@ -117,16 +176,27 @@
                 <input type="range" id="prop-stroke-width" min="1" max="10" value="2">
                 <span class="range-value" id="prop-stroke-width-val">2</span>
             </div>
+            <div class="panel-row" id="font-family-row" style="display:none">
+                <label>字體</label>
+                <select id="prop-font-family" style="flex:1;font-size:11px;background:var(--bg-surface);color:var(--text-primary);border:1px solid var(--border);border-radius:4px;padding:2px 4px">
+                    <option value="Inter, sans-serif">Inter</option>
+                    <option value="Roboto, sans-serif">Roboto</option>
+                    <option value="JetBrains Mono, monospace">JetBrains Mono</option>
+                    <option value="Fira Code, monospace">Fira Code</option>
+                    <option value="Space Mono, monospace">Space Mono</option>
+                    <option value="Consolas, monospace">Consolas</option>
+                </select>
+            </div>
         </div>
     </div>
 
     <!-- Layer Panel (bottom-right) -->
-    <div id="layer-panel">
+    <div id="layer-panel" style="display:none">
         <div class="layer-panel-header">
             <span>圖層</span>
-            <div>
-                <button id="layer-up" title="上移">↑</button>
-                <button id="layer-down" title="下移">↓</button>
+            <div style="display:flex;gap:2px">
+                <button id="layer-up" title="上移"><span class="material-symbols-outlined">keyboard_arrow_up</span></button>
+                <button id="layer-down" title="下移"><span class="material-symbols-outlined">keyboard_arrow_down</span></button>
             </div>
         </div>
         <div class="layer-list" id="layer-list"></div>
@@ -135,7 +205,108 @@
     <!-- Hidden file input for JSON import -->
     <input type="file" id="json-file-input" accept=".json" style="display:none">
 
-    <!-- JS Modules -->
-    <script type="module" src="js/app.js"></script>
+    <!-- Bottom Zoom Bar -->
+    <div id="zoom-bar">
+        <button class="zoom-bar-btn" id="btn-zoom-out" data-tooltip="縮小 (Ctrl+-)">
+            <span class="material-symbols-outlined">remove</span>
+        </button>
+        <span class="zoom-display" id="zoom-display" data-tooltip="點擊重置縮放">100%</span>
+        <button class="zoom-bar-btn" id="btn-zoom-in" data-tooltip="放大 (Ctrl+=)">
+            <span class="material-symbols-outlined">add</span>
+        </button>
+    </div>
+
+    <!-- Right-click Context Menu -->
+    <div id="context-menu">
+        <div class="ctx-item" id="ctx-rename"><span class="material-symbols-outlined">edit</span> 重新命名</div>
+        <div class="ctx-item" id="ctx-duplicate"><span class="material-symbols-outlined">content_copy</span> 複製</div>
+        <div class="ctx-separator"></div>
+        <div class="ctx-item" id="ctx-layer-up"><span class="material-symbols-outlined">keyboard_arrow_up</span> 上移一層</div>
+        <div class="ctx-item" id="ctx-layer-down"><span class="material-symbols-outlined">keyboard_arrow_down</span> 下移一層</div>
+        <div class="ctx-separator" id="ctx-sep1"></div>
+        <div class="ctx-item" id="ctx-bring-front"><span class="material-symbols-outlined">flip_to_front</span> 移至最上層</div>
+        <div class="ctx-item" id="ctx-send-back"><span class="material-symbols-outlined">flip_to_back</span> 移至最下層</div>
+        <div class="ctx-separator" id="ctx-sep2"></div>
+        <div class="ctx-item ctx-danger" id="ctx-delete"><span class="material-symbols-outlined">delete</span> 刪除</div>
+    </div>
+
+    <!-- Inline Rename Input -->
+    <input type="text" id="rename-input" autocomplete="off">
+
+    <!-- Loading Screen Controller -->
+    <script>
+    (function() {
+        const screen  = document.getElementById('loading-screen');
+        const fill    = document.getElementById('loading-fill');
+        const text    = document.getElementById('loading-text');
+        let progress  = 0;
+        let appReady  = false;
+        let fontsReady = false;
+
+        function setProgress(p, msg) {
+            progress = Math.min(100, Math.max(progress, p));
+            if (fill) fill.style.width = progress + '%';
+            if (msg && text) text.textContent = msg;
+        }
+
+        function tryDismiss() {
+            if (!appReady || !fontsReady) return;
+            setProgress(100, '就緒');
+            setTimeout(() => {
+                if (screen) {
+                    screen.classList.add('fade-out');
+                    setTimeout(() => screen.remove(), 450);
+                }
+            }, 200);
+        }
+
+        // Step 1: Wait for Material Symbols font
+        setProgress(10, '載入圖示字型…');
+        const ICON_FONT = 'Material Symbols Outlined';
+        const iconCheck = new FontFace(ICON_FONT, 'local("Material Symbols Outlined")');
+
+        const fontTimeout = setTimeout(() => {
+            // Font CDN may be slow — proceed anyway
+            fontsReady = true;
+            setProgress(60, '字型載入逾時，繼續…');
+            tryDismiss();
+        }, 5000);
+
+        document.fonts.ready.then(() => {
+            clearTimeout(fontTimeout);
+            const loaded = [...document.fonts].some(f => f.family.includes('Material Symbols'));
+            if (loaded) {
+                setProgress(60, '圖示字型就緒');
+            } else {
+                setProgress(60, '圖示字型未找到');
+            }
+            fontsReady = true;
+            tryDismiss();
+        }).catch(() => {
+            clearTimeout(fontTimeout);
+            fontsReady = true;
+            setProgress(60, '字型載入失敗');
+            tryDismiss();
+        });
+
+        // Step 2: Load app module
+        setProgress(20, '載入應用程式…');
+        const script = document.createElement('script');
+        script.type = 'module';
+        script.src  = 'js/app.js';
+        script.onload = () => {
+            setProgress(90, '初始化…');
+            appReady = true;
+            tryDismiss();
+        };
+        script.onerror = () => {
+            setProgress(100, '⚠ 載入失敗');
+            if (text) text.style.color = '#e06c75';
+            appReady = true;
+            tryDismiss();
+        };
+        document.body.appendChild(script);
+    })();
+    </script>
 </body>
 </html>

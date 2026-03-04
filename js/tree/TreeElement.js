@@ -23,6 +23,7 @@ export class TreeElement extends Element {
      * Build tree from text input.
      * @param {string} text
      * @param {string} mode - 'parent' (node/parent format) or 'values' (auto-build)
+     * @returns {string|null} error message if validation fails, null on success
      */
     buildFromText(text, mode = 'parent') {
         this.inputText = text;
@@ -45,6 +46,8 @@ export class TreeElement extends Element {
             this.root = result.root;
             this._layoutTree();
         }
+
+        return result?.error || null;
     }
 
     _layoutTree() {
@@ -61,17 +64,39 @@ export class TreeElement extends Element {
         const pad = this.nodeRadius + 10;
         this.width = bounds.w + pad * 2;
         this.height = bounds.h + pad * 2;
-        // Shift root so tree content starts at (x + pad, y + pad)
-        // We use offset in draw instead
-        this._offsetX = this.x + pad - bounds.x;
-        this._offsetY = this.y + pad - bounds.y;
+        // Store relative offsets (independent of position) so they survive drag
+        this._relOffsetX = pad - bounds.x;
+        this._relOffsetY = pad - bounds.y;
+        this._offsetX = this.x + this._relOffsetX;
+        this._offsetY = this.y + this._relOffsetY;
+    }
+
+    /** Compute current offsets based on element position */
+    _getCurrentOffsets() {
+        if (this._relOffsetX !== undefined) {
+            return {
+                offsetX: this.x + this._relOffsetX,
+                offsetY: this.y + this._relOffsetY
+            };
+        }
+        return {
+            offsetX: this._offsetX || this.x,
+            offsetY: this._offsetY || this.y
+        };
     }
 
     draw(ctx, camera) {
+        this.applyStyle(ctx);
+        ctx.save();
+        if (this.rotation) {
+            const cx = this.x + this.width / 2, cy = this.y + this.height / 2;
+            ctx.translate(cx, cy);
+            ctx.rotate(this.rotation);
+            ctx.translate(-cx, -cy);
+        }
+
         if (!this.root) {
             // Draw placeholder
-            this.applyStyle(ctx);
-            ctx.save();
             ctx.strokeStyle = this.getEffectiveColor(this.color);
             ctx.lineWidth = 1;
             ctx.setLineDash([4, 4]);
@@ -90,20 +115,21 @@ export class TreeElement extends Element {
             nodeRadius: this.nodeRadius,
             color: this.getEffectiveColor(this.color),
             treeType: this.treeType,
-            offsetX: this._offsetX || this.x,
-            offsetY: this._offsetY || this.y,
+            offsetX: this._getCurrentOffsets().offsetX,
+            offsetY: this._getCurrentOffsets().offsetY,
             opacity: this.opacity,
             saturation: this.saturation
         });
+        ctx.restore();
     }
 
     containsPoint(wx, wy, camera) {
         // First check node hit
         if (this.root) {
+            const { offsetX, offsetY } = this._getCurrentOffsets();
             const hitNode = TreeRenderer.hitTestNode(this.root, wx, wy, {
                 nodeRadius: this.nodeRadius,
-                offsetX: this._offsetX || this.x,
-                offsetY: this._offsetY || this.y
+                offsetX, offsetY
             });
             if (hitNode) return true;
         }
@@ -116,17 +142,51 @@ export class TreeElement extends Element {
      */
     hitTestNode(wx, wy) {
         if (!this.root) return null;
+        const { offsetX, offsetY } = this._getCurrentOffsets();
         return TreeRenderer.hitTestNode(this.root, wx, wy, {
             nodeRadius: this.nodeRadius,
-            offsetX: this._offsetX || this.x,
-            offsetY: this._offsetY || this.y
+            offsetX, offsetY
         });
     }
 
+    /**
+     * Connection ports = the actual tree nodes in world coordinates.
+     */
+    getConnectionPorts() {
+        if (!this.root) return super.getConnectionPorts();
+        const ports = [];
+        const { offsetX, offsetY } = this._getCurrentOffsets();
+        const walk = (node) => {
+            if (!node) return;
+            ports.push({ id: `node_${node.value}`, x: offsetX + node.x, y: offsetY + node.y });
+            walk(node.left);
+            walk(node.right);
+            if (node.children) node.children.forEach(walk);
+        };
+        walk(this.root);
+        return ports;
+    }
+
     moveNodes(dx, dy) {
-        // Move all internal nodes when the whole element is dragged
-        this._offsetX = (this._offsetX || this.x) + dx;
-        this._offsetY = (this._offsetY || this.y) + dy;
+        // No-op: offsets are now computed from this.x/this.y via _getCurrentOffsets()
+    }
+
+    /**
+     * Called when element is resized via handle. Rescales tree node radius.
+     */
+    onResize(newW, newH) {
+        if (!this.root) return;
+        // Compute the tree's natural bounds at current nodeRadius
+        const bounds = {
+            w: this.width,
+            h: this.height
+        };
+        // Scale nodeRadius proportionally to the smaller dimension ratio
+        const scaleW = newW / (bounds.w || newW);
+        const scaleH = newH / (bounds.h || newH);
+        const scale = Math.min(scaleW, scaleH);
+        this.nodeRadius = Math.max(8, Math.min(40, Math.round(this.nodeRadius * scale)));
+        this._layoutTree();
     }
 
     serialize() {
@@ -135,8 +195,8 @@ export class TreeElement extends Element {
             treeType: this.treeType,
             nodeRadius: this.nodeRadius,
             inputText: this.inputText,
-            _offsetX: this._offsetX,
-            _offsetY: this._offsetY
+            _relOffsetX: this._relOffsetX,
+            _relOffsetY: this._relOffsetY
         };
     }
 
@@ -145,15 +205,15 @@ export class TreeElement extends Element {
         this.treeType = data.treeType || 'binary';
         this.nodeRadius = data.nodeRadius || 18;
         this.inputText = data.inputText || '';
-        this._offsetX = data._offsetX;
-        this._offsetY = data._offsetY;
+        this._relOffsetX = data._relOffsetX;
+        this._relOffsetY = data._relOffsetY;
         // Rebuild tree from saved text
         if (this.inputText) {
             this.buildFromText(this.inputText, this._detectMode(this.inputText));
-            // Restore offsets
-            if (data._offsetX !== undefined) {
-                this._offsetX = data._offsetX;
-                this._offsetY = data._offsetY;
+            // Restore relative offsets
+            if (data._relOffsetX !== undefined) {
+                this._relOffsetX = data._relOffsetX;
+                this._relOffsetY = data._relOffsetY;
             }
         }
         return this;

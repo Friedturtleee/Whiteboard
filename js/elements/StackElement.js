@@ -7,7 +7,7 @@ export class StackElement extends Element {
     constructor(x = 0, y = 0) {
         super('stack', x, y, 80, 200);
         this.items = [];           // bottom → top
-        this.cellHeight = 36;
+        this.cellHeight = 72;      // square: matches cell width (width - 8 = 72)
         this.fontSize = 14;
         this.maxDisplay = 8;
         this.label = 'Stack';
@@ -35,6 +35,16 @@ export class StackElement extends Element {
     _updateSize() {
         const count = Math.min(this.items.length, this.maxDisplay);
         this.height = Math.max(80, count * this.cellHeight + 40);
+    }
+
+    /**
+     * Called when element is resized via handle. Adjusts cell proportions.
+     */
+    onResize(newW, newH) {
+        // Keep cells square: cellHeight matches inner width
+        this.cellHeight = Math.max(24, newW - 8);
+        const count = Math.min(this.items.length, this.maxDisplay);
+        this.height = Math.max(newW, count * this.cellHeight + 40);
     }
 
     draw(ctx, camera) {

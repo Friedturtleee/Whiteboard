@@ -50,6 +50,11 @@
     stroke-linecap: round;
     stroke-linejoin: round;
 }
+.toolbar-btn .material-symbols-outlined {
+    font-size: 20px;
+    line-height: 1;
+    font-variation-settings: 'FILL' 0, 'wght' 300, 'GRAD' 0, 'opsz' 24;
+}
 
 .toolbar-separator {
     width: 26px;
@@ -78,9 +83,7 @@
 }
 
 #top-bar .zoom-display {
-    min-width: 48px;
-    text-align: center;
-    cursor: pointer;
+    display: none; /* zoom now in zoom-bar */
 }
 #top-bar .zoom-display:hover {
     color: var(--text-primary);
@@ -112,4 +115,72 @@
     stroke-width: 1.8;
     stroke-linecap: round;
     stroke-linejoin: round;
+}
+.top-bar-btn .material-symbols-outlined {
+    font-size: 18px;
+    line-height: 1;
+    font-variation-settings: 'FILL' 0, 'wght' 300, 'GRAD' 0, 'opsz' 24;
+}
+
+/* ===== Bottom Zoom Bar ===== */
+#zoom-bar {
+    position: fixed;
+    bottom: 16px;
+    left: 50%;
+    transform: translateX(-50%);
+    display: flex;
+    align-items: center;
+    gap: 4px;
+    background: var(--bg-secondary);
+    border: 1px solid var(--border-color);
+    border-radius: 20px;
+    padding: 4px 10px;
+    z-index: 200;
+    box-shadow: 0 2px 10px rgba(0,0,0,0.3);
+    font-size: 12px;
+    color: var(--text-secondary);
+    user-select: none;
+}
+
+.zoom-display {
+    min-width: 52px;
+    text-align: center;
+    cursor: pointer;
+    font-size: 12px;
+    color: var(--text-secondary);
+}
+.zoom-display:hover {
+    color: var(--text-primary);
+}
+
+.zoom-bar-btn {
+    width: 26px;
+    height: 26px;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    background: transparent;
+    border: none;
+    border-radius: 50%;
+    color: var(--text-secondary);
+    cursor: pointer;
+    padding: 0;
+    transition: background 0.12s;
+}
+.zoom-bar-btn:hover {
+    background: var(--bg-hover);
+    color: var(--text-primary);
+}
+.zoom-bar-btn svg {
+    width: 14px;
+    height: 14px;
+    fill: none;
+    stroke: currentColor;
+    stroke-width: 2;
+    stroke-linecap: round;
+}
+.zoom-bar-btn .material-symbols-outlined {
+    font-size: 18px;
+    line-height: 1;
+    font-variation-settings: 'FILL' 0, 'wght' 300, 'GRAD' 0, 'opsz' 24;
 }

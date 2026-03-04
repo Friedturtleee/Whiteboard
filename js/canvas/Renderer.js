@@ -59,7 +59,18 @@ export class Renderer {
         for (const el of elements) {
             if (el.hidden) continue;
             ctx.save();
-            el.draw(ctx, camera);
+            try {
+                el.draw(ctx, camera);
+            } catch (err) {
+                // Defensive: if one element fails to draw, don't break the whole canvas
+                console.error('[Renderer] draw error for element', el.id, el.type, err);
+                // Draw a red outline to indicate the broken element
+                ctx.strokeStyle = '#e06c75';
+                ctx.lineWidth = 2 / camera.zoom;
+                ctx.setLineDash([4 / camera.zoom, 4 / camera.zoom]);
+                ctx.strokeRect(el.x, el.y, el.width || 60, el.height || 40);
+                ctx.setLineDash([]);
+            }
             ctx.restore();
         }
 
@@ -101,6 +112,11 @@ export class Renderer {
             ctx.stroke();
             ctx.setLineDash([]);
         }
+
+        // Draw connection port hints when dragging a line endpoint
+        if (app.transform.mode === 'endpoint') {
+            this._drawConnectionPortHints(ctx);
+        }
     }
 
     _drawElementHandles(ctx, el) {
@@ -109,6 +125,35 @@ export class Renderer {
         const { camera } = this;
         const lw = 1.5 / camera.zoom;
         const hs = 5 / camera.zoom; // handle size (half)
+
+        // ── Line / Arrow: two circular endpoint handles only ──────────────
+        if (el.shapeType === 'line' || el.shapeType === 'arrow') {
+            const x1 = el.x,            y1 = el.y;
+            const x2 = el.x + el.width, y2 = el.y + el.height;
+            const r  = 5.5 / camera.zoom;
+
+            // Dashed guide line
+            ctx.strokeStyle = 'rgba(80,140,200,0.45)';
+            ctx.lineWidth = lw;
+            ctx.setLineDash([4 / camera.zoom, 3 / camera.zoom]);
+            ctx.beginPath(); ctx.moveTo(x1, y1); ctx.lineTo(x2, y2); ctx.stroke();
+            ctx.setLineDash([]);
+
+            // Draw P1 and P2 handles
+            for (let i = 0; i < 2; i++) {
+                const px = i === 0 ? x1 : x2;
+                const py = i === 0 ? y1 : y2;
+                const conn = i === 0 ? el.connections?.p1 : el.connections?.p2;
+                ctx.beginPath();
+                ctx.arc(px, py, r, 0, Math.PI * 2);
+                ctx.fillStyle = conn ? '#50c878' : '#ffffff';
+                ctx.fill();
+                ctx.strokeStyle = conn ? '#50c878' : 'rgba(80,140,200,0.9)';
+                ctx.lineWidth = lw;
+                ctx.stroke();
+            }
+            return; // skip standard bounding-box handles
+        }
 
         // Bounding box
         ctx.save();
@@ -159,5 +204,43 @@ export class Renderer {
         ctx.fill();
         ctx.stroke();
         ctx.restore();
+    }
+
+    /**
+     * Show all valid connection ports on non-line elements while dragging
+     * a line endpoint. Highlights the closest snap target.
+     */
+    _drawConnectionPortHints(ctx) {
+        const { camera, app } = this;
+        const draggingEl = app.transform.targetElement;
+
+        for (const el of app.elements) {
+            if (el === draggingEl) continue;
+            if (!el.getConnectionPorts) continue;
+            const ports = el.getConnectionPorts();
+            if (!ports || ports.length === 0) continue;
+
+            for (const port of ports) {
+                ctx.beginPath();
+                ctx.arc(port.x, port.y, 7 / camera.zoom, 0, Math.PI * 2);
+                ctx.fillStyle = 'rgba(80, 200, 120, 0.20)';
+                ctx.fill();
+                ctx.strokeStyle = 'rgba(80, 200, 120, 0.70)';
+                ctx.lineWidth = 1.5 / camera.zoom;
+                ctx.stroke();
+            }
+        }
+
+        // Highlight the snapped port (if any)
+        if (app._snapPreview) {
+            const sp = app._snapPreview;
+            ctx.beginPath();
+            ctx.arc(sp.x, sp.y, 9 / camera.zoom, 0, Math.PI * 2);
+            ctx.fillStyle = 'rgba(80, 200, 120, 0.55)';
+            ctx.fill();
+            ctx.strokeStyle = '#50c878';
+            ctx.lineWidth = 2 / camera.zoom;
+            ctx.stroke();
+        }
     }
 }

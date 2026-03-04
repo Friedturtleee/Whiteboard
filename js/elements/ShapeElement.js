@@ -8,12 +8,15 @@ export class ShapeElement extends Element {
         super(shapeType, x, y, w, h);
         this.shapeType = shapeType;
         this.label = shapeType;
-        // For line/arrow: we store x,y as start and width,height as end offset
+        this.drawStyle = 'stroke';  // 'stroke' (hollow) | 'fill' (solid) | 'dashed'
+        // For line/arrow: x,y = P1 (start); x+width,y+height = P2 (end)
+        // connections stores which element/port each endpoint is attached to
+        this.connections = { p1: null, p2: null }; // { elementId, portId } | null
     }
 
     draw(ctx, camera) {
         this.applyStyle(ctx);
-        const { x, y, width: w, height: h, rotation } = this;
+        const { x, y, width: w, height: h, rotation, drawStyle } = this;
 
         ctx.save();
         if (rotation && this.shapeType !== 'line' && this.shapeType !== 'arrow') {
@@ -23,9 +26,20 @@ export class ShapeElement extends Element {
             ctx.translate(-cx, -cy);
         }
 
+        // Apply dashed style
+        if (drawStyle === 'dashed') {
+            ctx.setLineDash([8, 4]);
+        }
+
+        // Determine fill behavior
+        const shouldFill = drawStyle === 'fill';
+
         switch (this.shapeType) {
             case 'rectangle':
-                if (this.fillColor !== 'transparent') {
+                if (shouldFill) {
+                    ctx.fillStyle = this.getEffectiveColor(this.color);
+                    ctx.fillRect(x, y, w, h);
+                } else if (this.fillColor !== 'transparent') {
                     ctx.fillRect(x, y, w, h);
                 }
                 ctx.strokeRect(x, y, w, h);
@@ -36,7 +50,12 @@ export class ShapeElement extends Element {
                 const rx = w / 2, ry = h / 2;
                 ctx.beginPath();
                 ctx.ellipse(cx, cy, Math.abs(rx), Math.abs(ry), 0, 0, Math.PI * 2);
-                if (this.fillColor !== 'transparent') ctx.fill();
+                if (shouldFill) {
+                    ctx.fillStyle = this.getEffectiveColor(this.color);
+                    ctx.fill();
+                } else if (this.fillColor !== 'transparent') {
+                    ctx.fill();
+                }
                 ctx.stroke();
                 break;
             }
@@ -45,7 +64,12 @@ export class ShapeElement extends Element {
                 const cx = x + w / 2, cy = y + h / 2;
                 ctx.beginPath();
                 ctx.ellipse(cx, cy, Math.abs(w / 2), Math.abs(h / 2), 0, 0, Math.PI * 2);
-                if (this.fillColor !== 'transparent') ctx.fill();
+                if (shouldFill) {
+                    ctx.fillStyle = this.getEffectiveColor(this.color);
+                    ctx.fill();
+                } else if (this.fillColor !== 'transparent') {
+                    ctx.fill();
+                }
                 ctx.stroke();
                 break;
             }
@@ -77,6 +101,7 @@ export class ShapeElement extends Element {
                 break;
             }
         }
+        ctx.setLineDash([]);
         ctx.restore();
     }
 
@@ -105,6 +130,12 @@ export class ShapeElement extends Element {
         return super.containsPoint(wx, wy, camera);
     }
 
+    getConnectionPorts() {
+        // Lines and arrows are connectors — they don't expose ports
+        if (this.shapeType === 'line' || this.shapeType === 'arrow') return [];
+        return super.getConnectionPorts();
+    }
+
     getBounds() {
         if (this.shapeType === 'line' || this.shapeType === 'arrow') {
             const x1 = this.x, y1 = this.y;
@@ -116,7 +147,8 @@ export class ShapeElement extends Element {
     }
 
     serialize() {
-        return { ...super.serialize(), shapeType: this.shapeType };
+        return { ...super.serialize(), shapeType: this.shapeType, drawStyle: this.drawStyle,
+                 connections: JSON.parse(JSON.stringify(this.connections)) };
     }
 
     static fromData(data) {

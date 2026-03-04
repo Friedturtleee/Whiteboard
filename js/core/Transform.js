@@ -13,6 +13,17 @@ export class Transform {
         this.startPositions = [];   // for multi-drag
     }
 
+    startEndpoint(wx, wy, epIndex, el) {
+        this.mode = 'endpoint';
+        this.epIndex = epIndex;
+        this.targetElement = el;
+        // Snapshot both endpoints
+        this._ep = {
+            p1x: el.x,              p1y: el.y,
+            p2x: el.x + el.width,  p2y: el.y + el.height
+        };
+    }
+
     startDrag(wx, wy) {
         const sel = this.app.selectionManager;
         this.mode = 'drag';
@@ -44,16 +55,23 @@ export class Transform {
     update(wx, wy, shiftKey = false) {
         if (!this.mode) return;
 
+        if (this.mode === 'endpoint') {
+            const el = this.targetElement;
+            const ep = this._ep;
+            if (this.epIndex === 0) {
+                el.x = wx; el.y = wy;
+                el.width  = ep.p2x - wx;
+                el.height = ep.p2y - wy;
+            } else {
+                el.x = ep.p1x; el.y = ep.p1y;
+                el.width  = wx - ep.p1x;
+                el.height = wy - ep.p1y;
+            }
+        }
+
         if (this.mode === 'drag') {
             const dx = wx - this.startX;
             const dy = wy - this.startY;
-            for (const sp of this.startPositions) {
-                sp.el.x = sp.x + dx;
-                sp.el.y = sp.y + dy;
-                if (sp.el.moveNodes) sp.el.moveNodes(sp.el.x - (sp.x), sp.el.y - (sp.y));
-            }
-            // Note: moveNodes called with cumulative, we need relative:
-            // Actually let's just set positions directly
             for (const sp of this.startPositions) {
                 sp.el.x = sp.x + dx;
                 sp.el.y = sp.y + dy;
@@ -98,6 +116,9 @@ export class Transform {
             // Enforce minimum size
             if (el.width < 10) { el.width = 10; }
             if (el.height < 10) { el.height = 10; }
+
+            // Notify element of resize so it can update internal layout
+            if (el.onResize) el.onResize(el.width, el.height);
         }
 
         if (this.mode === 'rotate') {
@@ -118,6 +139,11 @@ export class Transform {
         if (!this.mode) return null;
         const info = { mode: this.mode };
 
+        if (this.mode === 'endpoint') {
+            info.element = this.targetElement;
+            info.epIndex = this.epIndex;
+            info._ep = { ...this._ep };
+        }
         if (this.mode === 'drag') {
             info.elements = this.startPositions.map(sp => ({
                 el: sp.el,
@@ -144,6 +170,13 @@ export class Transform {
     }
 
     cancel() {
+        if (this.mode === 'endpoint' && this.targetElement) {
+            const el = this.targetElement;
+            const ep = this._ep;
+            el.x = ep.p1x; el.y = ep.p1y;
+            el.width  = ep.p2x - ep.p1x;
+            el.height = ep.p2y - ep.p1y;
+        }
         if (this.mode === 'drag') {
             for (const sp of this.startPositions) {
                 sp.el.x = sp.x;

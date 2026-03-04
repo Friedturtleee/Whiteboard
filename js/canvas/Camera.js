@@ -5,8 +5,8 @@ export class Camera {
     constructor() {
         this.x = 0;   // world-space offset
         this.y = 0;
-        this.zoom = 1;
-        this.minZoom = 0.1;
+        this.zoom = 1.5;   // 150實際用戶看到 100%
+        this.minZoom = 0.45;   // ~30% 顯示，防止文字被撠壓
         this.maxZoom = 10;
     }
 
@@ -39,7 +39,7 @@ export class Camera {
      */
     zoomAt(delta, sx, sy) {
         const oldZoom = this.zoom;
-        const factor = delta > 0 ? 1.1 : 1 / 1.1;
+        const factor = delta > 0 ? 1.075 : 1 / 1.075;  // 7.5% per step
         this.zoom = Math.min(this.maxZoom, Math.max(this.minZoom, this.zoom * factor));
 
         // Adjust pan so the world point under the cursor stays fixed
@@ -59,6 +59,6 @@ export class Camera {
     reset() {
         this.x = 0;
         this.y = 0;
-        this.zoom = 1;
+        this.zoom = 1.5;  // reset 回到預設縮放
     }
 }

@@ -63,13 +63,16 @@ export class TreeRenderer {
             }
         }
 
+        // Selected state highlight
+        const isSelected = node.meta && node.meta.selected;
+
         // Circle
         ctx.beginPath();
         ctx.arc(nx, ny, r, 0, Math.PI * 2);
-        ctx.fillStyle = fillColor;
+        ctx.fillStyle = isSelected ? 'hsl(210, 50%, 30%)' : fillColor;
         ctx.fill();
-        ctx.strokeStyle = strokeColor;
-        ctx.lineWidth = 2;
+        ctx.strokeStyle = isSelected ? 'hsl(210, 80%, 60%)' : strokeColor;
+        ctx.lineWidth = isSelected ? 3 : 2;
         ctx.stroke();
 
         // Value text

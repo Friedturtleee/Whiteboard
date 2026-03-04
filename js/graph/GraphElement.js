@@ -68,10 +68,17 @@ export class GraphElement extends Element {
     }
 
     draw(ctx, camera) {
+        this.applyStyle(ctx);
+        ctx.save();
+        if (this.rotation) {
+            const cx = this.x + this.width / 2, cy = this.y + this.height / 2;
+            ctx.translate(cx, cy);
+            ctx.rotate(this.rotation);
+            ctx.translate(-cx, -cy);
+        }
+
         if (this.nodes.size === 0 && this.edges.length === 0) {
             // Placeholder
-            this.applyStyle(ctx);
-            ctx.save();
             ctx.strokeStyle = this.getEffectiveColor(this.color);
             ctx.lineWidth = 1;
             ctx.setLineDash([4, 4]);
@@ -94,6 +101,7 @@ export class GraphElement extends Element {
             opacity: this.opacity,
             directed: this.directed
         });
+        ctx.restore();
     }
 
     containsPoint(wx, wy, camera) {
@@ -122,6 +130,22 @@ export class GraphElement extends Element {
             offsetX: this.x + 20,
             offsetY: this.y + 20
         });
+    }
+
+    /**
+     * Connection ports = the actual graph nodes in world coordinates.
+     */
+    getConnectionPorts() {
+        if (this.nodes.size === 0) return super.getConnectionPorts();
+        const ports = [];
+        for (const [id, node] of this.nodes) {
+            ports.push({
+                id: `node_${id}`,
+                x: this.x + 20 + node.x,
+                y: this.y + 20 + node.y
+            });
+        }
+        return ports;
     }
 
     moveNodes(dx, dy) {

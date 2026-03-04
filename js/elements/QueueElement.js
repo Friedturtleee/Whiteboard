@@ -7,7 +7,7 @@ export class QueueElement extends Element {
     constructor(x = 0, y = 0) {
         super('queue', x, y, 300, 60);
         this.items = [];
-        this.cellWidth = 50;
+        this.cellWidth = 44;       // square: matches cell height (height - 16 = 44)
         this.fontSize = 14;
         this.maxDisplay = 10;
         this.label = 'Queue';
@@ -33,7 +33,16 @@ export class QueueElement extends Element {
 
     _updateSize() {
         const count = Math.min(this.items.length, this.maxDisplay);
-        this.width = Math.max(120, count * this.cellWidth + 60);
+        this.width = Math.max(this.cellWidth, count * this.cellWidth);
+    }
+
+    /**
+     * Called when element is resized via handle. Adjusts cell proportions.
+     */
+    onResize(newW, newH) {
+        this.cellWidth = Math.max(24, newH - 16);
+        this._updateSize();
+        if (this.width < newW) this.width = newW; // allow stretching wider
     }
 
     draw(ctx, camera) {
@@ -61,7 +70,7 @@ export class QueueElement extends Element {
         ctx.textBaseline = 'middle';
 
         const displayItems = items.slice(0, this.maxDisplay);
-        const startX = x + 20;
+        const startX = x; // no left padding
 
         for (let i = 0; i < displayItems.length; i++) {
             const cx = startX + i * cellWidth + cellWidth / 2;
@@ -83,12 +92,13 @@ export class QueueElement extends Element {
         ctx.strokeStyle = this.getEffectiveColor('#808080');
         ctx.lineWidth = 1.5;
         const arrowY = y + h + 10;
+        const contentW = Math.max(cellWidth, displayItems.length * cellWidth);
         ctx.beginPath();
         ctx.moveTo(startX, arrowY);
-        ctx.lineTo(startX + displayItems.length * cellWidth, arrowY);
-        ctx.moveTo(startX + displayItems.length * cellWidth - 6, arrowY - 4);
-        ctx.lineTo(startX + displayItems.length * cellWidth, arrowY);
-        ctx.lineTo(startX + displayItems.length * cellWidth - 6, arrowY + 4);
+        ctx.lineTo(startX + contentW, arrowY);
+        ctx.moveTo(startX + contentW - 6, arrowY - 4);
+        ctx.lineTo(startX + contentW, arrowY);
+        ctx.lineTo(startX + contentW - 6, arrowY + 4);
         ctx.stroke();
 
         // Labels
@@ -97,7 +107,7 @@ export class QueueElement extends Element {
         ctx.textAlign = 'left';
         ctx.fillText('Front', startX, arrowY + 12);
         ctx.textAlign = 'right';
-        ctx.fillText('Back', startX + displayItems.length * cellWidth, arrowY + 12);
+        ctx.fillText('Back', startX + contentW, arrowY + 12);
 
         ctx.restore();
     }

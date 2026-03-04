@@ -33,8 +33,42 @@ export class MatrixElement extends Element {
         this.height = this.rows * this.cellSize + 20;
     }
 
+    /**
+     * Called when element is resized via handle. Recalculates cellSize from new dimensions.
+     * Only allows SHRINKING — dragging outward is ignored.
+     */
+    onResize(newW, newH) {
+        const newCellW = Math.floor((newW - 20) / this.cols);
+        const newCellH = Math.floor((newH - 20) / this.rows);
+        const proposed = Math.max(16, Math.min(newCellW, newCellH));
+        // Only shrink, never grow beyond current cell size
+        this.cellSize = Math.min(proposed, this.cellSize);
+        // Re-snap the element size to grid
+        this.width = this.cols * this.cellSize + 20;
+        this.height = this.rows * this.cellSize + 20;
+        // Scale font with cell size
+        this.fontSize = Math.max(13, Math.min(18, Math.floor(this.cellSize * 0.35)));
+    }
+
     setFromText(text) {
         this.inputText = text;
+
+        // Support dimension format: "3*5" or "3x5" or "3 * 5" → creates empty matrix
+        const dimMatch = text.trim().match(/^(\d+)\s*[*xX×]\s*(\d+)$/);
+        if (dimMatch) {
+            this.rows = parseInt(dimMatch[1]);
+            this.cols = parseInt(dimMatch[2]);
+            this.data = [];
+            for (let r = 0; r < this.rows; r++) {
+                this.data[r] = [];
+                for (let c = 0; c < this.cols; c++) {
+                    this.data[r][c] = 0;
+                }
+            }
+            this._updateSize();
+            return;
+        }
+
         const lines = text.trim().split('\n').map(l => l.trim()).filter(l => l);
         this.rows = lines.length;
         this.cols = 0;
@@ -116,6 +150,22 @@ export class MatrixElement extends Element {
         ctx.stroke();
 
         ctx.restore();
+    }
+
+    /**
+     * Hit test: returns { row, col } if (wx, wy) is inside a cell, or null.
+     */
+    hitTestCell(wx, wy) {
+        const pad = 10;
+        const localX = wx - this.x - pad;
+        const localY = wy - this.y - pad;
+        if (localX < 0 || localY < 0) return null;
+        const col = Math.floor(localX / this.cellSize);
+        const row = Math.floor(localY / this.cellSize);
+        if (row >= 0 && row < this.rows && col >= 0 && col < this.cols) {
+            return { row, col };
+        }
+        return null;
     }
 
     serialize() {

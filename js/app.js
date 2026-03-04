@@ -72,11 +72,17 @@ class App {
         this._bindWheel();
         this._bindKeyboard();
         this._bindTopBar();
+        this._bindContextMenu();
         this._bindResize();
 
         // ── Start Render Loop ───────────────────────────
         this.renderer.start();
         this._updateZoomDisplay();
+
+        // ── Autosave ─────────────────────────────────────
+        this._autosaveTimer = null;
+        this._skipAutosave = false;
+        this._tryLoadAutosave();
     }
 
     // ═════════════════════════════════════════════════════
@@ -84,8 +90,12 @@ class App {
     // ═════════════════════════════════════════════════════
     _resizeCanvas() {
         const dpr = window.devicePixelRatio || 1;
-        this.canvas.width = this.canvas.clientWidth * dpr;
-        this.canvas.height = this.canvas.clientHeight * dpr;
+        const w = this.canvas.clientWidth;
+        const h = this.canvas.clientHeight;
+        if (w > 0 && h > 0) {
+            this.canvas.width = w * dpr;
+            this.canvas.height = h * dpr;
+        }
     }
 
     _bindResize() {
@@ -111,7 +121,8 @@ class App {
     // ═════════════════════════════════════════════════════
     _updateZoomDisplay() {
         const el = document.getElementById('zoom-display');
-        if (el) el.textContent = Math.round(this.camera.zoom * 100) + '%';
+        // 150% 實際縮放展示為 100%
+        if (el) el.textContent = Math.round(this.camera.zoom / 1.5 * 100) + '%';
     }
 
     // ═════════════════════════════════════════════════════
@@ -150,10 +161,14 @@ class App {
             const file = e.target.files[0];
             if (!file) return;
             try {
+                this._skipAutosave = true;  // prevent immediate re-save during import
                 await Serializer.importJSON(this, file);
+                localStorage.removeItem('wb_autosave'); // clear stale cache
+                this._skipAutosave = false;
                 this._refreshUI();
                 this._toast('已匯入');
             } catch (err) {
+                this._skipAutosave = false;
                 this._toast('匯入失敗: ' + err.message);
             }
             e.target.value = '';
@@ -168,6 +183,7 @@ class App {
         this.layerPanel.update();
         this._updateZoomDisplay();
         this.renderer.markDirty();
+        this._autosave();
     }
 
     // ═════════════════════════════════════════════════════
@@ -192,8 +208,8 @@ class App {
         this.canvas.addEventListener('pointerup',   e => this._onPointerUp(e));
         this.canvas.addEventListener('dblclick',     e => this._onDoubleClick(e));
 
-        // Prevent context menu on canvas
-        this.canvas.addEventListener('contextmenu', e => e.preventDefault());
+        // Custom context menu (replaces browser default)
+        this.canvas.addEventListener('contextmenu', e => this._showContextMenu(e));
     }
 
     // ────────── Pointer Down ────────────────────────────
@@ -235,19 +251,9 @@ class App {
             return;
         }
 
-        // ── Data structures (click to place) ───────
-        if (['matrix', 'stack', 'queue'].includes(tool)) {
-            this._createDataStructure(tool, wx, wy);
-            return;
-        }
-
-        // ── Tree / Graph (click to place placeholder)
-        if (tool === 'tree') {
-            this._createTree(wx, wy);
-            return;
-        }
-        if (tool === 'graph') {
-            this._createGraph(wx, wy);
+        // ── Data structures & tree/graph: drag to size ──
+        if (['matrix', 'stack', 'queue', 'tree', 'graph'].includes(tool)) {
+            this._startCreating(tool, wx, wy);
             return;
         }
     }
@@ -270,13 +276,19 @@ class App {
 
         // ── Creating shape ─────────────────────────
         if (this._isCreating && this._creatingElement) {
-            this._updateCreating(wx, wy);
+            this.canvas.style.cursor = 'crosshair';
+            this._updateCreating(wx, wy, e.shiftKey);
             return;
         }
 
         // ── Transform (drag / resize / rotate) ─────
         if (this.transform.mode) {
             this.transform.update(wx, wy, e.shiftKey);
+            // Compute snap preview for endpoint drag
+            if (this.transform.mode === 'endpoint') {
+                this._snapPreview = this._findSnapPort(wx, wy, this.transform.targetElement);
+                this.renderer.markDirty();
+            }
             this._refreshUI();
             return;
         }
@@ -313,7 +325,7 @@ class App {
 
         // ── Finish creating shape ──────────────────
         if (this._isCreating && this._creatingElement) {
-            this._finishCreating();
+            this._finishCreating(e.shiftKey);
             return;
         }
 
@@ -321,14 +333,40 @@ class App {
         if (this.transform.mode) {
             const info = this.transform.finish();
             if (info) {
+                if (info.mode === 'endpoint') {
+                    const el = info.element;
+                    const snap = this._snapPreview;
+                    if (snap) {
+                        // Snap endpoint to connection port
+                        const ep = info._ep;
+                        if (info.epIndex === 0) {
+                            el.x = snap.x; el.y = snap.y;
+                            el.width  = ep.p2x - snap.x;
+                            el.height = ep.p2y - snap.y;
+                            el.connections.p1 = { elementId: snap.elementId, portId: snap.portId };
+                        } else {
+                            el.x = ep.p1x; el.y = ep.p1y;
+                            el.width  = snap.x - ep.p1x;
+                            el.height = snap.y - ep.p1y;
+                            el.connections.p2 = { elementId: snap.elementId, portId: snap.portId };
+                        }
+                    }
+                    this._snapPreview = null;
+                    this.renderer.markDirty();
+                }
                 if (info.mode === 'drag') {
                     const moves = info.elements.filter(m =>
                         m.fromX !== m.toX || m.fromY !== m.toY
                     );
-                    if (moves.length) this.history.pushMove(moves);
+                    if (moves.length) {
+                        this.history.pushMove(moves);
+                        // Update any lines connected to moved elements
+                        this._updateConnectedLines(moves.map(m => m.el.id));
+                    }
                 }
                 if (info.mode === 'resize') {
                     this.history.pushResize(info.element, info.fromBounds, info.toBounds);
+                    this._updateConnectedLines([info.element.id]);
                 }
                 if (info.mode === 'rotate') {
                     this.history.pushRotate(info.element, info.fromRotation, info.toRotation);
@@ -368,12 +406,27 @@ class App {
 
         // ── Matrix / Stack / Queue → input dialog ──
         if (['matrix', 'stack', 'queue'].includes(hit.type)) {
+            // For matrix: check if a specific cell was double-clicked
+            if (hit.type === 'matrix' && hit.hitTestCell) {
+                const cell = hit.hitTestCell(wx, wy);
+                if (cell) {
+                    this._editMatrixCell(hit, cell.row, cell.col);
+                    return;
+                }
+            }
             this._showDataStructureDialog(hit);
             return;
         }
 
-        // ── Tree → input dialog ────────────────────
+        // ── Tree → check if node hit first for inline edit, else input dialog ────
         if (hit.type === 'tree') {
+            if (hit.root) {
+                const treeNode = hit.hitTestNode(wx, wy);
+                if (treeNode) {
+                    this._editTreeNodeValue(hit, treeNode, wx, wy);
+                    return;
+                }
+            }
             this._showTreeDialog(hit);
             return;
         }
@@ -396,6 +449,14 @@ class App {
             const el = sel.selectedElements[0];
             const handle = HitTest.hitTestHandles(el, wx, wy, this.camera);
             if (handle) {
+                if (handle.type === 'endpoint') {
+                    // Disconnect old connection on this endpoint before dragging
+                    if (handle.index === 0) el.connections.p1 = null;
+                    else                    el.connections.p2 = null;
+                    this.transform.startEndpoint(wx, wy, handle.index, el);
+                    this.canvas.style.cursor = 'crosshair';
+                    return;
+                }
                 if (handle.type === 'resize') {
                     this.transform.startResize(wx, wy, handle.index, el);
                 } else if (handle.type === 'rotate') {
@@ -426,6 +487,16 @@ class App {
                         return;
                     }
                     // Single node drag (handled by transform as drag on the element)
+                }
+            }
+
+            // ── Tree node click → toggle selection state ─
+            if (hit.type === 'tree' && hit.root) {
+                const treeNode = hit.hitTestNode(wx, wy);
+                if (treeNode) {
+                    if (!treeNode.meta) treeNode.meta = {};
+                    treeNode.meta.selected = !treeNode.meta.selected;
+                    this.renderer.markDirty();
                 }
             }
 
@@ -470,52 +541,160 @@ class App {
     }
 
     // ═════════════════════════════════════════════════════
-    // Shape Creation (rectangle / circle / line / arrow)
+    // Shape Creation (rectangle / circle / line / arrow / matrix / stack / queue / tree / graph)
     // ═════════════════════════════════════════════════════
     _startCreating(tool, wx, wy) {
         this._isCreating = true;
         this._createStart = { wx, wy };
-        const el = new ShapeElement(tool, wx, wy, 0, 0);
+        this._creatingTool = tool;
+
+        // Build a preview ghost element
+        let el;
+        if (tool === 'matrix') {
+            el = new MatrixElement(wx, wy);
+            el.rows = 1; el.cols = 1;
+            el._initData(); // resets data and calls _updateSize
+        } else if (tool === 'stack') {
+            el = new StackElement(wx, wy);
+        } else if (tool === 'queue') {
+            el = new QueueElement(wx, wy);
+        } else if (tool === 'tree') {
+            el = new TreeElement(wx, wy);
+        } else if (tool === 'graph') {
+            el = new GraphElement(wx, wy);
+        } else {
+            el = new ShapeElement(tool, wx, wy, 0, 0);
+        }
         el.color = '#e0e0e0';
         this._creatingElement = el;
         this.elements.push(el);
         this.renderer.markDirty();
     }
 
-    _updateCreating(wx, wy) {
+    _updateCreating(wx, wy, shiftKey = false) {
         const el = this._creatingElement;
         const start = this._createStart;
-        if (el.shapeType === 'line' || el.shapeType === 'arrow') {
-            el.width = wx - start.wx;
-            el.height = wy - start.wy;
-        } else {
-            el.x = Math.min(start.wx, wx);
-            el.y = Math.min(start.wy, wy);
-            el.width = Math.abs(wx - start.wx);
-            el.height = Math.abs(wy - start.wy);
+        const tool = this._creatingTool;
+
+        let rawW = wx - start.wx;
+        let rawH = wy - start.wy;
+
+        if (tool === 'line' || tool === 'arrow') {
+            el.width = rawW;
+            el.height = rawH;
+            this.renderer.markDirty();
+            return;
         }
+
+        // For all other tools: compute bounding rect
+        let w = Math.abs(rawW);
+        let h = Math.abs(rawH);
+
+        // Shift → force square (or for matrix: snap to equal aspect)
+        if (shiftKey && tool !== 'matrix') {
+            const side = Math.max(w, h);
+            w = side; h = side;
+        }
+
+        // Minimum viable size
+        const minSize = 20;
+        w = Math.max(minSize, w);
+        h = Math.max(minSize, h);
+
+        el.x = rawW >= 0 ? start.wx : start.wx - w;
+        el.y = rawH >= 0 ? start.wy : start.wy - h;
+
+        if (tool === 'matrix') {
+            // Determine rows/cols from drag size, cell size ~40px
+            const cellMin = 28, cellMax = 80, cellIdeal = 40;
+            el.cols = Math.max(1, Math.round(w / cellIdeal));
+            el.rows = Math.max(1, Math.round(h / cellIdeal));
+            if (shiftKey) {
+                const side = Math.max(el.rows, el.cols);
+                el.rows = side; el.cols = side;
+            }
+            el.cellSize = Math.max(cellMin, Math.min(cellMax,
+                Math.min(Math.floor(w / el.cols), Math.floor(h / el.rows))
+            ));
+            el._initData(); // resizes data array and calls _updateSize
+            // Move the element so top-left stays anchored
+            el.x = rawW >= 0 ? start.wx : start.wx - el.width;
+            el.y = rawH >= 0 ? start.wy : start.wy - el.height;
+        } else if (tool === 'stack') {
+            el.width = w;
+            el.cellHeight = Math.max(24, w - 8);
+            el.height = h;
+        } else if (tool === 'queue') {
+            el.height = h;
+            el.cellWidth = Math.max(24, h - 16);
+            el.width = w;
+        } else if (tool === 'tree' || tool === 'graph') {
+            el.width = w;
+            el.height = h;
+        } else {
+            // Shape (rectangle, circle, ellipse)
+            el.width = w;
+            el.height = h;
+        }
+
         this.renderer.markDirty();
     }
 
-    _finishCreating() {
+    _finishCreating(shiftKey = false) {
         const el = this._creatingElement;
-        // If too small, treat as a single click → create with default size
-        if (Math.abs(el.width) < 5 && Math.abs(el.height) < 5) {
-            if (el.shapeType === 'line' || el.shapeType === 'arrow') {
-                el.width = 150;
-                el.height = 0;
+        const tool = this._creatingTool;
+        const startWx = this._createStart.wx;
+        const startWy = this._createStart.wy;
+
+        // Determine if this was a point-click (tiny drag) or real drag
+        const isDrag = Math.abs(el.width) > 8 || Math.abs(el.height) > 8;
+
+        if (!isDrag) {
+            // Point click: use default sizes
+            if (tool === 'line' || tool === 'arrow') {
+                el.x = startWx; el.y = startWy;
+                el.width = 150; el.height = 0;
+            } else if (tool === 'matrix') {
+                el.x = startWx; el.y = startWy;
+                el.rows = 3; el.cols = 3; el.cellSize = 42;
+                el._initData(); // resets data and calls _updateSize
+            } else if (tool === 'stack') {
+                el.x = startWx; el.y = startWy;
+                el.width = 80; el.height = 200; el.cellHeight = 72;
+            } else if (tool === 'queue') {
+                el.x = startWx; el.y = startWy;
+                el.width = 300; el.height = 60; el.cellWidth = 44;
+            } else if (tool === 'tree') {
+                el.x = startWx; el.y = startWy;
+                el.width = 300; el.height = 200;
+            } else if (tool === 'graph') {
+                el.x = startWx; el.y = startWy;
+                el.width = 400; el.height = 350;
             } else {
-                el.width = 120;
-                el.height = 80;
+                el.width = 120; el.height = 80;
             }
         }
+
         this.layerManager._reindex();
         this.history.pushAdd(this, el);
         this.selectionManager.select(el);
         this._isCreating = false;
         this._creatingElement = null;
         this._createStart = null;
-        this.toolbar.setTool('select');
+
+        // For data structures: open dialog after creation
+        if (['matrix', 'stack', 'queue'].includes(tool)) {
+            this.toolbar.setTool('select');
+            this._showDataStructureDialog(el);
+        } else if (tool === 'tree') {
+            this.toolbar.setTool('select');
+            this._showTreeDialog(el);
+        } else if (tool === 'graph') {
+            this.toolbar.setTool('select');
+            this._showGraphDialog(el);
+        } else {
+            this.toolbar.setTool('select');
+        }
         this._refreshUI();
     }
 
@@ -608,12 +787,17 @@ class App {
     _showDataStructureDialog(el) {
         const typeLabel = { matrix: '矩陣', stack: '堆疊', queue: '佇列' }[el.type] || el.type;
         const placeholder = el.type === 'matrix'
-            ? '輸入矩陣，每行一列，數值以空格分隔\n例：\n1 2 3\n4 5 6'
+            ? '輸入矩陣，每行一列，數值以空格分隔\n例：\n1 2 3\n4 5 6\n\n或輸入維度建立空矩陣，例：3*5'
             : '輸入數值，以空格或換行分隔\n例：1 2 3 4 5';
         this.textInputDialog.show({
             title: `編輯${typeLabel}`,
             placeholder,
             defaultText: el.inputText || '',
+            onInput: (text) => {
+                if (!text.trim()) return;
+                el.setFromText(text);
+                this.renderer.markDirty();
+            },
             onConfirm: (text) => {
                 const oldText = el.inputText || '';
                 el.setFromText(text);
@@ -657,11 +841,22 @@ class App {
                 { value: 'rb', label: '紅黑樹', selected: el.treeType === 'rb' }
             ],
             showModeSelect: true,
+            onInput: (text, type, mode) => {
+                if (!text.trim()) return;
+                const prevType = el.treeType;
+                if (type) el.treeType = type;
+                el.buildFromText(text, mode || 'values');
+                if (!type) el.treeType = prevType;
+                this.renderer.markDirty();
+            },
             onConfirm: (text, type, mode) => {
                 const oldText = el.inputText || '';
                 const oldType = el.treeType;
                 if (type) el.treeType = type;
-                el.buildFromText(text, mode || 'values');
+                const error = el.buildFromText(text, mode || 'values');
+                if (error) {
+                    this._toast('⚠ ' + error, 4000);
+                }
                 if (oldText !== text || oldType !== type) {
                     this.history.push({
                         description: 'Edit Tree',
@@ -703,6 +898,11 @@ class App {
             defaultText: el.inputText || '',
             showDirectedCheckbox: true,
             directed: el.directed,
+            onInput: (text, _type, _mode, directed) => {
+                if (!text.trim()) return;
+                el.buildFromText(text, directed);
+                this.renderer.markDirty();
+            },
             onConfirm: (text, _type, _mode, directed) => {
                 const oldText = el.inputText || '';
                 const oldDirected = el.directed;
@@ -721,6 +921,140 @@ class App {
                 this._refreshUI();
             }
         });
+    }
+
+    // ═════════════════════════════════════════════════════
+    // Matrix Cell Inline Edit
+    // ═════════════════════════════════════════════════════
+    _editMatrixCell(matrixEl, row, col) {
+        const pad = 10;
+        const cellWorldX = matrixEl.x + pad + col * matrixEl.cellSize;
+        const cellWorldY = matrixEl.y + pad + row * matrixEl.cellSize;
+        const cellScreen = this.camera.worldToScreen(cellWorldX, cellWorldY);
+        const cellSizeScreen = matrixEl.cellSize * this.camera.zoom;
+
+        const overlay = document.getElementById('text-edit-overlay');
+        if (!overlay) return;
+
+        // Style to match the matrix cell exactly (no visible "floating" box)
+        const cellColor = matrixEl.color || '#e0e0e0';
+        overlay.style.display = 'block';
+        overlay.style.left = cellScreen.x + 'px';
+        overlay.style.top = cellScreen.y + 'px';
+        overlay.style.width = cellSizeScreen + 'px';
+        overlay.style.height = cellSizeScreen + 'px';
+        overlay.style.fontSize = (matrixEl.fontSize * this.camera.zoom) + 'px';
+        overlay.style.textAlign = 'center';
+        overlay.style.lineHeight = cellSizeScreen + 'px';
+        overlay.style.padding = '0';
+        overlay.style.background = 'rgba(50,50,50,0.98)';
+        overlay.style.color = cellColor;
+        overlay.style.fontFamily = 'Consolas, monospace';
+        overlay.style.border = `1.5px solid ${cellColor}`;
+        overlay.style.boxSizing = 'border-box';
+        overlay.value = String(matrixEl.data[row]?.[col] ?? '');
+        overlay.focus();
+        overlay.select();
+
+        const oldValue = matrixEl.data[row]?.[col];
+
+        const resetOverlayStyle = () => {
+            overlay.style.lineHeight = '';
+            overlay.style.padding = '';
+            overlay.style.background = '';
+            overlay.style.color = '';
+            overlay.style.fontFamily = '';
+            overlay.style.border = '';
+            overlay.style.boxSizing = '';
+            overlay.style.textAlign = '';
+        };
+
+        const finishEdit = () => {
+            const newValue = overlay.value.trim();
+            if (matrixEl.data[row]) {
+                matrixEl.data[row][col] = newValue;
+            }
+            overlay.style.display = 'none';
+            resetOverlayStyle();
+            overlay.onblur = null;
+            overlay.onkeydown = null;
+            if (oldValue !== newValue) {
+                this.history.push({
+                    description: 'Edit Matrix Cell',
+                    undo: () => { if (matrixEl.data[row]) matrixEl.data[row][col] = oldValue; },
+                    redo: () => { if (matrixEl.data[row]) matrixEl.data[row][col] = newValue; }
+                });
+            }
+            this.renderer.markDirty();
+        };
+
+        overlay.onblur = finishEdit;
+        overlay.onkeydown = (e) => {
+            if (e.key === 'Enter') { e.preventDefault(); overlay.blur(); }
+            if (e.key === 'Escape') { overlay.value = String(oldValue ?? ''); overlay.blur(); }
+            // Tab to next cell
+            if (e.key === 'Tab') {
+                e.preventDefault();
+                finishEdit();
+                let nextCol = col + (e.shiftKey ? -1 : 1);
+                let nextRow = row;
+                if (nextCol >= matrixEl.cols) { nextCol = 0; nextRow++; }
+                if (nextCol < 0) { nextCol = matrixEl.cols - 1; nextRow--; }
+                if (nextRow >= 0 && nextRow < matrixEl.rows) {
+                    this._editMatrixCell(matrixEl, nextRow, nextCol);
+                }
+            }
+        };
+    }
+
+    // ═════════════════════════════════════════════════════
+    // Tree Node Inline Value Edit
+    // ═════════════════════════════════════════════════════
+    _editTreeNodeValue(treeEl, treeNode, wx, wy) {
+        const { offsetX, offsetY } = treeEl._getCurrentOffsets();
+        const nodeScreenPos = this.camera.worldToScreen(
+            treeNode.x + offsetX,
+            treeNode.y + offsetY
+        );
+        const r = treeEl.nodeRadius * this.camera.zoom;
+
+        const overlay = document.getElementById('text-edit-overlay');
+        if (!overlay) return;
+
+        overlay.style.display = 'block';
+        overlay.style.left = (nodeScreenPos.x - r) + 'px';
+        overlay.style.top = (nodeScreenPos.y - r / 2) + 'px';
+        overlay.style.width = (r * 2) + 'px';
+        overlay.style.height = r + 'px';
+        overlay.style.fontSize = (13 * this.camera.zoom) + 'px';
+        overlay.style.textAlign = 'center';
+        overlay.value = String(treeNode.value);
+        overlay.focus();
+        overlay.select();
+
+        const oldValue = treeNode.value;
+
+        const finishEdit = () => {
+            const newValue = overlay.value.trim() || oldValue;
+            treeNode.value = newValue;
+            overlay.style.display = 'none';
+            overlay.style.textAlign = '';
+            overlay.onblur = null;
+            if (oldValue !== newValue) {
+                this.history.push({
+                    description: 'Edit Tree Node',
+                    undo: () => { treeNode.value = oldValue; },
+                    redo: () => { treeNode.value = newValue; }
+                });
+            }
+            this.renderer.markDirty();
+        };
+
+        overlay.onblur = finishEdit;
+        overlay.onkeydown = (e) => {
+            if (e.key === 'Enter') { e.preventDefault(); overlay.blur(); }
+            if (e.key === 'Escape') { overlay.value = String(oldValue); overlay.blur(); }
+        };
     }
 
     // ═════════════════════════════════════════════════════
@@ -749,14 +1083,25 @@ class App {
     }
 
     // ═════════════════════════════════════════════════════
-    // Wheel (Zoom)
+    // Wheel (Pan / Zoom)
     // ═════════════════════════════════════════════════════
     _bindWheel() {
         this.canvas.addEventListener('wheel', e => {
             e.preventDefault();
             const { sx, sy } = this._screenPos(e);
-            this.camera.zoomAt(-e.deltaY, sx, sy);
-            this._updateZoomDisplay();
+
+            if (e.ctrlKey) {
+                // Pinch gesture (ctrlKey=true on trackpad pinch) or Ctrl+scroll → ZOOM
+                this.camera.zoomAt(-e.deltaY, sx, sy);
+                this._updateZoomDisplay();
+            } else {
+                // Regular scroll → PAN (反轉方向：向下滚 = 畫布向上移)
+                let dx = e.deltaX, dy = e.deltaY;
+                if (e.deltaMode === 1) { dx *= 16; dy *= 16; }   // lines → pixels
+                if (e.deltaMode === 2) { dx *= 200; dy *= 200; } // pages → pixels
+                this.camera.pan(-dx, -dy);  // 反轉
+            }
+
             this.renderer.markDirty();
         }, { passive: false });
     }
@@ -829,6 +1174,24 @@ class App {
                 return;
             }
 
+            // ── Ctrl+=  Zoom In / Ctrl+-  Zoom Out ─
+            if (ctrl && (e.key === '=' || e.key === '+')) {
+                e.preventDefault();
+                const rect = this.canvas.getBoundingClientRect();
+                this.camera.zoomAt(1, rect.width / 2, rect.height / 2);
+                this._updateZoomDisplay();
+                this.renderer.markDirty();
+                return;
+            }
+            if (ctrl && e.key === '-') {
+                e.preventDefault();
+                const rect = this.canvas.getBoundingClientRect();
+                this.camera.zoomAt(-1, rect.width / 2, rect.height / 2);
+                this._updateZoomDisplay();
+                this.renderer.markDirty();
+                return;
+            }
+
             // ── Escape ──────────────────────────
             if (e.key === 'Escape') {
                 this.selectionManager.clear();
@@ -861,6 +1224,218 @@ class App {
                 this._spaceHeld = false;
                 this.toolbar.setTool(this._prevTool || 'select');
             }
+        });
+    }
+
+    // ═════════════════════════════════════════════════════
+    // Connection Port Snap
+    // ═════════════════════════════════════════════════════
+
+    /**
+     * Find the nearest connection port within snap radius.
+     * excludeEl: the line being dragged (skip its own ports).
+     * Returns { x, y, elementId, portId } or null.
+     */
+    _findSnapPort(wx, wy, excludeEl) {
+        const SNAP_RADIUS = 24 / this.camera.zoom;
+        let best = null, bestDist = Infinity;
+        for (const el of this.elements) {
+            if (el === excludeEl) continue;
+            if (!el.getConnectionPorts) continue;
+            const ports = el.getConnectionPorts();
+            for (const port of ports) {
+                const d = Math.hypot(wx - port.x, wy - port.y);
+                if (d < SNAP_RADIUS && d < bestDist) {
+                    bestDist = d;
+                    best = { x: port.x, y: port.y, elementId: el.id, portId: port.id };
+                }
+            }
+        }
+        return best;
+    }
+
+    /**
+     * After a drag or resize, update all line/arrow endpoints that are
+     * connected to any element in movedIds.
+     */
+    _updateConnectedLines(movedIds) {
+        const idSet = new Set(movedIds);
+        for (const el of this.elements) {
+            if (el.shapeType !== 'line' && el.shapeType !== 'arrow') continue;
+            const { p1, p2 } = el.connections;
+            if (p1 && idSet.has(p1.elementId)) {
+                const target = this.elements.find(e => e.id === p1.elementId);
+                if (target) {
+                    const port = target.getConnectionPorts().find(p => p.id === p1.portId);
+                    if (port) {
+                        const ep = { p2x: el.x + el.width, p2y: el.y + el.height };
+                        el.x = port.x; el.y = port.y;
+                        el.width  = ep.p2x - port.x;
+                        el.height = ep.p2y - port.y;
+                    }
+                }
+            }
+            if (p2 && idSet.has(p2.elementId)) {
+                const target = this.elements.find(e => e.id === p2.elementId);
+                if (target) {
+                    const port = target.getConnectionPorts().find(p => p.id === p2.portId);
+                    if (port) {
+                        el.width  = port.x - el.x;
+                        el.height = port.y - el.y;
+                    }
+                }
+            }
+        }
+        this.renderer.markDirty();
+    }
+
+    // ═════════════════════════════════════════════════════
+    // Focus Camera on Element
+    // ═════════════════════════════════════════════════════
+    _focusOnElement(el) {
+        const b = el.getBounds ? el.getBounds() : { x: el.x, y: el.y, w: el.width || 100, h: el.height || 100 };
+        const cx = b.x + b.w / 2;
+        const cy = b.y + b.h / 2;
+        const sw = this.canvas.clientWidth;
+        const sh = this.canvas.clientHeight;
+        this.camera.x = cx - sw / 2 / this.camera.zoom;
+        this.camera.y = cy - sh / 2 / this.camera.zoom;
+        this.renderer.markDirty();
+    }
+
+    // ═════════════════════════════════════════════════════
+    // Context Menu (Right-click)
+    // ═════════════════════════════════════════════════════
+    _showContextMenu(e) {
+        e.preventDefault();
+        const { x: wx, y: wy } = this._worldPos(e);
+        const hit = HitTest.hitTestAll(this.elements, wx, wy, this.camera);
+
+        if (hit) {
+            this.selectionManager.select(hit);
+            this._refreshUI();
+        }
+        this._ctxTarget = hit;
+
+        const menu = document.getElementById('context-menu');
+        if (!menu) return;
+
+        // Don't show menu on empty canvas
+        if (!hit) { menu.style.display = 'none'; return; }
+
+        // Show all element-specific items
+        const hasEl = true;
+        ['ctx-rename', 'ctx-duplicate', 'ctx-bring-front', 'ctx-send-back',
+         'ctx-layer-up', 'ctx-layer-down',
+         'ctx-delete', 'ctx-sep1', 'ctx-sep2'].forEach(id => {
+            const node = document.getElementById(id);
+            if (node) node.style.display = '';
+        });
+        document.querySelectorAll('#context-menu .ctx-separator').forEach(s => {
+            s.style.display = '';
+        });
+
+        // Position (clamp inside viewport)
+        const vw = window.innerWidth, vh = window.innerHeight;
+        const mw = 180, mh = hasEl ? 270 : 8;
+        let mx = e.clientX, my = e.clientY;
+        if (mx + mw > vw) mx = vw - mw - 4;
+        if (my + mh > vh) my = vh - mh - 4;
+        menu.style.left = mx + 'px';
+        menu.style.top = my + 'px';
+        menu.style.display = 'block';
+    }
+
+    _hideContextMenu() {
+        const menu = document.getElementById('context-menu');
+        if (menu) menu.style.display = 'none';
+        this._ctxTarget = null;
+    }
+
+    _startRename(el) {
+        const inp = document.getElementById('rename-input');
+        if (!inp) return;
+        const b = el.getBounds ? el.getBounds() : { x: el.x, y: el.y, w: el.width || 60, h: el.height || 40 };
+        const rect = this.canvas.getBoundingClientRect();
+        const sp = this.camera.worldToScreen(b.x + b.w / 2, b.y + b.h / 2);
+        inp.value = el.label || el.type;
+        inp.style.left = Math.max(4, rect.left + sp.x - 80) + 'px';
+        inp.style.top = Math.max(4, rect.top + sp.y - 16) + 'px';
+        inp.style.display = 'block';
+        inp.focus();
+        inp.select();
+
+        const oldLabel = el.label;
+        const commit = () => {
+            const newLabel = inp.value.trim() || oldLabel;
+            inp.style.display = 'none';
+            inp.onblur = null; inp.onkeydown = null;
+            if (newLabel !== oldLabel) {
+                el.label = newLabel;
+                this.history.push({
+                    description: 'Rename',
+                    undo: () => { el.label = oldLabel; this._refreshUI(); },
+                    redo: () => { el.label = newLabel; this._refreshUI(); }
+                });
+                this._refreshUI();
+            }
+        };
+        inp.onblur = commit;
+        inp.onkeydown = (ev) => {
+            if (ev.key === 'Enter') { ev.preventDefault(); commit(); }
+            if (ev.key === 'Escape') { inp.value = oldLabel ?? ''; inp.blur(); }
+        };
+    }
+
+    _bindContextMenu() {
+        this._ctxTarget = null;
+
+        // Click outside menu → hide
+        document.addEventListener('pointerdown', (e) => {
+            const menu = document.getElementById('context-menu');
+            if (menu && menu.style.display !== 'none' && !menu.contains(e.target)) {
+                this._hideContextMenu();
+            }
+        }, { capture: true });
+
+        document.getElementById('ctx-rename')?.addEventListener('click', () => {
+            const el = this._ctxTarget;
+            this._hideContextMenu();
+            if (el) this._startRename(el);
+        });
+        document.getElementById('ctx-duplicate')?.addEventListener('click', () => {
+            this._hideContextMenu();
+            this._duplicateSelected();
+        });
+        document.getElementById('ctx-bring-front')?.addEventListener('click', () => {
+            const el = this._ctxTarget;
+            this._hideContextMenu();
+            if (el) { this.layerManager.bringToFront(el); this._refreshUI(); }
+        });
+        document.getElementById('ctx-send-back')?.addEventListener('click', () => {
+            const el = this._ctxTarget;
+            this._hideContextMenu();
+            if (el) { this.layerManager.sendToBack(el); this._refreshUI(); }
+        });
+        document.getElementById('ctx-layer-up')?.addEventListener('click', () => {
+            const el = this._ctxTarget;
+            this._hideContextMenu();
+            if (el) { this.layerManager.moveUp(el); this._refreshUI(); }
+        });
+        document.getElementById('ctx-layer-down')?.addEventListener('click', () => {
+            const el = this._ctxTarget;
+            this._hideContextMenu();
+            if (el) { this.layerManager.moveDown(el); this._refreshUI(); }
+        });
+        document.getElementById('ctx-delete')?.addEventListener('click', () => {
+            const el = this._ctxTarget;
+            this._hideContextMenu();
+            if (!el) return;
+            this.history.pushDelete(this, [el]);
+            const idx = this.elements.indexOf(el);
+            if (idx >= 0) this.elements.splice(idx, 1);
+            this.selectionManager.clear();
+            this._refreshUI();
         });
     }
 
@@ -902,6 +1477,74 @@ class App {
         this.selectionManager.selectedElements = newEls;
         this.layerManager._reindex();
         this._refreshUI();
+    }
+
+    // ═════════════════════════════════════════════════════
+    // localStorage Autosave
+    // ═════════════════════════════════════════════════════
+    _autosave() {
+        if (this._skipAutosave) return;
+        if (this._autosaveTimer) clearTimeout(this._autosaveTimer);
+        this._autosaveTimer = setTimeout(() => {
+            try {
+                const data = {
+                    version: 1,
+                    elements: this.elements.map(el => el.serialize()),
+                    camera: { x: this.camera.x, y: this.camera.y, zoom: this.camera.zoom }
+                };
+                localStorage.setItem('wb_autosave', JSON.stringify(data));
+            } catch (e) {
+                console.warn('[Autosave]', e);
+            }
+        }, 1200);
+    }
+
+    _tryLoadAutosave() {
+        try {
+            const raw = localStorage.getItem('wb_autosave');
+            if (!raw) return;
+            const data = JSON.parse(raw);
+            if (!data?.elements?.length) return;
+            // Silently restore — no prompt (avoids repeated reload confusion)
+            this._restoreFromData(data);
+        } catch (e) {
+            console.warn('[Autosave load]', e);
+        }
+    }
+
+    _restoreFromData(data) {
+        try {
+            const TYPE_MAP = {
+                rectangle: ShapeElement, circle: ShapeElement, ellipse: ShapeElement,
+                line: ShapeElement, arrow: ShapeElement,
+                text: TextElement, matrix: MatrixElement,
+                stack: StackElement, queue: QueueElement,
+                tree: TreeElement, graph: GraphElement,
+            };
+            this._skipAutosave = true;
+            this.elements = [];
+            let maxId = 0;
+            for (const ed of data.elements) {
+                const Cls = TYPE_MAP[ed.type];
+                if (!Cls) continue;
+                const el = Cls.fromData ? Cls.fromData(ed) : new Cls();
+                el.deserialize(ed);
+                if (el.id > maxId) maxId = el.id;
+                this.elements.push(el);
+            }
+            Element.resetIdCounter(maxId);
+            if (data.camera) {
+                this.camera.x = data.camera.x;
+                this.camera.y = data.camera.y;
+                this.camera.zoom = data.camera.zoom;
+            }
+            this._skipAutosave = false;
+            this._refreshUI();
+            // (silent restore — no toast)
+        } catch (e) {
+            this._skipAutosave = false;
+            console.warn('[Autosave restore]', e);
+        }
     }
 }
 
