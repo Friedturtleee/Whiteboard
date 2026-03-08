@@ -64,7 +64,9 @@ export class TextInputDialog {
             modeSelect = document.createElement('select');
             modeSelect.style.marginBottom = '8px';
             const modes = [
-                { value: 'parent', label: '父節點格式 (N 行: 值 父值)' },
+                { value: 'auto',   label: '自動偵測格式' },
+                { value: 'parent', label: '父節點陣列 (每行: 父值)' },
+                { value: 'edge',   label: '邊列表 (每行: u v [w])' },
                 { value: 'values', label: '數值列表 (自動建樹)' }
             ];
             for (const m of modes) {

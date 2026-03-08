@@ -34,20 +34,26 @@ export class MatrixElement extends Element {
     }
 
     /**
+     * Snapshot state before resize drag begins.
+     */
+    onResizeStart() {
+        this._origCellSize = this.cellSize;
+        this._origResizeW = this.width;
+        this._origResizeH = this.height;
+    }
+
+    /**
      * Called when element is resized via handle. Recalculates cellSize from new dimensions.
-     * Only allows SHRINKING — dragging outward is ignored.
      */
     onResize(newW, newH) {
         const newCellW = Math.floor((newW - 20) / this.cols);
         const newCellH = Math.floor((newH - 20) / this.rows);
-        const proposed = Math.max(16, Math.min(newCellW, newCellH));
-        // Only shrink, never grow beyond current cell size
-        this.cellSize = Math.min(proposed, this.cellSize);
+        this.cellSize = Math.max(16, Math.min(newCellW, newCellH));
         // Re-snap the element size to grid
-        this.width = this.cols * this.cellSize + 20;
+        this.width  = this.cols * this.cellSize + 20;
         this.height = this.rows * this.cellSize + 20;
         // Scale font with cell size
-        this.fontSize = Math.max(13, Math.min(18, Math.floor(this.cellSize * 0.35)));
+        this.fontSize = Math.max(9, Math.min(18, Math.floor(this.cellSize * 0.35)));
     }
 
     setFromText(text) {

@@ -8,6 +8,7 @@ import { StackElement } from '../elements/StackElement.js';
 import { QueueElement } from '../elements/QueueElement.js';
 import { TreeElement } from '../tree/TreeElement.js';
 import { GraphElement } from '../graph/GraphElement.js';
+import { PenElement } from '../elements/PenElement.js';
 import { Element } from './Element.js';
 
 const TYPE_MAP = {
@@ -22,6 +23,7 @@ const TYPE_MAP = {
     queue: QueueElement,
     tree: TreeElement,
     graph: GraphElement,
+    pen: PenElement,
 };
 
 export class Serializer {

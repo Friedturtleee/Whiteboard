@@ -51,8 +51,10 @@ export class Renderer {
             -camera.y * camera.zoom * dpr
         );
 
-        // Draw grid
-        grid.draw(ctx, camera, w / dpr, h / dpr);
+        // Draw grid (skip if hidden)
+        if (grid.visible !== false) {
+            grid.draw(ctx, camera, w / dpr, h / dpr);
+        }
 
         // Draw elements sorted by z-index
         const elements = app.elements.slice().sort((a, b) => a.zIndex - b.zIndex);
@@ -146,9 +148,9 @@ export class Renderer {
                 const conn = i === 0 ? el.connections?.p1 : el.connections?.p2;
                 ctx.beginPath();
                 ctx.arc(px, py, r, 0, Math.PI * 2);
-                ctx.fillStyle = conn ? '#50c878' : '#ffffff';
+                ctx.fillStyle = '#ffffff';
                 ctx.fill();
-                ctx.strokeStyle = conn ? '#50c878' : 'rgba(80,140,200,0.9)';
+                ctx.strokeStyle = 'rgba(80,140,200,0.9)';
                 ctx.lineWidth = lw;
                 ctx.stroke();
             }
@@ -220,15 +222,7 @@ export class Renderer {
             const ports = el.getConnectionPorts();
             if (!ports || ports.length === 0) continue;
 
-            for (const port of ports) {
-                ctx.beginPath();
-                ctx.arc(port.x, port.y, 7 / camera.zoom, 0, Math.PI * 2);
-                ctx.fillStyle = 'rgba(80, 200, 120, 0.20)';
-                ctx.fill();
-                ctx.strokeStyle = 'rgba(80, 200, 120, 0.70)';
-                ctx.lineWidth = 1.5 / camera.zoom;
-                ctx.stroke();
-            }
+            // Port hint circles are hidden (transparent); only the snap target is shown
         }
 
         // Highlight the snapped port (if any)

@@ -41,6 +41,8 @@ export class Transform {
         this.startY = wy;
         this.startBounds = { x: el.x, y: el.y, w: el.width, h: el.height };
         this.targetElement = el;
+        // Let element snapshot any internal state it needs for proportional resize
+        if (el.onResizeStart) el.onResizeStart();
     }
 
     startRotate(wx, wy, el) {
@@ -81,41 +83,65 @@ export class Transform {
         if (this.mode === 'resize') {
             const el = this.targetElement;
             const sb = this.startBounds;
-            const dx = wx - this.startX;
-            const dy = wy - this.startY;
+            const theta = el.rotation || 0;
 
-            switch (this.handleIndex) {
-                case 0: // NW
-                    el.x = sb.x + dx; el.y = sb.y + dy;
-                    el.width = sb.w - dx; el.height = sb.h - dy;
-                    break;
-                case 1: // NE
-                    el.y = sb.y + dy;
-                    el.width = sb.w + dx; el.height = sb.h - dy;
-                    break;
-                case 2: // SE
-                    el.width = sb.w + dx; el.height = sb.h + dy;
-                    break;
-                case 3: // SW
-                    el.x = sb.x + dx;
-                    el.width = sb.w - dx; el.height = sb.h + dy;
-                    break;
-                case 4: // N
-                    el.y = sb.y + dy; el.height = sb.h - dy;
-                    break;
-                case 5: // E
-                    el.width = sb.w + dx;
-                    break;
-                case 6: // S
-                    el.height = sb.h + dy;
-                    break;
-                case 7: // W
-                    el.x = sb.x + dx; el.width = sb.w - dx;
-                    break;
+            if (theta === 0) {
+                // ── Simple case: no rotation ────────────────────────────────
+                const dx = wx - this.startX;
+                const dy = wy - this.startY;
+                switch (this.handleIndex) {
+                    case 0: el.x = sb.x + dx; el.y = sb.y + dy; el.width = sb.w - dx; el.height = sb.h - dy; break;
+                    case 1: el.y = sb.y + dy;                    el.width = sb.w + dx; el.height = sb.h - dy; break;
+                    case 2:                                        el.width = sb.w + dx; el.height = sb.h + dy; break;
+                    case 3: el.x = sb.x + dx;                    el.width = sb.w - dx; el.height = sb.h + dy; break;
+                    case 4: el.y = sb.y + dy;                                           el.height = sb.h - dy; break;
+                    case 5:                                        el.width = sb.w + dx;                        break;
+                    case 6:                                                               el.height = sb.h + dy; break;
+                    case 7: el.x = sb.x + dx;                    el.width = sb.w - dx;                        break;
+                }
+            } else {
+                // ── Rotation-aware resize ───────────────────────────────────
+                // Transform mouse into element-local space (relative to original center)
+                const centerX = sb.x + sb.w / 2;
+                const centerY = sb.y + sb.h / 2;
+                const cosN = Math.cos(-theta);
+                const sinN = Math.sin(-theta);
+                const dxW = wx - centerX, dyW = wy - centerY;
+                const lx = dxW * cosN - dyW * sinN;
+                const ly = dxW * sinN + dyW * cosN;
+                const hw = sb.w / 2, hh = sb.h / 2;
+
+                // New dimensions from drag position in local space
+                let newW = sb.w, newH = sb.h;
+                let cxLocal = 0, cyLocal = 0; // center delta in local space
+                switch (this.handleIndex) {
+                    case 0: newW = hw - lx;  newH = hh - ly;  cxLocal = (lx + hw) / 2; cyLocal = (ly + hh) / 2; break;
+                    case 1: newW = lx + hw;  newH = hh - ly;  cxLocal = (lx - hw) / 2; cyLocal = (ly + hh) / 2; break;
+                    case 2: newW = lx + hw;  newH = ly + hh;  cxLocal = (lx - hw) / 2; cyLocal = (ly - hh) / 2; break;
+                    case 3: newW = hw - lx;  newH = ly + hh;  cxLocal = (lx + hw) / 2; cyLocal = (ly - hh) / 2; break;
+                    case 4: newW = sb.w;     newH = hh - ly;  cxLocal = 0;              cyLocal = (ly + hh) / 2; break;
+                    case 5: newW = lx + hw;  newH = sb.h;     cxLocal = (lx - hw) / 2; cyLocal = 0;             break;
+                    case 6: newW = sb.w;     newH = ly + hh;  cxLocal = 0;              cyLocal = (ly - hh) / 2; break;
+                    case 7: newW = hw - lx;  newH = sb.h;     cxLocal = (lx + hw) / 2; cyLocal = 0;             break;
+                }
+
+                // Apply minimum size
+                newW = Math.max(10, newW);
+                newH = Math.max(10, newH);
+                el.width  = newW;
+                el.height = newH;
+
+                // Rotate center delta back to world space and update el.x / el.y
+                const cosT = Math.cos(theta), sinT = Math.sin(theta);
+                const newCenterX = centerX + cxLocal * cosT - cyLocal * sinT;
+                const newCenterY = centerY + cxLocal * sinT + cyLocal * cosT;
+                el.x = newCenterX - newW / 2;
+                el.y = newCenterY - newH / 2;
             }
+
             // Enforce minimum size
-            if (el.width < 10) { el.width = 10; }
-            if (el.height < 10) { el.height = 10; }
+            if (el.width  < 10) el.width  = 10;
+            if (el.height < 10) el.height = 10;
 
             // Notify element of resize so it can update internal layout
             if (el.onResize) el.onResize(el.width, el.height);

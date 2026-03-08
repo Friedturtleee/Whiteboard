@@ -115,6 +115,8 @@ export class GraphElement extends Element {
             if (hitNode) return true;
 
             const hitEdge = GraphRenderer.hitTestEdge(this.nodes, this.edges, wx, wy, {
+                nodeRadius: this.nodeRadius,
+                directed: this.directed,
                 offsetX: this.x + 20,
                 offsetY: this.y + 20,
                 tolerance: 8
@@ -129,6 +131,16 @@ export class GraphElement extends Element {
             nodeRadius: this.nodeRadius,
             offsetX: this.x + 20,
             offsetY: this.y + 20
+        });
+    }
+
+    hitTestEdge(wx, wy) {
+        return GraphRenderer.hitTestEdge(this.nodes, this.edges, wx, wy, {
+            nodeRadius: this.nodeRadius,
+            directed: this.directed,
+            offsetX: this.x + 20,
+            offsetY: this.y + 20,
+            tolerance: 8
         });
     }
 
@@ -151,6 +163,37 @@ export class GraphElement extends Element {
     moveNodes(dx, dy) {
         // This is called when the whole element is dragged — no need to move internal nodes
         // since they are drawn relative to (this.x, this.y)
+    }
+
+    /**
+     * Snapshot node positions before a resize drag begins.
+     */
+    onResizeStart() {
+        this._origResizeW = this.width;
+        this._origResizeH = this.height;
+        this._origNodePos = new Map();
+        for (const [id, node] of this.nodes) {
+            this._origNodePos.set(id, { x: node.x, y: node.y });
+        }
+    }
+
+    /**
+     * Scale node positions proportionally when the element bounding box is resized.
+     */
+    onResize(newW, newH) {
+        const origW = this._origResizeW;
+        const origH = this._origResizeH;
+        if (!origW || !origH || !this._origNodePos) return;
+        // Interior area = element minus 20px padding on each side
+        const sx = Math.max(0.1, (newW - 40) / (origW - 40));
+        const sy = Math.max(0.1, (newH - 40) / (origH - 40));
+        for (const [id, node] of this.nodes) {
+            const orig = this._origNodePos.get(id);
+            if (orig) {
+                node.x = orig.x * sx;
+                node.y = orig.y * sy;
+            }
+        }
     }
 
     serialize() {

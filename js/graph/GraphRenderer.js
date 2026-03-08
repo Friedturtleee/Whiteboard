@@ -17,6 +17,9 @@ export class GraphRenderer {
         const opacity = opts.opacity ?? 1;
         const directed = opts.directed || false;
 
+        // Build a set of reverse-edge pairs for bidirectional detection
+        const edgeSet = new Set(edges.map(e => `${e.u}->${e.v}`));
+
         ctx.globalAlpha = opacity;
 
         // Draw edges
@@ -28,48 +31,86 @@ export class GraphRenderer {
             const x1 = u.x + ox, y1 = u.y + oy;
             const x2 = v.x + ox, y2 = v.y + oy;
 
-            ctx.strokeStyle = color;
-            ctx.lineWidth = 1.5;
-            ctx.globalAlpha = opacity * 0.5;
-            ctx.beginPath();
+            const edgeColor = e.selected ? 'hsl(210, 80%, 60%)' : color;
+            const edgeAlpha = e.selected ? opacity * 0.9 : opacity * 0.5;
+            const edgeWidth = e.selected ? 2.5 : 1.5;
 
-            if (e.directed || directed) {
-                // Draw line stopping at node radius
+            ctx.strokeStyle = edgeColor;
+            ctx.lineWidth = edgeWidth;
+            ctx.globalAlpha = edgeAlpha;
+
+            const isDirected = e.directed || directed;
+            // Check if there is also a reverse edge (bidirectional pair)
+            const hasBidirectional = isDirected && edgeSet.has(`${e.v}->${e.u}`);
+
+            if (isDirected) {
                 const angle = Math.atan2(y2 - y1, x2 - x1);
-                const endX = x2 - r * Math.cos(angle);
-                const endY = y2 - r * Math.sin(angle);
-                const startX = x1 + r * Math.cos(angle);
-                const startY = y1 + r * Math.sin(angle);
 
-                ctx.moveTo(startX, startY);
-                ctx.lineTo(endX, endY);
+                // Offset perpendicular so bidirectional edges don't overlap
+                const OFFSET = hasBidirectional ? 10 : 0;
+                const perpX = -Math.sin(angle) * OFFSET;
+                const perpY =  Math.cos(angle) * OFFSET;
+
+                const sx = x1 + r * Math.cos(angle) + perpX;
+                const sy = y1 + r * Math.sin(angle) + perpY;
+                const ex = x2 - r * Math.cos(angle) + perpX;
+                const ey = y2 - r * Math.sin(angle) + perpY;
+
+                ctx.beginPath();
+                ctx.moveTo(sx, sy);
+                ctx.lineTo(ex, ey);
                 ctx.stroke();
 
                 // Arrowhead
                 const headLen = 10;
                 ctx.beginPath();
-                ctx.moveTo(endX, endY);
-                ctx.lineTo(endX - headLen * Math.cos(angle - 0.35), endY - headLen * Math.sin(angle - 0.35));
-                ctx.moveTo(endX, endY);
-                ctx.lineTo(endX - headLen * Math.cos(angle + 0.35), endY - headLen * Math.sin(angle + 0.35));
+                ctx.moveTo(ex, ey);
+                ctx.lineTo(ex - headLen * Math.cos(angle - 0.35), ey - headLen * Math.sin(angle - 0.35));
+                ctx.moveTo(ex, ey);
+                ctx.lineTo(ex - headLen * Math.cos(angle + 0.35), ey - headLen * Math.sin(angle + 0.35));
                 ctx.stroke();
+
+                // Edge weight label — offset perpendicular to edge (above/below based on direction)
+                if (e.w !== null && e.w !== undefined) {
+                    ctx.globalAlpha = opacity * 0.85;
+                    ctx.fillStyle = edgeColor;
+                    ctx.font = '11px Consolas, monospace';
+                    ctx.textAlign = 'center';
+                    ctx.textBaseline = 'middle';
+                    const mx = (sx + ex) / 2;
+                    const my = (sy + ey) / 2;
+                    // Perpendicular offset: 14px on the "left" side of the directed edge
+                    const labelOffset = 14;
+                    ctx.fillText(String(e.w),
+                        mx - Math.sin(angle) * labelOffset,
+                        my + Math.cos(angle) * labelOffset);
+                }
             } else {
+                ctx.beginPath();
                 ctx.moveTo(x1, y1);
                 ctx.lineTo(x2, y2);
                 ctx.stroke();
+
+                // Edge weight label — offset above the midpoint (perpendicular to edge)
+                if (e.w !== null && e.w !== undefined) {
+                    const angle = Math.atan2(y2 - y1, x2 - x1);
+                    ctx.globalAlpha = opacity * 0.85;
+                    ctx.fillStyle = edgeColor;
+                    ctx.font = '11px Consolas, monospace';
+                    ctx.textAlign = 'center';
+                    ctx.textBaseline = 'middle';
+                    const mx = (x1 + x2) / 2;
+                    const my = (y1 + y2) / 2;
+                    // Perpendicular offset: pick the side that is "upward" on screen
+                    const labelOffset = 14;
+                    const px = -Math.sin(angle) * labelOffset;
+                    const py =  Math.cos(angle) * labelOffset;
+                    // Always pick the side where py < 0 (label goes above) if possible
+                    const flip = py > 0 ? -1 : 1;
+                    ctx.fillText(String(e.w), mx + flip * px, my + flip * py);
+                }
             }
 
-            // Edge weight label
-            if (e.w !== null && e.w !== undefined) {
-                ctx.globalAlpha = opacity * 0.7;
-                ctx.fillStyle = '#aaa';
-                ctx.font = '11px Consolas, monospace';
-                ctx.textAlign = 'center';
-                ctx.textBaseline = 'bottom';
-                const mx = (x1 + x2) / 2;
-                const my = (y1 + y2) / 2 - 4;
-                ctx.fillText(String(e.w), mx, my);
-            }
             ctx.globalAlpha = opacity;
         }
 
@@ -78,17 +119,17 @@ export class GraphRenderer {
             const nx = node.x + ox;
             const ny = node.y + oy;
 
-            // Circle
+            const isSelected = node.selected;
             ctx.beginPath();
             ctx.arc(nx, ny, r, 0, Math.PI * 2);
-            ctx.fillStyle = '#2d2d2d';
+            ctx.fillStyle = isSelected ? 'hsl(210, 50%, 30%)' : '#2d2d2d';
             ctx.fill();
-            ctx.strokeStyle = color;
-            ctx.lineWidth = 2;
+            ctx.strokeStyle = isSelected ? 'hsl(210, 80%, 60%)' : color;
+            ctx.lineWidth = isSelected ? 3 : 2;
+            ctx.globalAlpha = opacity;
             ctx.stroke();
 
-            // Label
-            ctx.fillStyle = color;
+            ctx.fillStyle = isSelected ? 'hsl(210, 80%, 90%)' : color;
             ctx.font = '13px Consolas, monospace';
             ctx.textAlign = 'center';
             ctx.textBaseline = 'middle';
@@ -115,20 +156,43 @@ export class GraphRenderer {
     }
 
     /**
-     * Hit test graph edges.
+     * Hit test graph edges — wider tolerance for easy clicking.
+     * Mirrors the exact offset geometry used in draw() so bidirectional
+     * edge hit boxes align with the visible lines.
      * @returns {Object|null} The edge hit at (wx, wy).
      */
     static hitTestEdge(nodes, edges, wx, wy, opts = {}) {
+        const r = opts.nodeRadius || 20;
         const ox = opts.offsetX || 0;
         const oy = opts.offsetY || 0;
-        const tol = opts.tolerance || 6;
+        const tol = opts.tolerance || 12;
+        const directed = opts.directed || false;
+
+        // Same edgeSet as draw() for bidirectional detection
+        const edgeSet = new Set(edges.map(e => `${e.u}->${e.v}`));
 
         for (const e of edges) {
             const u = nodes.get(e.u);
             const v = nodes.get(e.v);
             if (!u || !v) continue;
-            const dist = _ptSegDist(wx, wy, u.x + ox, u.y + oy, v.x + ox, v.y + oy);
-            if (dist < tol) return e;
+
+            const x1 = u.x + ox, y1 = u.y + oy;
+            const x2 = v.x + ox, y2 = v.y + oy;
+            const angle = Math.atan2(y2 - y1, x2 - x1);
+
+            const isDirected = e.directed || directed;
+            const hasBidirectional = isDirected && edgeSet.has(`${e.v}->${e.u}`);
+            const OFFSET = hasBidirectional ? 10 : 0;
+            const perpX = -Math.sin(angle) * OFFSET;
+            const perpY =  Math.cos(angle) * OFFSET;
+
+            // Match the exact start/end points from draw()
+            const sx = x1 + r * Math.cos(angle) + perpX;
+            const sy = y1 + r * Math.sin(angle) + perpY;
+            const ex = x2 - r * Math.cos(angle) + perpX;
+            const ey = y2 - r * Math.sin(angle) + perpY;
+
+            if (_ptSegDist(wx, wy, sx, sy, ex, ey) < tol) return e;
         }
         return null;
     }

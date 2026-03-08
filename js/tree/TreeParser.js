@@ -1,108 +1,223 @@
 /**
  * TreeParser — parses text input into a tree structure.
  *
- * Format 1 (parent spec):
- *   N
- *   nodeValue parentValue
- *   ...
- *   (root has parentValue = -1 or 0 or is the unmentioned parent)
+ * Format A (parent array):
+ *   Each line n is the parent of node n (1-indexed).
+ *   Parent = 0, -1, or self-reference means root.
+ *   The first "0" line may be optional (auto-detected).
  *
- * Format 2 (value list → auto-build BST/AVL/RBTree):
+ * Format B (edge list):
+ *   u v [w]
+ *   Each line is an edge. Optional 3rd value = edge weight (auto-detected).
+ *
+ * Format C (value list → auto-build BST/AVL/RBTree):
  *   val1 val2 val3 ...
  */
 export class TreeParser {
     /**
-     * Parse parent-format text.
-     * Returns: { root, nodes: Map<value, node>, error?: string }
+     * Auto-detect input format and parse accordingly.
+     * @param {string} text
+     * @param {string} treeType - 'tree' | 'bst' | 'avl' | 'rb' | 'euler'
+     * @returns {{ root, nodes, error, hasWeights, format }}
      */
-    static parseParentFormat(text) {
+    static autoDetectAndParse(text, treeType = 'tree') {
         const lines = text.trim().split('\n').map(l => l.trim()).filter(l => l);
         if (lines.length === 0) return { root: null, nodes: new Map(), error: '輸入為空' };
 
-        const n = parseInt(lines[0]);
-        if (isNaN(n)) return { root: null, nodes: new Map(), error: '第一行必須是節點數量 N' };
+        const tokenCounts = lines.map(l => l.split(/\s+/).length);
 
-        if (lines.length - 1 < n) {
-            return { root: null, nodes: new Map(), error: `需要 ${n} 行節點資料，但只有 ${lines.length - 1} 行` };
+        // Single line with multiple values → value list for auto-build
+        if (lines.length === 1 && tokenCounts[0] > 1) {
+            const values = lines[0].split(/[\s,]+/).filter(v => v);
+            return TreeParser._buildByType(values, treeType);
         }
 
+        // All lines have exactly 1 token → parent array format
+        if (tokenCounts.every(c => c === 1)) {
+            const allInts = lines.every(l => /^-?\d+$/.test(l));
+            if (allInts) {
+                return TreeParser.parseParentFormat(lines);
+            }
+            // Multi-line value list
+            const values = lines.map(l => l.trim());
+            return TreeParser._buildByType(values, treeType);
+        }
+
+        // Lines have 2+ tokens → edge list format
+        if (tokenCounts.every(c => c >= 2)) {
+            return TreeParser.parseEdgeFormat(lines);
+        }
+
+        // Mixed token counts → try edge format
+        return TreeParser.parseEdgeFormat(lines);
+    }
+
+    /** Dispatch to the appropriate auto-build method. */
+    static _buildByType(values, treeType) {
+        if (treeType === 'bst') return TreeParser.buildBST(values);
+        if (treeType === 'avl') return TreeParser.buildAVL(values);
+        if (treeType === 'rb')  return TreeParser.buildRBTree(values);
+        // For generic tree / euler, default to BST
+        return TreeParser.buildBST(values);
+    }
+
+    /**
+     * Parse parent-array format.
+     * Line n (1-indexed) = parent of node n.
+     * Parent = 0, -1, or self-reference → root.
+     * Auto-detects whether the first "0" line is present.
+     * @param {string[]} lines - pre-split, trimmed, non-empty lines
+     */
+    static parseParentFormat(lines) {
+        const n = lines.length;
+        const parents = lines.map(l => parseInt(l));
         const nodes = new Map();
-        const childSet = new Set();
         const errors = [];
 
-        // Helper to get or create node
-        const getNode = (val) => {
-            if (!nodes.has(val)) {
-                nodes.set(val, { value: val, children: [], parent: null, x: 0, y: 0, meta: {} });
+        const getNode = (id) => {
+            const key = String(id);
+            if (!nodes.has(key)) {
+                nodes.set(key, { value: key, children: [], parent: null, x: 0, y: 0, meta: {} });
             }
-            return nodes.get(val);
+            return nodes.get(key);
         };
 
-        for (let i = 1; i < lines.length && i <= n; i++) {
-            const parts = lines[i].split(/\s+/);
-            if (parts.length < 2) {
-                errors.push(`第 ${i + 1} 行格式錯誤，需要「值 父值」`);
-                continue;
-            }
-            const nodeVal = parts[0];
-            const parentVal = parts[1];
+        // Nodes are 1..n; line i → parent of node i
+        let rootId = -1;
+        for (let i = 0; i < n; i++) {
+            const nodeId = i + 1;
+            const parentId = parents[i];
+            getNode(nodeId);
 
-            const node = getNode(nodeVal);
-            childSet.add(nodeVal);
-
-            if (parentVal === '-1' || parentVal === 'null' || parentVal === 'NULL') {
-                node.parent = null;  // this is root
-            } else {
-                const parentNode = getNode(parentVal);
-                node.parent = parentNode;
-                parentNode.children.push(node);
+            if (parentId === 0 || parentId === -1 || parentId === nodeId) {
+                // Root node
+                if (rootId === -1) rootId = nodeId;
             }
         }
 
-        // Validate: check all parent references exist as declared nodes
-        for (const [val, node] of nodes) {
-            if (node.parent && !childSet.has(node.parent.value) && node.parent.children.length > 0) {
-                // Parent is only referenced implicitly — this is fine (it becomes root)
-            }
+        // If no explicit root, node 1 is root by default
+        if (rootId === -1) rootId = 1;
+
+        // Build parent-child relationships
+        for (let i = 0; i < n; i++) {
+            const nodeId = i + 1;
+            const parentId = parents[i];
+            if (nodeId === rootId) continue;
+
+            const node = getNode(nodeId);
+            const parentNode = getNode(parentId);
+            node.parent = parentNode;
+            parentNode.children.push(node);
         }
 
-        // Find root: node not in childSet, or parentVal = -1
-        let root = null;
-        for (const [val, node] of nodes) {
-            if (node.parent === null) {
-                root = node;
-                break;
-            }
-        }
-        // Fallback: first node not appearing as child
-        if (!root) {
-            for (const [val, node] of nodes) {
-                if (!childSet.has(val) || node.parent === null) {
-                    root = node;
-                    break;
-                }
-            }
-        }
-        if (!root && nodes.size > 0) {
-            root = nodes.values().next().value;
-        }
+        const root = nodes.get(String(rootId));
 
-        // Check for cycles or disconnected nodes
+        // Validate connectivity
         if (root) {
             const visited = new Set();
-            const countNodes = (n) => {
-                if (!n || visited.has(n.value)) return;
-                visited.add(n.value);
-                for (const c of n.children) countNodes(c);
+            const walk = (nd) => {
+                if (!nd || visited.has(nd.value)) return;
+                visited.add(nd.value);
+                for (const c of nd.children) walk(c);
             };
-            countNodes(root);
+            walk(root);
             if (visited.size < nodes.size) {
-                errors.push(`有 ${nodes.size - visited.size} 個節點無法從根到達（可能存在無效的父節點引用）`);
+                errors.push(`有 ${nodes.size - visited.size} 個節點無法從根到達`);
             }
         }
 
-        const error = errors.length > 0 ? errors.join('\n') : null;
-        return { root, nodes, error };
+        return { root, nodes, error: errors.length ? errors.join('\n') : null, format: 'parent', hasWeights: false };
+    }
+
+    /**
+     * Parse edge-list format.  Each line: u v [w]
+     * Auto-detects edge weights.
+     * @param {string[]} lines - pre-split, trimmed, non-empty lines
+     */
+    static parseEdgeFormat(lines) {
+        const nodes = new Map();
+        const edges = [];
+        let hasWeights = false;
+
+        const getNode = (val) => {
+            const key = String(val);
+            if (!nodes.has(key)) {
+                nodes.set(key, { value: key, children: [], parent: null, x: 0, y: 0, meta: {} });
+            }
+            return nodes.get(key);
+        };
+
+        for (const line of lines) {
+            const parts = line.split(/\s+/);
+            if (parts.length < 2) continue;
+            const u = parts[0], v = parts[1];
+            let w = null;
+            if (parts.length >= 3 && !isNaN(parseFloat(parts[2]))) {
+                w = parts[2];
+                hasWeights = true;
+            }
+            getNode(u);
+            getNode(v);
+            edges.push({ u, v, w });
+        }
+
+        if (edges.length === 0) {
+            return { root: null, nodes, error: '沒有有效的邊', hasWeights, format: 'edge' };
+        }
+
+        // Build adjacency list
+        const adj = new Map();
+        for (const [key] of nodes) adj.set(key, []);
+        for (const { u, v, w } of edges) {
+            adj.get(u).push({ to: v, weight: w });
+            adj.get(v).push({ to: u, weight: w });
+        }
+
+        // BFS from first node to build tree
+        const rootVal = edges[0].u;
+        const root = nodes.get(rootVal);
+        const visited = new Set([rootVal]);
+        const queue = [rootVal];
+
+        while (queue.length > 0) {
+            const cur = queue.shift();
+            const curNode = nodes.get(cur);
+            for (const { to, weight } of adj.get(cur)) {
+                if (visited.has(to)) continue;
+                visited.add(to);
+                const childNode = nodes.get(to);
+                childNode.parent = curNode;
+                if (weight !== null) childNode.meta.edgeWeight = weight;
+                curNode.children.push(childNode);
+                queue.push(to);
+            }
+        }
+
+        const disconnected = nodes.size - visited.size;
+        const error = disconnected > 0 ? `有 ${disconnected} 個節點無法到達` : null;
+        return { root, nodes, error, hasWeights, format: 'edge' };
+    }
+
+    /**
+     * Compute Euler-tour timestamps (tin / tout) for an already-built tree.
+     * @param {Object} root
+     * @returns {number[]} euler tour order
+     */
+    static computeEulerTour(root) {
+        if (!root) return [];
+        let timer = 1;
+        const tour = [];
+        const dfs = (node) => {
+            if (!node) return;
+            node.meta.tin = timer++;
+            tour.push(node.value);
+            for (const child of node.children.filter(c => c != null)) {
+                dfs(child);
+            }
+            node.meta.tout = timer++;
+        };
+        dfs(root);
+        return tour;
     }
 
     /**

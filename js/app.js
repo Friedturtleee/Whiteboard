@@ -25,6 +25,7 @@ import { StackElement } from './elements/StackElement.js';
 import { QueueElement } from './elements/QueueElement.js';
 import { TreeElement } from './tree/TreeElement.js';
 import { GraphElement } from './graph/GraphElement.js';
+import { PenElement } from './elements/PenElement.js';
 
 // ── UI ──────────────────────────────────────────────────
 import { Toolbar } from './ui/Toolbar.js';
@@ -46,6 +47,9 @@ class App {
         this._creatingElement = null;
         this._lastPanScreen = null;    // { sx, sy }
         this._textEditing = null;      // element being text-edited
+        this._isPenDrawing = false;    // freehand pen tool
+        this._penElement = null;       // current pen stroke being drawn
+        this.gridSnap = false;         // snap to grid
 
         // ── Canvas Setup ────────────────────────────────
         this.canvas = document.getElementById('main-canvas');
@@ -173,6 +177,62 @@ class App {
             }
             e.target.value = '';
         });
+
+        // ── Settings Modal ─────────────────────────────
+        $('btn-settings')?.addEventListener('click', () => this._openSettings());
+        $('btn-settings-close')?.addEventListener('click', () => this._closeSettings());
+        $('settings-modal')?.addEventListener('pointerdown', (e) => {
+            if (e.target === $('settings-modal')) this._closeSettings();
+        });
+
+        // Grid visibility toggle
+        $('setting-grid-visible')?.addEventListener('change', (e) => {
+            this.grid.visible = e.target.checked;
+            this.renderer.markDirty();
+        });
+
+        // Grid snap toggle
+        $('setting-grid-snap')?.addEventListener('change', (e) => {
+            this.gridSnap = e.target.checked;
+        });
+
+        // Grid spacing
+        $('setting-grid-spacing')?.addEventListener('input', (e) => {
+            const val = Number(e.target.value);
+            this.grid.baseSpacing = val;
+            const disp = $('setting-grid-spacing-val');
+            if (disp) disp.textContent = val;
+            this.renderer.markDirty();
+        });
+
+        // Brush size
+        $('setting-brush-size')?.addEventListener('input', (e) => {
+            const val = Number(e.target.value);
+            this._defaultBrushSize = val;
+            const disp = $('setting-brush-size-val');
+            if (disp) disp.textContent = val;
+        });
+    }
+
+    _openSettings() {
+        const modal = document.getElementById('settings-modal');
+        if (!modal) return;
+        // Sync current values to controls
+        const $ = id => document.getElementById(id);
+        const gv = $('setting-grid-visible');
+        if (gv) gv.checked = this.grid.visible !== false;
+        const gs = $('setting-grid-snap');
+        if (gs) gs.checked = !!this.gridSnap;
+        const gsp = $('setting-grid-spacing');
+        if (gsp) { gsp.value = this.grid.baseSpacing; $('setting-grid-spacing-val').textContent = this.grid.baseSpacing; }
+        const bs = $('setting-brush-size');
+        if (bs) { bs.value = this._defaultBrushSize || 3; $('setting-brush-size-val').textContent = this._defaultBrushSize || 3; }
+        modal.style.display = 'flex';
+    }
+
+    _closeSettings() {
+        const modal = document.getElementById('settings-modal');
+        if (modal) modal.style.display = 'none';
     }
 
     // ═════════════════════════════════════════════════════
@@ -256,6 +316,12 @@ class App {
             this._startCreating(tool, wx, wy);
             return;
         }
+
+        // ── Pen/brush tool ─────────────────────────
+        if (tool === 'pen') {
+            this._startPenDrawing(wx, wy);
+            return;
+        }
     }
 
     // ────────── Pointer Move ────────────────────────────
@@ -278,6 +344,12 @@ class App {
         if (this._isCreating && this._creatingElement) {
             this.canvas.style.cursor = 'crosshair';
             this._updateCreating(wx, wy, e.shiftKey);
+            return;
+        }
+
+        // ── Pen drawing ─────────────────────────────
+        if (this._isPenDrawing) {
+            this._updatePenDrawing(wx, wy);
             return;
         }
 
@@ -326,6 +398,12 @@ class App {
         // ── Finish creating shape ──────────────────
         if (this._isCreating && this._creatingElement) {
             this._finishCreating(e.shiftKey);
+            return;
+        }
+
+        // ── Finish pen drawing ─────────────────────
+        if (this._isPenDrawing) {
+            this._finishPenDrawing();
             return;
         }
 
@@ -500,6 +578,63 @@ class App {
                 }
             }
 
+            // ── Matrix cell click → toggle highlight ────
+            if (hit.type === 'matrix' && hit.hitTestCell) {
+                const cell = hit.hitTestCell(wx, wy);
+                if (cell) {
+                    const key = `${cell.row},${cell.col}`;
+                    if (hit.highlights[key]) {
+                        delete hit.highlights[key];
+                    } else {
+                        hit.highlights[key] = 'hsl(210, 50%, 30%)';
+                    }
+                    this.renderer.markDirty();
+                }
+            }
+
+            // ── Stack item click → toggle highlight ─────
+            if (hit.type === 'stack' && hit.hitTestItem) {
+                const idx = hit.hitTestItem(wx, wy);
+                if (idx >= 0) {
+                    if (hit.highlights[idx]) {
+                        delete hit.highlights[idx];
+                    } else {
+                        hit.highlights[idx] = 'hsl(210, 50%, 30%)';
+                    }
+                    this.renderer.markDirty();
+                }
+            }
+
+            // ── Queue item click → toggle highlight ─────
+            if (hit.type === 'queue' && hit.hitTestItem) {
+                const idx = hit.hitTestItem(wx, wy);
+                if (idx >= 0) {
+                    if (hit.highlights[idx]) {
+                        delete hit.highlights[idx];
+                    } else {
+                        hit.highlights[idx] = 'hsl(210, 50%, 30%)';
+                    }
+                    this.renderer.markDirty();
+                }
+            }
+
+            // ── Graph node/edge click → toggle selected ──
+            if (hit.type === 'graph') {
+                if (!e.altKey) {
+                    const node = hit.hitTestNode(wx, wy);
+                    if (node) {
+                        node.selected = !node.selected;
+                        this.renderer.markDirty();
+                    } else if (hit.hitTestEdge) {
+                        const edge = hit.hitTestEdge(wx, wy);
+                        if (edge) {
+                            edge.selected = !edge.selected;
+                            this.renderer.markDirty();
+                        }
+                    }
+                }
+            }
+
             // ── Tree node → select the tree element ─
             // Shift = add to selection; otherwise replace
             if (e.shiftKey) {
@@ -538,6 +673,53 @@ class App {
 
         const hit = HitTest.hitTestAll(this.elements, wx, wy, this.camera);
         this.canvas.style.cursor = hit ? 'move' : 'default';
+    }
+
+    // ═════════════════════════════════════════════════════
+    // Pen / Brush Drawing
+    // ═════════════════════════════════════════════════════
+    _startPenDrawing(wx, wy) {
+        this._isPenDrawing = true;
+        const el = new PenElement(wx, wy);
+        el.color     = '#e0e0e0';
+        el.brushSize = this._defaultBrushSize || 3;
+        el.points    = [{ x: 0, y: 0 }];
+        this._penElement = el;
+        this.elements.push(el);
+        this.renderer.markDirty();
+    }
+
+    _updatePenDrawing(wx, wy) {
+        const el = this._penElement;
+        if (!el) return;
+        el.points.push({ x: wx - el.x, y: wy - el.y });
+        let maxX = 0, maxY = 0;
+        for (const p of el.points) {
+            if (p.x > maxX) maxX = p.x;
+            if (p.y > maxY) maxY = p.y;
+        }
+        el.width  = Math.max(1, maxX);
+        el.height = Math.max(1, maxY);
+        this.renderer.markDirty();
+    }
+
+    _finishPenDrawing() {
+        this._isPenDrawing = false;
+        const el = this._penElement;
+        this._penElement = null;
+
+        if (!el || el.points.length < 2) {
+            const idx = this.elements.indexOf(el);
+            if (idx >= 0) this.elements.splice(idx, 1);
+            this.renderer.markDirty();
+            return;
+        }
+
+        el.finish();
+        this.layerManager._reindex();
+        this.history.pushAdd(this, el);
+        this.selectionManager.select(el);
+        this._refreshUI();
     }
 
     // ═════════════════════════════════════════════════════
@@ -831,21 +1013,22 @@ class App {
     _showTreeDialog(el) {
         this.textInputDialog.show({
             title: '編輯樹',
-            placeholder: '父節點格式（每行：值 父值）或數值列表',
+            placeholder: '父節點陣列（每行一個父值）、邊列表（每行: u v [w]）或數值列表',
             defaultText: el.inputText || '',
             showTypeSelect: true,
             types: [
-                { value: 'binary', label: '二元樹', selected: el.treeType === 'binary' },
-                { value: 'bst', label: 'BST', selected: el.treeType === 'bst' },
-                { value: 'avl', label: 'AVL', selected: el.treeType === 'avl' },
-                { value: 'rb', label: '紅黑樹', selected: el.treeType === 'rb' }
+                { value: 'tree',  label: '樹',       selected: el.treeType === 'tree' },
+                { value: 'bst',   label: 'BST',      selected: el.treeType === 'bst' },
+                { value: 'avl',   label: 'AVL',      selected: el.treeType === 'avl' },
+                { value: 'rb',    label: '紅黑樹',    selected: el.treeType === 'rb' },
+                { value: 'euler', label: '時間撮樹',  selected: el.treeType === 'euler' }
             ],
             showModeSelect: true,
             onInput: (text, type, mode) => {
                 if (!text.trim()) return;
                 const prevType = el.treeType;
                 if (type) el.treeType = type;
-                el.buildFromText(text, mode || 'values');
+                el.buildFromText(text, mode || 'auto');
                 if (!type) el.treeType = prevType;
                 this.renderer.markDirty();
             },
@@ -853,7 +1036,7 @@ class App {
                 const oldText = el.inputText || '';
                 const oldType = el.treeType;
                 if (type) el.treeType = type;
-                const error = el.buildFromText(text, mode || 'values');
+                const error = el.buildFromText(text, mode || 'auto');
                 if (error) {
                     this._toast('⚠ ' + error, 4000);
                 }
@@ -862,12 +1045,12 @@ class App {
                         description: 'Edit Tree',
                         undo: () => {
                             el.treeType = oldType;
-                            if (oldText) el.buildFromText(oldText, el._detectMode(oldText));
+                            if (oldText) el.buildFromText(oldText, 'auto');
                             else { el.root = null; el.inputText = ''; }
                         },
                         redo: () => {
                             el.treeType = type || oldType;
-                            el.buildFromText(text, mode || 'values');
+                            el.buildFromText(text, mode || 'auto');
                         }
                     });
                 }

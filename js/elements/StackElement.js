@@ -12,6 +12,7 @@ export class StackElement extends Element {
         this.maxDisplay = 8;
         this.label = 'Stack';
         this.inputText = '';
+        this.highlights = {};      // { displayIndex: color }
     }
 
     push(val) {
@@ -35,6 +36,14 @@ export class StackElement extends Element {
     _updateSize() {
         const count = Math.min(this.items.length, this.maxDisplay);
         this.height = Math.max(80, count * this.cellHeight + 40);
+    }
+
+    /**
+     * Snapshot state before resize drag begins.
+     */
+    onResizeStart() {
+        this._origCellHeight = this.cellHeight;
+        this._origResizeW = this.width;
     }
 
     /**
@@ -78,6 +87,13 @@ export class StackElement extends Element {
             const cy = baseY - (i + 1) * cellHeight + cellHeight / 2;
             const cx = x + w / 2;
 
+            // Highlight background
+            if (this.highlights[i]) {
+                ctx.fillStyle = this.highlights[i];
+                ctx.globalAlpha = this.opacity;
+                ctx.fillRect(x + 4, baseY - (i + 1) * cellHeight, w - 8, cellHeight);
+            }
+
             // Cell
             ctx.strokeStyle = this.getEffectiveColor(this.color);
             ctx.lineWidth = 1;
@@ -113,12 +129,29 @@ export class StackElement extends Element {
         ctx.restore();
     }
 
+    /**
+     * Returns display index (0 = bottom) of item at (wx, wy), or -1.
+     */
+    hitTestItem(wx, wy) {
+        const baseY = this.y + this.height - 10;
+        const displayItems = this.items.slice(-this.maxDisplay);
+        for (let i = 0; i < displayItems.length; i++) {
+            const top    = baseY - (i + 1) * this.cellHeight;
+            const bottom = baseY - i * this.cellHeight;
+            if (wx >= this.x + 4 && wx <= this.x + this.width - 4 &&
+                wy >= top && wy <= bottom) {
+                return i;
+            }
+        }
+        return -1;
+    }
+
     serialize() {
         return {
             ...super.serialize(),
             items: this.items, cellHeight: this.cellHeight,
             fontSize: this.fontSize, maxDisplay: this.maxDisplay,
-            inputText: this.inputText
+            inputText: this.inputText, highlights: this.highlights
         };
     }
 

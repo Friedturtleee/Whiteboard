@@ -11,27 +11,35 @@ import { TreeRenderer } from './TreeRenderer.js';
 export class TreeElement extends Element {
     constructor(x = 0, y = 0) {
         super('tree', x, y, 300, 200);
-        this.treeType = 'binary';  // 'binary' | 'bst' | 'avl' | 'rb'
+        this.treeType = 'tree';  // 'tree' | 'bst' | 'avl' | 'rb' | 'euler'
         this.root = null;
         this.nodeRadius = 18;
         this.inputText = '';
         this.label = 'Tree';
+        this.hasWeights = false;
         this._draggingNode = null;
     }
 
     /**
      * Build tree from text input.
      * @param {string} text
-     * @param {string} mode - 'parent' (node/parent format) or 'values' (auto-build)
+     * @param {string} mode - 'auto' (auto-detect) | 'parent' | 'edge' | 'values'
      * @returns {string|null} error message if validation fails, null on success
      */
-    buildFromText(text, mode = 'parent') {
+    buildFromText(text, mode = 'auto') {
         this.inputText = text;
         let result;
 
-        if (mode === 'parent') {
-            result = TreeParser.parseParentFormat(text);
+        if (mode === 'auto') {
+            result = TreeParser.autoDetectAndParse(text, this.treeType);
+        } else if (mode === 'parent') {
+            const lines = text.trim().split('\n').map(l => l.trim()).filter(l => l);
+            result = TreeParser.parseParentFormat(lines);
+        } else if (mode === 'edge') {
+            const lines = text.trim().split('\n').map(l => l.trim()).filter(l => l);
+            result = TreeParser.parseEdgeFormat(lines);
         } else {
+            // values mode
             const values = text.trim().split(/[\s,\n]+/).filter(v => v);
             if (this.treeType === 'avl') {
                 result = TreeParser.buildAVL(values);
@@ -44,6 +52,11 @@ export class TreeElement extends Element {
 
         if (result && result.root) {
             this.root = result.root;
+            this.hasWeights = result.hasWeights || false;
+            // Compute Euler tour timestamps for euler tree type
+            if (this.treeType === 'euler') {
+                TreeParser.computeEulerTour(this.root);
+            }
             this._layoutTree();
         }
 
@@ -118,7 +131,8 @@ export class TreeElement extends Element {
             offsetX: this._getCurrentOffsets().offsetX,
             offsetY: this._getCurrentOffsets().offsetY,
             opacity: this.opacity,
-            saturation: this.saturation
+            saturation: this.saturation,
+            hasWeights: this.hasWeights
         });
         ctx.restore();
     }
@@ -132,6 +146,14 @@ export class TreeElement extends Element {
                 offsetX, offsetY
             });
             if (hitNode) return true;
+
+            // Check edge hit with wide tolerance
+            const hitEdge = TreeRenderer.hitTestEdge(this.root, wx, wy, {
+                nodeRadius: this.nodeRadius,
+                offsetX, offsetY,
+                tolerance: 12
+            });
+            if (hitEdge) return true;
         }
         // Fallback to bounding box
         return super.containsPoint(wx, wy, camera);
@@ -172,20 +194,26 @@ export class TreeElement extends Element {
     }
 
     /**
+     * Snapshot state before resize drag begins.
+     */
+    onResizeStart() {
+        this._origNodeRadius = this.nodeRadius;
+        this._origResizeW = this.width;
+        this._origResizeH = this.height;
+    }
+
+    /**
      * Called when element is resized via handle. Rescales tree node radius.
      */
     onResize(newW, newH) {
         if (!this.root) return;
-        // Compute the tree's natural bounds at current nodeRadius
-        const bounds = {
-            w: this.width,
-            h: this.height
-        };
-        // Scale nodeRadius proportionally to the smaller dimension ratio
-        const scaleW = newW / (bounds.w || newW);
-        const scaleH = newH / (bounds.h || newH);
+        const origW = this._origResizeW || this.width;
+        const origH = this._origResizeH || this.height;
+        const origR = this._origNodeRadius ?? this.nodeRadius;
+        const scaleW = newW / origW;
+        const scaleH = newH / origH;
         const scale = Math.min(scaleW, scaleH);
-        this.nodeRadius = Math.max(8, Math.min(40, Math.round(this.nodeRadius * scale)));
+        this.nodeRadius = Math.max(8, Math.min(40, Math.round(origR * scale)));
         this._layoutTree();
     }
 
@@ -195,6 +223,7 @@ export class TreeElement extends Element {
             treeType: this.treeType,
             nodeRadius: this.nodeRadius,
             inputText: this.inputText,
+            hasWeights: this.hasWeights,
             _relOffsetX: this._relOffsetX,
             _relOffsetY: this._relOffsetY
         };
@@ -202,14 +231,15 @@ export class TreeElement extends Element {
 
     deserialize(data) {
         super.deserialize(data);
-        this.treeType = data.treeType || 'binary';
+        this.treeType = data.treeType || 'tree';
         this.nodeRadius = data.nodeRadius || 18;
         this.inputText = data.inputText || '';
+        this.hasWeights = data.hasWeights || false;
         this._relOffsetX = data._relOffsetX;
         this._relOffsetY = data._relOffsetY;
         // Rebuild tree from saved text
         if (this.inputText) {
-            this.buildFromText(this.inputText, this._detectMode(this.inputText));
+            this.buildFromText(this.inputText, 'auto');
             // Restore relative offsets
             if (data._relOffsetX !== undefined) {
                 this._relOffsetX = data._relOffsetX;
@@ -220,14 +250,7 @@ export class TreeElement extends Element {
     }
 
     _detectMode(text) {
-        const lines = text.trim().split('\n');
-        if (lines.length > 1) {
-            const firstLine = lines[0].trim().split(/\s+/);
-            if (firstLine.length === 1 && !isNaN(parseInt(firstLine[0]))) {
-                return 'parent';
-            }
-        }
-        return 'values';
+        return 'auto';
     }
 
     static fromData(data) {
