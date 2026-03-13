@@ -11,7 +11,9 @@ export class GraphElement extends Element {
     constructor(x = 0, y = 0) {
         super('graph', x, y, 400, 350);
         this.directed = false;
-        this.nodes = new Map();   // id → { id, x, y, label }
+        this.zeroBased = false;
+        this.graphMode = 'edge-list';
+        this.nodes = new Map();   // id → { id, x, y, label, nodeWeight }
         this.edges = [];          // [{ u, v, w?, directed }]
         this.nodeRadius = 20;
         this.inputText = '';
@@ -23,10 +25,12 @@ export class GraphElement extends Element {
     /**
      * Build graph from text input.
      */
-    buildFromText(text, directed = false) {
+    buildFromText(text, directed = false, zeroBased = false, graphMode = 'edge-list') {
         this.inputText = text;
         this.directed = directed;
-        const result = GraphParser.parse(text, directed);
+        this.zeroBased = zeroBased;
+        this.graphMode = graphMode;
+        const result = GraphParser.parse(text, directed, zeroBased, graphMode);
         if (!result) return;
 
         this.nodes = result.nodes;
@@ -204,6 +208,8 @@ export class GraphElement extends Element {
         return {
             ...super.serialize(),
             directed: this.directed,
+            zeroBased: this.zeroBased,
+            graphMode: this.graphMode,
             graphNodes: nodesArr,
             edges: this.edges,
             nodeRadius: this.nodeRadius,
@@ -215,6 +221,8 @@ export class GraphElement extends Element {
     deserialize(data) {
         super.deserialize(data);
         this.directed = data.directed || false;
+        this.zeroBased = data.zeroBased || false;
+        this.graphMode = data.graphMode || 'edge-list';
         this.nodeRadius = data.nodeRadius || 20;
         this.inputText = data.inputText || '';
         this._nextNodeId = data._nextNodeId || 1;

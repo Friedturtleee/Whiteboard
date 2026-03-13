@@ -9,7 +9,7 @@ export class TextInputDialog {
 
     /**
      * Show a dialog for text input.
-     * @param {Object} opts - { title, placeholder, defaultText, showTypeSelect, types: [{value, label}], onConfirm(text, type) }
+     * opts callbacks receive: (text, type, mode, directed, zeroBased, graphMode)
      */
     show(opts = {}) {
         this.close();
@@ -25,7 +25,7 @@ export class TextInputDialog {
 
         dialog.appendChild(title);
 
-        // Type selector
+        // Type selector (tree types)
         let typeSelect = null;
         if (opts.showTypeSelect && opts.types) {
             typeSelect = document.createElement('select');
@@ -39,23 +39,65 @@ export class TextInputDialog {
             dialog.appendChild(typeSelect);
         }
 
-        // Additional options (e.g., directed/undirected)
-        let checkboxContainer = null;
-        let checkbox = null;
-        if (opts.showDirectedCheckbox) {
-            checkboxContainer = document.createElement('div');
-            checkboxContainer.style.cssText = 'margin-bottom:8px;display:flex;align-items:center;gap:6px;';
-            checkbox = document.createElement('input');
-            checkbox.type = 'checkbox';
-            checkbox.id = 'dialog-directed';
-            checkbox.checked = opts.directed || false;
-            const cbLabel = document.createElement('label');
-            cbLabel.htmlFor = 'dialog-directed';
-            cbLabel.textContent = '有向圖';
-            cbLabel.style.textTransform = 'none';
-            checkboxContainer.appendChild(checkbox);
-            checkboxContainer.appendChild(cbLabel);
-            dialog.appendChild(checkboxContainer);
+        // Graph mode selector (edge-list vs adj-list)
+        let graphModeSelect = null;
+        if (opts.showGraphModeSelect) {
+            graphModeSelect = document.createElement('select');
+            graphModeSelect.style.marginBottom = '8px';
+            const graphModes = [
+                { value: 'edge-list', label: '邊列表 (N M, 再列 edges)' },
+                { value: 'adj-list',  label: '鄰接列表 (N, 再 N 行 M neighbors)' }
+            ];
+            for (const m of graphModes) {
+                const opt = document.createElement('option');
+                opt.value = m.value;
+                opt.textContent = m.label;
+                if (m.value === opts.graphMode) opt.selected = true;
+                graphModeSelect.appendChild(opt);
+            }
+            dialog.appendChild(graphModeSelect);
+        }
+
+        // Checkboxes row (directed + 0-based)
+        let checkbox = null;       // directed
+        let zeroBasedCb = null;    // 0-based
+        if (opts.showDirectedCheckbox || opts.showZeroBasedCheckbox) {
+            const cbRow = document.createElement('div');
+            cbRow.style.cssText = 'margin-bottom:8px;display:flex;align-items:center;gap:14px;';
+
+            if (opts.showDirectedCheckbox) {
+                const wrap = document.createElement('div');
+                wrap.style.cssText = 'display:flex;align-items:center;gap:6px;';
+                checkbox = document.createElement('input');
+                checkbox.type = 'checkbox';
+                checkbox.id = 'dialog-directed';
+                checkbox.checked = opts.directed || false;
+                const cbLabel = document.createElement('label');
+                cbLabel.htmlFor = 'dialog-directed';
+                cbLabel.textContent = '有向圖';
+                cbLabel.style.textTransform = 'none';
+                wrap.appendChild(checkbox);
+                wrap.appendChild(cbLabel);
+                cbRow.appendChild(wrap);
+            }
+
+            if (opts.showZeroBasedCheckbox) {
+                const wrap = document.createElement('div');
+                wrap.style.cssText = 'display:flex;align-items:center;gap:6px;';
+                zeroBasedCb = document.createElement('input');
+                zeroBasedCb.type = 'checkbox';
+                zeroBasedCb.id = 'dialog-zerobased';
+                zeroBasedCb.checked = opts.zeroBased || false;
+                const cbLabel = document.createElement('label');
+                cbLabel.htmlFor = 'dialog-zerobased';
+                cbLabel.textContent = '0-based';
+                cbLabel.style.textTransform = 'none';
+                wrap.appendChild(zeroBasedCb);
+                wrap.appendChild(cbLabel);
+                cbRow.appendChild(wrap);
+            }
+
+            dialog.appendChild(cbRow);
         }
 
         // Input mode selector (for tree)
@@ -82,27 +124,39 @@ export class TextInputDialog {
         textarea.placeholder = opts.placeholder || '在此輸入...';
         textarea.value = opts.defaultText || '';
 
-        // Real-time preview — debounced so heavy rebuilds (tree/graph) don't lag
+        const _getValues = () => ({
+            text:      textarea.value,
+            type:      typeSelect      ? typeSelect.value      : null,
+            mode:      modeSelect      ? modeSelect.value      : null,
+            directed:  checkbox        ? checkbox.checked      : false,
+            zeroBased: zeroBasedCb     ? zeroBasedCb.checked   : false,
+            graphMode: graphModeSelect ? graphModeSelect.value : 'edge-list'
+        });
+
+        // Real-time preview — debounced
         let _previewTimer = null;
         const _fireInput = () => {
             if (!opts.onInput) return;
             if (_previewTimer) clearTimeout(_previewTimer);
             _previewTimer = setTimeout(() => {
-                const text = textarea.value;
-                const type = typeSelect ? typeSelect.value : null;
-                const mode = modeSelect ? modeSelect.value : null;
-                const directed = checkbox ? checkbox.checked : false;
-                opts.onInput(text, type, mode, directed);
+                const v = _getValues();
+                opts.onInput(v.text, v.type, v.mode, v.directed, v.zeroBased, v.graphMode);
             }, 180);
         };
-        textarea.addEventListener('input', _fireInput);
-        if (typeSelect)  typeSelect.addEventListener('change', _fireInput);
-        if (modeSelect)  modeSelect.addEventListener('change', _fireInput);
-        // checkbox change triggers immediate refresh
-        if (checkbox) checkbox.addEventListener('change', () => {
+        const _fireImmediate = () => {
             if (_previewTimer) clearTimeout(_previewTimer);
-            if (opts.onInput) opts.onInput(textarea.value, typeSelect?.value, modeSelect?.value, checkbox.checked);
-        });
+            if (opts.onInput) {
+                const v = _getValues();
+                opts.onInput(v.text, v.type, v.mode, v.directed, v.zeroBased, v.graphMode);
+            }
+        };
+
+        textarea.addEventListener('input', _fireInput);
+        if (typeSelect)      typeSelect.addEventListener('change', _fireInput);
+        if (modeSelect)      modeSelect.addEventListener('change', _fireInput);
+        if (graphModeSelect) graphModeSelect.addEventListener('change', _fireImmediate);
+        if (checkbox)        checkbox.addEventListener('change', _fireImmediate);
+        if (zeroBasedCb)     zeroBasedCb.addEventListener('change', _fireImmediate);
 
         const actions = document.createElement('div');
         actions.className = 'modal-actions';
@@ -115,11 +169,8 @@ export class TextInputDialog {
         confirmBtn.className = 'btn-primary';
         confirmBtn.textContent = '確認';
         confirmBtn.addEventListener('click', () => {
-            const text = textarea.value;
-            const type = typeSelect ? typeSelect.value : null;
-            const mode = modeSelect ? modeSelect.value : null;
-            const directed = checkbox ? checkbox.checked : false;
-            if (opts.onConfirm) opts.onConfirm(text, type, mode, directed);
+            const v = _getValues();
+            if (opts.onConfirm) opts.onConfirm(v.text, v.type, v.mode, v.directed, v.zeroBased, v.graphMode);
             this.close();
         });
 

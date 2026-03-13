@@ -117,6 +117,16 @@ export class TreeRenderer {
             ctx.textAlign = 'center';
         }
 
+        // Node weight (shown below circle)
+        if (node.meta && node.meta.nodeWeight != null) {
+            ctx.fillStyle = '#a0e0ff';
+            ctx.font = '10px Consolas, monospace';
+            ctx.textAlign = 'center';
+            ctx.textBaseline = 'top';
+            ctx.fillText(`w:${node.meta.nodeWeight}`, nx, ny + r + 3);
+            ctx.textBaseline = 'middle';
+        }
+
         // Recurse
         const children = (node.children || []).filter(c => c != null);
         for (const child of children) {

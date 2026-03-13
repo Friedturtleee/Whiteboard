@@ -1013,7 +1013,7 @@ class App {
     _showTreeDialog(el) {
         this.textInputDialog.show({
             title: '編輯樹',
-            placeholder: '父節點陣列（每行一個父值）、邊列表（每行: u v [w]）或數值列表',
+            placeholder: '第一行: n (節點數)\n之後 n-1 行: 父節點 子節點 [子節點權重]\n例：\n4\n1 2\n1 3\n3 4',
             defaultText: el.inputText || '',
             showTypeSelect: true,
             types: [
@@ -1021,22 +1021,21 @@ class App {
                 { value: 'bst',   label: 'BST',      selected: el.treeType === 'bst' },
                 { value: 'avl',   label: 'AVL',      selected: el.treeType === 'avl' },
                 { value: 'rb',    label: '紅黑樹',    selected: el.treeType === 'rb' },
-                { value: 'euler', label: '時間撮樹',  selected: el.treeType === 'euler' }
+                { value: 'euler', label: '時間戳樹',  selected: el.treeType === 'euler' }
             ],
-            showModeSelect: true,
-            onInput: (text, type, mode) => {
+            onInput: (text, type) => {
                 if (!text.trim()) return;
                 const prevType = el.treeType;
                 if (type) el.treeType = type;
-                el.buildFromText(text, mode || 'auto');
+                el.buildFromText(text, 'auto');
                 if (!type) el.treeType = prevType;
                 this.renderer.markDirty();
             },
-            onConfirm: (text, type, mode) => {
+            onConfirm: (text, type) => {
                 const oldText = el.inputText || '';
                 const oldType = el.treeType;
                 if (type) el.treeType = type;
-                const error = el.buildFromText(text, mode || 'auto');
+                const error = el.buildFromText(text, 'auto');
                 if (error) {
                     this._toast('⚠ ' + error, 4000);
                 }
@@ -1050,7 +1049,7 @@ class App {
                         },
                         redo: () => {
                             el.treeType = type || oldType;
-                            el.buildFromText(text, mode || 'auto');
+                            el.buildFromText(text, 'auto');
                         }
                     });
                 }
@@ -1077,27 +1076,33 @@ class App {
     _showGraphDialog(el) {
         this.textInputDialog.show({
             title: '編輯圖',
-            placeholder: '第一行: N M (節點數 邊數)\n之後每行: u v [w]\n例：\n4 5\n1 2\n2 3 7\n3 4\n4 1\n1 3',
+            placeholder: '邊列表: 第一行 N M，之後每行 u v [節點權重]\n鄰接列表: 第一行 N，之後 N 行 M n1 n2...\n例 (邊列表):\n3 4\n1 3\n2 3\n3 1\n2 2',
             defaultText: el.inputText || '',
             showDirectedCheckbox: true,
             directed: el.directed,
-            onInput: (text, _type, _mode, directed) => {
+            showZeroBasedCheckbox: true,
+            zeroBased: el.zeroBased,
+            showGraphModeSelect: true,
+            graphMode: el.graphMode,
+            onInput: (text, _type, _mode, directed, zeroBased, graphMode) => {
                 if (!text.trim()) return;
-                el.buildFromText(text, directed);
+                el.buildFromText(text, directed, zeroBased, graphMode);
                 this.renderer.markDirty();
             },
-            onConfirm: (text, _type, _mode, directed) => {
+            onConfirm: (text, _type, _mode, directed, zeroBased, graphMode) => {
                 const oldText = el.inputText || '';
                 const oldDirected = el.directed;
-                el.buildFromText(text, directed);
-                if (oldText !== text || oldDirected !== directed) {
+                const oldZeroBased = el.zeroBased;
+                const oldGraphMode = el.graphMode;
+                el.buildFromText(text, directed, zeroBased, graphMode);
+                if (oldText !== text || oldDirected !== directed || oldZeroBased !== zeroBased || oldGraphMode !== graphMode) {
                     this.history.push({
                         description: 'Edit Graph',
                         undo: () => {
-                            if (oldText) el.buildFromText(oldText, oldDirected);
-                            else { el.nodes.clear(); el.edges = []; el.inputText = ''; el.directed = oldDirected; }
+                            if (oldText) el.buildFromText(oldText, oldDirected, oldZeroBased, oldGraphMode);
+                            else { el.nodes.clear(); el.edges = []; el.inputText = ''; el.directed = oldDirected; el.zeroBased = oldZeroBased; el.graphMode = oldGraphMode; }
                         },
-                        redo: () => { el.buildFromText(text, directed); }
+                        redo: () => { el.buildFromText(text, directed, zeroBased, graphMode); }
                     });
                 }
                 this.renderer.markDirty();

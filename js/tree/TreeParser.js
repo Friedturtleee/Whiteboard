@@ -1,10 +1,14 @@
 /**
  * TreeParser — parses text input into a tree structure.
  *
+ * Format R (rooted, default for 'tree' type):
+ *   First line: n (number of nodes)
+ *   Next n-1 lines: parent child [child_weight]
+ *   child_weight is stored as meta.nodeWeight on the child node.
+ *
  * Format A (parent array):
  *   Each line n is the parent of node n (1-indexed).
  *   Parent = 0, -1, or self-reference means root.
- *   The first "0" line may be optional (auto-detected).
  *
  * Format B (edge list):
  *   u v [w]
@@ -25,6 +29,15 @@ export class TreeParser {
         if (lines.length === 0) return { root: null, nodes: new Map(), error: '輸入為空' };
 
         const tokenCounts = lines.map(l => l.split(/\s+/).length);
+
+        // For generic 'tree' (and 'euler') type: use rooted format
+        // Detection: first line is a single integer N, rest are 2-3 token edge lines
+        if (treeType === 'tree' || treeType === 'euler') {
+            if (tokenCounts[0] === 1 && /^\d+$/.test(lines[0])
+                && (lines.length === 1 || tokenCounts.slice(1).every(c => c >= 2 && c <= 3))) {
+                return TreeParser.parseRootedFormat(lines);
+            }
+        }
 
         // Single line with multiple values → value list for auto-build
         if (lines.length === 1 && tokenCounts[0] > 1) {
@@ -50,6 +63,65 @@ export class TreeParser {
 
         // Mixed token counts → try edge format
         return TreeParser.parseEdgeFormat(lines);
+    }
+
+    /**
+     * Parse rooted format: first line = n, then n-1 lines of "parent child [child_weight]".
+     * child_weight is stored as meta.nodeWeight on the child node.
+     * @param {string[]} lines - pre-split, trimmed, non-empty lines
+     */
+    static parseRootedFormat(lines) {
+        const n = parseInt(lines[0]);
+        if (isNaN(n) || n <= 0) {
+            return { root: null, nodes: new Map(), error: '第一行應為節點數 n', hasWeights: false };
+        }
+
+        const nodes = new Map();
+        let hasWeights = false;
+
+        const getNode = (id) => {
+            const key = String(id);
+            if (!nodes.has(key)) {
+                nodes.set(key, { value: key, children: [], parent: null, x: 0, y: 0, meta: {} });
+            }
+            return nodes.get(key);
+        };
+
+        // Create all n nodes (1-based)
+        for (let i = 1; i <= n; i++) getNode(i);
+
+        // Parse n-1 directed edges: parent → child [child_node_weight]
+        for (let i = 1; i < lines.length; i++) {
+            const parts = lines[i].split(/\s+/);
+            if (parts.length < 2) continue;
+            const parentKey = parts[0];
+            const childKey = parts[1];
+            const weight = parts.length >= 3 ? parts[2] : null;
+
+            const parentNode = getNode(parentKey);
+            const childNode = getNode(childKey);
+
+            if (weight !== null) {
+                childNode.meta.nodeWeight = weight;
+                hasWeights = true;
+            }
+
+            childNode.parent = parentNode;
+            parentNode.children.push(childNode);
+        }
+
+        // Find root: first node with no parent
+        let root = null;
+        for (const [, node] of nodes) {
+            if (!node.parent) { root = node; break; }
+        }
+
+        if (!root) {
+            // Fallback: node '1'
+            root = nodes.get('1') || null;
+        }
+
+        return { root, nodes, error: null, hasWeights, format: 'rooted' };
     }
 
     /** Dispatch to the appropriate auto-build method. */

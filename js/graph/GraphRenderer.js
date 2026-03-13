@@ -5,7 +5,7 @@ export class GraphRenderer {
     /**
      * Draw the entire graph.
      * @param {CanvasRenderingContext2D} ctx
-     * @param {Map<string, {id, x, y, label}>} nodes
+     * @param {Map<string, {id, x, y, label, nodeWeight}>} nodes
      * @param {Array<{u, v, w?, directed}>} edges
      * @param {Object} opts - { nodeRadius, color, offsetX, offsetY, opacity, directed }
      */
@@ -17,7 +17,7 @@ export class GraphRenderer {
         const opacity = opts.opacity ?? 1;
         const directed = opts.directed || false;
 
-        // Build a set of reverse-edge pairs for bidirectional detection
+        // Build a set of directed pairs for bidirectional detection
         const edgeSet = new Set(edges.map(e => `${e.u}->${e.v}`));
 
         ctx.globalAlpha = opacity;
@@ -28,9 +28,6 @@ export class GraphRenderer {
             const v = nodes.get(e.v);
             if (!u || !v) continue;
 
-            const x1 = u.x + ox, y1 = u.y + oy;
-            const x2 = v.x + ox, y2 = v.y + oy;
-
             const edgeColor = e.selected ? 'hsl(210, 80%, 60%)' : color;
             const edgeAlpha = e.selected ? opacity * 0.9 : opacity * 0.5;
             const edgeWidth = e.selected ? 2.5 : 1.5;
@@ -40,6 +37,34 @@ export class GraphRenderer {
             ctx.globalAlpha = edgeAlpha;
 
             const isDirected = e.directed || directed;
+
+            // ── Self-loop ────────────────────────────────────────────
+            if (e.u === e.v) {
+                const nx = u.x + ox, ny = u.y + oy;
+                const loopR = r * 0.75;
+                // Draw the loop as a circle sitting on top of the node
+                ctx.beginPath();
+                ctx.arc(nx, ny - r - loopR, loopR, 0, Math.PI * 2);
+                ctx.stroke();
+                // Arrowhead at bottom of loop for directed self-loops
+                if (isDirected) {
+                    ctx.globalAlpha = edgeAlpha;
+                    const tipX = nx - loopR * 0.3;
+                    const tipY = ny - r;
+                    ctx.beginPath();
+                    ctx.moveTo(tipX, tipY);
+                    ctx.lineTo(tipX - 7, tipY - 6);
+                    ctx.moveTo(tipX, tipY);
+                    ctx.lineTo(tipX + 4, tipY - 8);
+                    ctx.stroke();
+                }
+                ctx.globalAlpha = opacity;
+                continue;
+            }
+
+            const x1 = u.x + ox, y1 = u.y + oy;
+            const x2 = v.x + ox, y2 = v.y + oy;
+
             // Check if there is also a reverse edge (bidirectional pair)
             const hasBidirectional = isDirected && edgeSet.has(`${e.v}->${e.u}`);
 
@@ -70,49 +95,17 @@ export class GraphRenderer {
                 ctx.lineTo(ex - headLen * Math.cos(angle + 0.35), ey - headLen * Math.sin(angle + 0.35));
                 ctx.stroke();
 
-                // Edge weight label — offset perpendicular to edge (above/below based on direction)
-                if (e.w !== null && e.w !== undefined) {
-                    ctx.globalAlpha = opacity * 0.85;
-                    ctx.fillStyle = edgeColor;
-                    ctx.font = '11px Consolas, monospace';
-                    ctx.textAlign = 'center';
-                    ctx.textBaseline = 'middle';
-                    const mx = (sx + ex) / 2;
-                    const my = (sy + ey) / 2;
-                    // Perpendicular offset: 14px on the "left" side of the directed edge
-                    const labelOffset = 14;
-                    ctx.fillText(String(e.w),
-                        mx - Math.sin(angle) * labelOffset,
-                        my + Math.cos(angle) * labelOffset);
-                }
             } else {
                 ctx.beginPath();
                 ctx.moveTo(x1, y1);
                 ctx.lineTo(x2, y2);
                 ctx.stroke();
-
-                // Edge weight label — offset above the midpoint (perpendicular to edge)
-                if (e.w !== null && e.w !== undefined) {
-                    const angle = Math.atan2(y2 - y1, x2 - x1);
-                    ctx.globalAlpha = opacity * 0.85;
-                    ctx.fillStyle = edgeColor;
-                    ctx.font = '11px Consolas, monospace';
-                    ctx.textAlign = 'center';
-                    ctx.textBaseline = 'middle';
-                    const mx = (x1 + x2) / 2;
-                    const my = (y1 + y2) / 2;
-                    // Perpendicular offset: pick the side that is "upward" on screen
-                    const labelOffset = 14;
-                    const px = -Math.sin(angle) * labelOffset;
-                    const py =  Math.cos(angle) * labelOffset;
-                    // Always pick the side where py < 0 (label goes above) if possible
-                    const flip = py > 0 ? -1 : 1;
-                    ctx.fillText(String(e.w), mx + flip * px, my + flip * py);
-                }
             }
 
             ctx.globalAlpha = opacity;
         }
+
+        ctx.globalAlpha = opacity;
 
         // Draw nodes
         for (const [id, node] of nodes) {
@@ -129,11 +122,22 @@ export class GraphRenderer {
             ctx.globalAlpha = opacity;
             ctx.stroke();
 
+            // Node label
             ctx.fillStyle = isSelected ? 'hsl(210, 80%, 90%)' : color;
             ctx.font = '13px Consolas, monospace';
             ctx.textAlign = 'center';
             ctx.textBaseline = 'middle';
             ctx.fillText(node.label || id, nx, ny, r * 2 - 4);
+
+            // Node weight (shown below the circle)
+            if (node.nodeWeight != null) {
+                ctx.fillStyle = '#a0e0ff';
+                ctx.font = '10px Consolas, monospace';
+                ctx.textAlign = 'center';
+                ctx.textBaseline = 'top';
+                ctx.fillText(`w:${node.nodeWeight}`, nx, ny + r + 3);
+                ctx.textBaseline = 'middle';
+            }
         }
 
         ctx.globalAlpha = 1;
@@ -157,8 +161,7 @@ export class GraphRenderer {
 
     /**
      * Hit test graph edges — wider tolerance for easy clicking.
-     * Mirrors the exact offset geometry used in draw() so bidirectional
-     * edge hit boxes align with the visible lines.
+     * Self-loops are hit-tested against their loop circle.
      * @returns {Object|null} The edge hit at (wx, wy).
      */
     static hitTestEdge(nodes, edges, wx, wy, opts = {}) {
@@ -176,6 +179,15 @@ export class GraphRenderer {
             const v = nodes.get(e.v);
             if (!u || !v) continue;
 
+            // Self-loop: hit-test its loop circle
+            if (e.u === e.v) {
+                const loopR = r * 0.75;
+                const lx = u.x + ox;
+                const ly = u.y + oy - r - loopR;
+                if (Math.abs(Math.hypot(wx - lx, wy - ly) - loopR) < tol) return e;
+                continue;
+            }
+
             const x1 = u.x + ox, y1 = u.y + oy;
             const x2 = v.x + ox, y2 = v.y + oy;
             const angle = Math.atan2(y2 - y1, x2 - x1);
@@ -186,7 +198,6 @@ export class GraphRenderer {
             const perpX = -Math.sin(angle) * OFFSET;
             const perpY =  Math.cos(angle) * OFFSET;
 
-            // Match the exact start/end points from draw()
             const sx = x1 + r * Math.cos(angle) + perpX;
             const sy = y1 + r * Math.sin(angle) + perpY;
             const ex = x2 - r * Math.cos(angle) + perpX;
