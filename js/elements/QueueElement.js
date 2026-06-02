@@ -33,7 +33,13 @@ export class QueueElement extends Element {
 
     _updateSize() {
         const count = Math.min(this.items.length, this.maxDisplay);
-        this.width = Math.max(this.cellWidth, count * this.cellWidth);
+        if (count === 0) {
+            this.width = 0;
+            this.height = 0;
+        } else {
+            this.width = Math.max(this.cellWidth, count * this.cellWidth);
+            this.height = 60; // default queue height
+        }
     }
 
     /**
@@ -65,12 +71,20 @@ export class QueueElement extends Element {
         ctx.strokeRect(x, y, this.width, h);
 
         // Items drawn left to right
-        ctx.font = `${fontSize}px Consolas, monospace`;
         ctx.textAlign = 'center';
         ctx.textBaseline = 'middle';
 
         const displayItems = items.slice(0, this.maxDisplay);
         const startX = x; // no left padding
+
+        // Adaptive font size: fit text within cell
+        const maxLen = Math.max(1, ...displayItems.map(v => String(v).length));
+        const cellInnerW = cellWidth - 6;
+        const cellInnerH = h - 16;
+        const fontByWidth = cellInnerW / (maxLen * 0.6);
+        const fontByHeight = cellInnerH * 0.5;
+        const adaptiveFontSize = Math.max(8, Math.min(fontByWidth, fontByHeight, 18));
+        ctx.font = `${adaptiveFontSize}px Consolas, monospace`;
 
         for (let i = 0; i < displayItems.length; i++) {
             const cx = startX + i * cellWidth + cellWidth / 2;

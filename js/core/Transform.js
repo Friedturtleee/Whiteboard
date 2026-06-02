@@ -30,7 +30,8 @@ export class Transform {
         this.startX = wx;
         this.startY = wy;
         this.startPositions = sel.selectedElements.map(el => ({
-            el, x: el.x, y: el.y
+            el, x: el.x, y: el.y,
+            points: el.points ? el.points.map(p => ({ x: p.x, y: p.y })) : null
         }));
     }
 
@@ -40,6 +41,7 @@ export class Transform {
         this.startX = wx;
         this.startY = wy;
         this.startBounds = { x: el.x, y: el.y, w: el.width, h: el.height };
+        this.startPoints = el.points ? el.points.map(p => ({ x: p.x, y: p.y })) : null;
         this.targetElement = el;
     }
 
@@ -73,6 +75,12 @@ export class Transform {
             const dx = wx - this.startX;
             const dy = wy - this.startY;
             for (const sp of this.startPositions) {
+                if ((sp.el.type === 'pen' || sp.el.shapeType === 'pen') && sp.points) {
+                    for (let i = 0; i < sp.points.length; i++) {
+                        sp.el.points[i].x = sp.points[i].x + dx;
+                        sp.el.points[i].y = sp.points[i].y + dy;
+                    }
+                }
                 sp.el.x = sp.x + dx;
                 sp.el.y = sp.y + dy;
             }
@@ -84,38 +92,109 @@ export class Transform {
             const dx = wx - this.startX;
             const dy = wy - this.startY;
 
+            let localDx = dx;
+            let localDy = dy;
+            if (el.rotation) {
+                const c = Math.cos(-el.rotation);
+                const s = Math.sin(-el.rotation);
+                localDx = dx * c - dy * s;
+                localDy = dx * s + dy * c;
+            }
+
+            let left = -sb.w / 2;
+            let right = sb.w / 2;
+            let top = -sb.h / 2;
+            let bottom = sb.h / 2;
+
             switch (this.handleIndex) {
                 case 0: // NW
-                    el.x = sb.x + dx; el.y = sb.y + dy;
-                    el.width = sb.w - dx; el.height = sb.h - dy;
+                    left = Math.min(left + localDx, right - 10);
+                    top = Math.min(top + localDy, bottom - 10);
                     break;
                 case 1: // NE
-                    el.y = sb.y + dy;
-                    el.width = sb.w + dx; el.height = sb.h - dy;
+                    right = Math.max(right + localDx, left + 10);
+                    top = Math.min(top + localDy, bottom - 10);
                     break;
                 case 2: // SE
-                    el.width = sb.w + dx; el.height = sb.h + dy;
+                    right = Math.max(right + localDx, left + 10);
+                    bottom = Math.max(bottom + localDy, top + 10);
                     break;
                 case 3: // SW
-                    el.x = sb.x + dx;
-                    el.width = sb.w - dx; el.height = sb.h + dy;
+                    left = Math.min(left + localDx, right - 10);
+                    bottom = Math.max(bottom + localDy, top + 10);
                     break;
                 case 4: // N
-                    el.y = sb.y + dy; el.height = sb.h - dy;
+                    top = Math.min(top + localDy, bottom - 10);
                     break;
                 case 5: // E
-                    el.width = sb.w + dx;
+                    right = Math.max(right + localDx, left + 10);
                     break;
                 case 6: // S
-                    el.height = sb.h + dy;
+                    bottom = Math.max(bottom + localDy, top + 10);
                     break;
                 case 7: // W
-                    el.x = sb.x + dx; el.width = sb.w - dx;
+                    left = Math.min(left + localDx, right - 10);
                     break;
             }
-            // Enforce minimum size
-            if (el.width < 10) { el.width = 10; }
-            if (el.height < 10) { el.height = 10; }
+
+            const DATA_TYPES = ['text', 'matrix', 'stack', 'queue', 'tree', 'graph'];
+            const forceProportional = DATA_TYPES.includes(el.type) || shiftKey;
+            if (forceProportional && sb.h > 0) {
+                const ratio = sb.w / sb.h;
+                let w = right - left;
+                let h = bottom - top;
+                
+                if ([0, 1, 2, 3].includes(this.handleIndex)) {
+                    if (w / ratio > h) {
+                        h = w / ratio;
+                    } else {
+                        w = h * ratio;
+                    }
+                    if (this.handleIndex === 0) { left = right - w; top = bottom - h; }
+                    if (this.handleIndex === 1) { right = left + w; top = bottom - h; }
+                    if (this.handleIndex === 2) { right = left + w; bottom = top + h; }
+                    if (this.handleIndex === 3) { left = right - w; bottom = top + h; }
+                } else if (this.handleIndex === 4 || this.handleIndex === 6) {
+                    w = h * ratio;
+                    left = -w/2; right = w/2;
+                } else if (this.handleIndex === 5 || this.handleIndex === 7) {
+                    h = w / ratio;
+                    top = -h/2; bottom = h/2;
+                }
+            }
+
+            el.width = right - left;
+            el.height = bottom - top;
+
+            const lcx = (left + right) / 2;
+            const lcy = (top + bottom) / 2;
+
+            let worldDx = lcx, worldDy = lcy;
+            if (el.rotation) {
+                const c = Math.cos(el.rotation);
+                const s = Math.sin(el.rotation);
+                worldDx = lcx * c - lcy * s;
+                worldDy = lcx * s + lcy * c;
+            }
+
+            const oldCx = sb.x + sb.w / 2;
+            const oldCy = sb.y + sb.h / 2;
+            const newCx = oldCx + worldDx;
+            const newCy = oldCy + worldDy;
+
+            el.x = newCx - el.width / 2;
+            el.y = newCy - el.height / 2;
+
+            if ((el.type === 'pen' || el.shapeType === 'pen') && this.startPoints) {
+                const scaleX = sb.w === 0 ? 1 : el.width / sb.w;
+                const scaleY = sb.h === 0 ? 1 : el.height / sb.h;
+                for (let i = 0; i < this.startPoints.length; i++) {
+                    const nx = (this.startPoints[i].x - sb.x) * scaleX + el.x;
+                    const ny = (this.startPoints[i].y - sb.y) * scaleY + el.y;
+                    el.points[i].x = nx;
+                    el.points[i].y = ny;
+                }
+            }
 
             // Notify element of resize so it can update internal layout
             if (el.onResize) el.onResize(el.width, el.height);

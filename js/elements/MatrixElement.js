@@ -22,7 +22,7 @@ export class MatrixElement extends Element {
         for (let r = 0; r < this.rows; r++) {
             this.data[r] = [];
             for (let c = 0; c < this.cols; c++) {
-                this.data[r][c] = 0;
+                this.data[r][c] = '';
             }
         }
         this._updateSize();
@@ -62,7 +62,7 @@ export class MatrixElement extends Element {
             for (let r = 0; r < this.rows; r++) {
                 this.data[r] = [];
                 for (let c = 0; c < this.cols; c++) {
-                    this.data[r][c] = 0;
+                    this.data[r][c] = '';
                 }
             }
             this._updateSize();
@@ -70,11 +70,16 @@ export class MatrixElement extends Element {
         }
 
         const lines = text.trim().split('\n').map(l => l.trim()).filter(l => l);
+
         this.rows = lines.length;
         this.cols = 0;
         this.data = [];
         for (let r = 0; r < lines.length; r++) {
-            const vals = lines[r].split(/[\s,]+/).map(v => v.trim());
+            let vals = lines[r].split(/[\s,]+/).map(v => v.trim());
+            // CP char grid detection (e.g. #.#.)
+            if (vals.length === 1 && vals[0].length > 1 && !/^\d+$/.test(vals[0])) {
+                vals = vals[0].split('');
+            }
             this.data[r] = vals;
             this.cols = Math.max(this.cols, vals.length);
         }
@@ -83,6 +88,10 @@ export class MatrixElement extends Element {
             while (this.data[r].length < this.cols) this.data[r].push('');
         }
         this._updateSize();
+    }
+
+    updateTextFromData() {
+        this.inputText = this.data.map(row => row.join(' ')).join('\n');
     }
 
     draw(ctx, camera) {

@@ -10,12 +10,12 @@ export class PropertyPanel {
         this._buildColorGrid();
     }
 
-    /** 16 muted colors */
+    /** 15 muted colors + custom picker */
     static COLORS = [
         '#b34d4d', '#b3734d', '#b39b4d', '#8a9e4d',
         '#4d8a4d', '#4d8a7a', '#4d8a9e', '#4d6eb3',
         '#4d4db3', '#6b4db3', '#8a4db3', '#b34d8a',
-        '#b34d6b', '#8a6b4d', '#b0b0b0', '#e8e8e8'
+        '#8a6b4d', '#b0b0b0', '#e8e8e8'
     ];
 
     _buildColorGrid() {
@@ -33,6 +33,27 @@ export class PropertyPanel {
             });
             this._colorGrid.appendChild(swatch);
         }
+        // Custom "+" swatch that opens dark popup
+        const customBtn = document.createElement('div');
+        customBtn.className = 'color-swatch color-swatch-custom';
+        customBtn.textContent = '+';
+        customBtn.title = '自訂顏色';
+        customBtn.dataset.color = '#ffffff';
+        customBtn.addEventListener('click', (e) => {
+            e.stopPropagation();
+            // Import dynamically to avoid circular deps
+            import('./ColorPicker.js').then(({ ColorPicker }) => {
+                ColorPicker._openCustomPopup(customBtn, (c) => {
+                    customBtn.style.background = c;
+                    customBtn.dataset.color = c;
+                    this._colorGrid.querySelectorAll('.color-swatch').forEach(s => s.classList.remove('selected'));
+                    customBtn.classList.add('selected');
+                    this.app.selectionManager.setProperty('color', c);
+                    this.app.renderer.markDirty();
+                });
+            });
+        });
+        this._colorGrid.appendChild(customBtn);
     }
 
     _updateColorSelection(activeColor) {
@@ -124,12 +145,41 @@ export class PropertyPanel {
                     if (el.fontFamily !== undefined) {
                         const old = el.fontFamily;
                         el.fontFamily = val;
+                        if (el.type === 'text') el.autoSize(this.app.renderer.ctx);
                         this.app.history.pushPropertyChange(el, 'fontFamily', old, val);
                     }
                 }
                 this.app.renderer.markDirty();
             });
         }
+
+        // Text style toggles
+        const bindTextStyle = (btnId, propName) => {
+            const btn = document.getElementById(btnId);
+            if (!btn) return;
+            btn.addEventListener('click', () => {
+                const sel = this.app.selectionManager;
+                // Determine new state based on first element
+                let newState = true;
+                if (sel.selectedElements.length > 0) {
+                    newState = !sel.selectedElements[0][propName];
+                }
+                btn.classList.toggle('active', newState);
+                
+                for (const el of sel.selectedElements) {
+                    if (el[propName] !== undefined) {
+                        const old = el[propName];
+                        el[propName] = newState;
+                        if (el.type === 'text') el.autoSize(this.app.renderer.ctx);
+                        this.app.history.pushPropertyChange(el, propName, old, newState);
+                    }
+                }
+                this.app.renderer.markDirty();
+            });
+        };
+        bindTextStyle('prop-bold', 'isBold');
+        bindTextStyle('prop-italic', 'isItalic');
+        bindTextStyle('prop-underline', 'isUnderline');
     }
 
     update() {
@@ -192,19 +242,36 @@ export class PropertyPanel {
 
         this._updateColorSelection(el.color);
 
-        // Font family row: show only for text elements
+        // Stroke width row: hide for text elements
+        const strokeWidthRow = document.getElementById('stroke-width-row');
+        if (strokeWidthRow) {
+            strokeWidthRow.style.display = el.type === 'text' ? 'none' : '';
+        }
+
+        // Font family & text styles: show only for text elements
         const fontFamilyRow = document.getElementById('font-family-row');
         const fontSelect = document.getElementById('prop-font-family');
-        if (fontFamilyRow) {
-            if (el.fontFamily !== undefined) {
+        const textStylesRow = document.getElementById('text-styles-row');
+        
+        if (fontFamilyRow && textStylesRow) {
+            if (el.type === 'text') {
                 fontFamilyRow.style.display = '';
+                textStylesRow.style.display = '';
                 if (fontSelect) {
-                    // Match current value (may not be in list — fallback gracefully)
                     const opts = Array.from(fontSelect.options).map(o => o.value);
                     fontSelect.value = opts.includes(el.fontFamily) ? el.fontFamily : opts[0];
                 }
+                // Update button states
+                const setBtn = (id, prop) => {
+                    const btn = document.getElementById(id);
+                    if (btn) btn.classList.toggle('active', !!el[prop]);
+                };
+                setBtn('prop-bold', 'isBold');
+                setBtn('prop-italic', 'isItalic');
+                setBtn('prop-underline', 'isUnderline');
             } else {
                 fontFamilyRow.style.display = 'none';
+                textStylesRow.style.display = 'none';
             }
         }
     }

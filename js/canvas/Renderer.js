@@ -52,7 +52,9 @@ export class Renderer {
         );
 
         // Draw grid
-        grid.draw(ctx, camera, w / dpr, h / dpr);
+        if (!app.settings || app.settings.showGrid !== false) {
+            grid.draw(ctx, camera, w / dpr, h / dpr);
+        }
 
         // Draw elements sorted by z-index
         const elements = app.elements.slice().sort((a, b) => a.zIndex - b.zIndex);
@@ -146,9 +148,9 @@ export class Renderer {
                 const conn = i === 0 ? el.connections?.p1 : el.connections?.p2;
                 ctx.beginPath();
                 ctx.arc(px, py, r, 0, Math.PI * 2);
-                ctx.fillStyle = conn ? '#50c878' : '#ffffff';
+                ctx.fillStyle = conn ? 'transparent' : '#ffffff';
                 ctx.fill();
-                ctx.strokeStyle = conn ? '#50c878' : 'rgba(80,140,200,0.9)';
+                ctx.strokeStyle = conn ? 'transparent' : 'rgba(80,140,200,0.9)';
                 ctx.lineWidth = lw;
                 ctx.stroke();
             }
@@ -223,9 +225,9 @@ export class Renderer {
             for (const port of ports) {
                 ctx.beginPath();
                 ctx.arc(port.x, port.y, 7 / camera.zoom, 0, Math.PI * 2);
-                ctx.fillStyle = 'rgba(80, 200, 120, 0.20)';
+                ctx.fillStyle = 'rgba(80, 140, 200, 0.15)';
                 ctx.fill();
-                ctx.strokeStyle = 'rgba(80, 200, 120, 0.70)';
+                ctx.strokeStyle = 'rgba(80, 140, 200, 0.60)';
                 ctx.lineWidth = 1.5 / camera.zoom;
                 ctx.stroke();
             }
@@ -236,9 +238,9 @@ export class Renderer {
             const sp = app._snapPreview;
             ctx.beginPath();
             ctx.arc(sp.x, sp.y, 9 / camera.zoom, 0, Math.PI * 2);
-            ctx.fillStyle = 'rgba(80, 200, 120, 0.55)';
+            ctx.fillStyle = 'rgba(80, 140, 200, 0.50)';
             ctx.fill();
-            ctx.strokeStyle = '#50c878';
+            ctx.strokeStyle = 'rgba(80, 140, 200, 1.0)';
             ctx.lineWidth = 2 / camera.zoom;
             ctx.stroke();
         }

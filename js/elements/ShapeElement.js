@@ -19,7 +19,7 @@ export class ShapeElement extends Element {
         const { x, y, width: w, height: h, rotation, drawStyle } = this;
 
         ctx.save();
-        if (rotation && this.shapeType !== 'line' && this.shapeType !== 'arrow') {
+        if (rotation) {
             const cx = x + w / 2, cy = y + h / 2;
             ctx.translate(cx, cy);
             ctx.rotate(rotation);
@@ -109,7 +109,15 @@ export class ShapeElement extends Element {
         if (this.shapeType === 'line' || this.shapeType === 'arrow') {
             const { HitTest } = this.constructor._hitTestModule || {};
             const tol = 6 / (camera?.zoom || 1);
-            const dist = _pointToSegDist(wx, wy, this.x, this.y, this.x + this.width, this.y + this.height);
+            let lx = wx, ly = wy;
+            if (this.rotation) {
+                const cx = this.x + this.width / 2, cy = this.y + this.height / 2;
+                const cos = Math.cos(-this.rotation), sin = Math.sin(-this.rotation);
+                const dx = wx - cx, dy = wy - cy;
+                lx = cx + dx * cos - dy * sin;
+                ly = cy + dx * sin + dy * cos;
+            }
+            const dist = _pointToSegDist(lx, ly, this.x, this.y, this.x + this.width, this.y + this.height);
             return dist < tol;
         }
         if (this.shapeType === 'circle' || this.shapeType === 'ellipse') {

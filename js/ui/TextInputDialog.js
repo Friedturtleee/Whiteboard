@@ -44,7 +44,7 @@ export class TextInputDialog {
         let checkbox = null;
         if (opts.showDirectedCheckbox) {
             checkboxContainer = document.createElement('div');
-            checkboxContainer.style.cssText = 'margin-bottom:8px;display:flex;align-items:center;gap:6px;';
+            checkboxContainer.className = 'dialog-row';
             checkbox = document.createElement('input');
             checkbox.type = 'checkbox';
             checkbox.id = 'dialog-directed';
@@ -105,9 +105,14 @@ export class TextInputDialog {
         const actions = document.createElement('div');
         actions.className = 'modal-actions';
 
+        const fireCancel = () => {
+            if (opts.onCancel) opts.onCancel();
+            this.close();
+        };
+
         const cancelBtn = document.createElement('button');
         cancelBtn.textContent = '取消';
-        cancelBtn.addEventListener('click', () => this.close());
+        cancelBtn.addEventListener('click', fireCancel);
 
         const confirmBtn = document.createElement('button');
         confirmBtn.className = 'btn-primary';
@@ -129,12 +134,15 @@ export class TextInputDialog {
 
         // Close on overlay click
         overlay.addEventListener('click', (e) => {
-            if (e.target === overlay) this.close();
+            if (e.target === overlay) fireCancel();
         });
 
         // ESC to close
         const escHandler = (e) => {
-            if (e.key === 'Escape') { this.close(); document.removeEventListener('keydown', escHandler); }
+            if (e.key === 'Escape') { 
+                fireCancel(); 
+                document.removeEventListener('keydown', escHandler); 
+            }
         };
         document.addEventListener('keydown', escHandler);
 

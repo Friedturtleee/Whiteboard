@@ -11,6 +11,8 @@
     <link rel="stylesheet" href="css/panels.css">
     <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Material+Symbols+Outlined:opsz,wght,FILL,GRAD@20..48,100..700,0..1,-50..200">
     <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500&family=Roboto:wght@300;400&family=Fira+Code:wght@300;400&family=JetBrains+Mono:wght@300;400&family=Space+Mono&display=swap">
+    <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Zen+Maru+Gothic:wght@300;400;500;700&display=swap">
+    <script src="https://cdn.jsdelivr.net/npm/mermaid@10.8.0/dist/mermaid.min.js"></script>
 </head>
 <body>
     <!-- Loading Screen -->
@@ -32,7 +34,7 @@
         <button class="top-bar-btn" id="btn-undo" data-tooltip="復原 (Ctrl+Z)">
             <span class="material-symbols-outlined">undo</span>
         </button>
-        <button class="top-bar-btn" id="btn-redo" data-tooltip="重做 (Ctrl+Shift+Z)">
+        <button class="top-bar-btn" id="btn-redo" data-tooltip="取消復原 (Ctrl+Shift+Z)">
             <span class="material-symbols-outlined">redo</span>
         </button>
         <span style="width:1px;height:20px;background:var(--border-color)"></span>
@@ -44,6 +46,10 @@
         </button>
         <button class="top-bar-btn" id="btn-export-png" data-tooltip="匯出 PNG">
             <span class="material-symbols-outlined">image</span>
+        </button>
+        <span style="width:1px;height:20px;background:var(--border-color)"></span>
+        <button class="top-bar-btn" id="btn-settings" data-tooltip="設定">
+            <span class="material-symbols-outlined">settings</span>
         </button>
     </div>
 
@@ -70,6 +76,9 @@
         </button>
         <button class="toolbar-btn" data-tool="text" data-tooltip="文字 (T)">
             <span class="material-symbols-outlined">title</span>
+        </button>
+        <button class="toolbar-btn" data-tool="pen" data-tooltip="畫筆 (P)">
+            <span class="material-symbols-outlined">draw</span>
         </button>
         <div class="toolbar-separator"></div>
         <button class="toolbar-btn" data-tool="matrix" data-tooltip="矩陣">
@@ -171,7 +180,7 @@
                 <input type="range" id="prop-saturation" min="0" max="100" value="100">
                 <span class="range-value" id="prop-saturation-val">100%</span>
             </div>
-            <div class="panel-row">
+            <div class="panel-row" id="stroke-width-row">
                 <label>線寬</label>
                 <input type="range" id="prop-stroke-width" min="1" max="10" value="2">
                 <span class="range-value" id="prop-stroke-width-val">2</span>
@@ -179,6 +188,7 @@
             <div class="panel-row" id="font-family-row" style="display:none">
                 <label>字體</label>
                 <select id="prop-font-family" style="flex:1;font-size:11px;background:var(--bg-surface);color:var(--text-primary);border:1px solid var(--border);border-radius:4px;padding:2px 4px">
+                    <option value="Zen Maru Gothic, sans-serif">Zen Maru Gothic</option>
                     <option value="Inter, sans-serif">Inter</option>
                     <option value="Roboto, sans-serif">Roboto</option>
                     <option value="JetBrains Mono, monospace">JetBrains Mono</option>
@@ -186,6 +196,14 @@
                     <option value="Space Mono, monospace">Space Mono</option>
                     <option value="Consolas, monospace">Consolas</option>
                 </select>
+            </div>
+            <div class="panel-row" id="text-styles-row" style="display:none">
+                <label>樣式</label>
+                <div style="display:flex;gap:4px;flex:1">
+                    <button id="prop-bold" class="text-style-btn" title="粗體" style="flex:1;font-weight:bold;">B</button>
+                    <button id="prop-italic" class="text-style-btn" title="斜體" style="flex:1;font-style:italic;">I</button>
+                    <button id="prop-underline" class="text-style-btn" title="底線" style="flex:1;text-decoration:underline;">U</button>
+                </div>
             </div>
         </div>
     </div>
@@ -220,6 +238,8 @@
     <div id="context-menu">
         <div class="ctx-item" id="ctx-rename"><span class="material-symbols-outlined">edit</span> 重新命名</div>
         <div class="ctx-item" id="ctx-duplicate"><span class="material-symbols-outlined">content_copy</span> 複製</div>
+        <div class="ctx-item" id="ctx-matrix-prefix" style="display:none;"><span class="material-symbols-outlined">functions</span> 轉換為前綴和</div>
+        <div class="ctx-item" id="ctx-matrix-diff" style="display:none;"><span class="material-symbols-outlined">difference</span> 轉換為差分</div>
         <div class="ctx-separator"></div>
         <div class="ctx-item" id="ctx-layer-up"><span class="material-symbols-outlined">keyboard_arrow_up</span> 上移一層</div>
         <div class="ctx-item" id="ctx-layer-down"><span class="material-symbols-outlined">keyboard_arrow_down</span> 下移一層</div>
@@ -232,6 +252,60 @@
 
     <!-- Inline Rename Input -->
     <input type="text" id="rename-input" autocomplete="off">
+
+    <!-- Inline Text Editor -->
+    <textarea id="text-edit-overlay" autocomplete="off" spellcheck="false" wrap="off"></textarea>
+
+
+    <!-- Settings Modal -->
+    <div id="settings-modal">
+        <div id="settings-panel">
+            <div id="settings-header">
+                <span>設定</span>
+                <button id="settings-close" title="關閉">
+                    <span class="material-symbols-outlined">close</span>
+                </button>
+            </div>
+            <div id="settings-body">
+                <!-- 畫布 -->
+                <div class="settings-section">
+                    <div class="settings-section-title">畫布</div>
+                    <div class="settings-row">
+                        <label for="settings-show-grid">顯示網格</label>
+                        <input type="checkbox" id="settings-show-grid" checked>
+                    </div>
+                    <div class="settings-row">
+                        <label for="settings-grid-spacing">網格間距</label>
+                        <input type="range" id="settings-grid-spacing" min="20" max="160" step="10" value="40">
+                        <span class="settings-val" id="settings-grid-spacing-val">40</span>
+                    </div>
+                </div>
+                <!-- 線條 -->
+                <div class="settings-section">
+                    <div class="settings-section-title">線條預設</div>
+                    <div class="settings-row">
+                        <label for="settings-stroke-width">線寬</label>
+                        <input type="range" id="settings-stroke-width" min="1" max="10" value="2">
+                        <span class="settings-val" id="settings-stroke-width-val">2</span>
+                    </div>
+                </div>
+                <!-- 畫筆 -->
+                <div class="settings-section">
+                    <div class="settings-section-title">畫筆</div>
+                    <div class="settings-row">
+                        <label for="settings-pen-size">筆觸大小</label>
+                        <input type="range" id="settings-pen-size" min="1" max="20" value="2">
+                        <span class="settings-val" id="settings-pen-size-val">2</span>
+                    </div>
+                    <div class="settings-row">
+                        <label for="settings-pen-smoothing">抽點間距</label>
+                        <input type="range" id="settings-pen-smoothing" min="1" max="12" value="3">
+                        <span class="settings-val" id="settings-pen-smoothing-val">3</span>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </div>
 
     <!-- Loading Screen Controller -->
     <script>
@@ -260,26 +334,28 @@
             }, 200);
         }
 
-        // Step 1: Wait for Material Symbols font
-        setProgress(10, '載入圖示字型…');
-        const ICON_FONT = 'Material Symbols Outlined';
-        const iconCheck = new FontFace(ICON_FONT, 'local("Material Symbols Outlined")');
+        // Step 1: Wait for Fonts
+        setProgress(10, '載入字型…');
+        
+        // Force font load by creating hidden elements
+        const preloader = document.createElement('div');
+        preloader.style.visibility = 'hidden';
+        preloader.style.position = 'absolute';
+        preloader.innerHTML = `
+            <span style="font-family: 'Material Symbols Outlined'">icon</span>
+            <span style="font-family: 'Zen Maru Gothic', sans-serif">text</span>
+        `;
+        document.body.appendChild(preloader);
 
         const fontTimeout = setTimeout(() => {
-            // Font CDN may be slow — proceed anyway
             fontsReady = true;
             setProgress(60, '字型載入逾時，繼續…');
             tryDismiss();
-        }, 5000);
+        }, 3000); // Wait up to 3 seconds
 
         document.fonts.ready.then(() => {
             clearTimeout(fontTimeout);
-            const loaded = [...document.fonts].some(f => f.family.includes('Material Symbols'));
-            if (loaded) {
-                setProgress(60, '圖示字型就緒');
-            } else {
-                setProgress(60, '圖示字型未找到');
-            }
+            setProgress(60, '字型就緒');
             fontsReady = true;
             tryDismiss();
         }).catch(() => {

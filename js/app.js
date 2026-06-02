@@ -23,8 +23,10 @@ import { TextElement } from './elements/TextElement.js';
 import { MatrixElement } from './elements/MatrixElement.js';
 import { StackElement } from './elements/StackElement.js';
 import { QueueElement } from './elements/QueueElement.js';
-import { TreeElement } from './tree/TreeElement.js';
-import { GraphElement } from './graph/GraphElement.js';
+import { PenElement } from './elements/PenElement.js';
+import { MermaidElement } from './elements/MermaidElement.js';
+import { TreeElement } from './elements/TreeElement.js';
+import { GraphElement } from './elements/GraphElement.js';
 
 // ── UI ──────────────────────────────────────────────────
 import { Toolbar } from './ui/Toolbar.js';
@@ -46,6 +48,9 @@ class App {
         this._creatingElement = null;
         this._lastPanScreen = null;    // { sx, sy }
         this._textEditing = null;      // element being text-edited
+        this._isPenDrawing = false;    // freehand pen drawing
+        this._penElement   = null;     // pen element currently being drawn
+        this._penLastPoint = null;     // last recorded world point
 
         // ── Canvas Setup ────────────────────────────────
         this.canvas = document.getElementById('main-canvas');
@@ -68,12 +73,27 @@ class App {
         this.textInputDialog = new TextInputDialog(this);
 
         // ── Bind Events ─────────────────────────────────
+        // ── Settings ────────────────────────────────────
+        this.settings = { showGrid: true, gridSpacing: 40, defaultPenSize: 2, defaultPenSmoothing: 3 };
+        this._loadSettings();
+
+        this._initCamera();
+        
+        window.appInstance = this;
         this._bindMouse();
         this._bindWheel();
         this._bindKeyboard();
+        
+        // Ensure web fonts are fully loaded before rendering
+        if (document.fonts && document.fonts.ready) {
+            document.fonts.ready.then(() => {
+                this.renderer.markDirty();
+            });
+        }
         this._bindTopBar();
         this._bindContextMenu();
         this._bindResize();
+        this._bindSettings();
 
         // ── Start Render Loop ───────────────────────────
         this.renderer.start();
@@ -96,6 +116,13 @@ class App {
             this.canvas.width = w * dpr;
             this.canvas.height = h * dpr;
         }
+    }
+
+    _initCamera() {
+        const hw = this.canvas.width / 2;
+        const hh = this.canvas.height / 2;
+        this.camera.x = -hw;
+        this.camera.y = -hh;
     }
 
     _bindResize() {
@@ -157,6 +184,13 @@ class App {
         $('btn-export-json')?.addEventListener('click', () => Serializer.exportJSON(this));
         $('btn-export-png')?.addEventListener('click', () => Serializer.exportPNG(this));
         $('btn-import-json')?.addEventListener('click', () => $('json-file-input').click());
+        $('btn-settings')?.addEventListener('click', () => {
+            const modal = document.getElementById('settings-modal');
+            if (modal) {
+                modal.classList.toggle('open');
+                if (modal.classList.contains('open')) this._syncSettingsUI();
+            }
+        });
         $('json-file-input')?.addEventListener('change', async (e) => {
             const file = e.target.files[0];
             if (!file) return;
@@ -251,9 +285,33 @@ class App {
             return;
         }
 
-        // ── Data structures & tree/graph: drag to size ──
-        if (['matrix', 'stack', 'queue', 'tree', 'graph'].includes(tool)) {
+        // ── Data structures: drag to size ──
+        if (['matrix', 'stack', 'queue'].includes(tool)) {
             this._startCreating(tool, wx, wy);
+            return;
+        }
+
+        // ── Tree/Graph tool: open their native dialogs ──
+        if (tool === 'tree') {
+            this._createTree(wx, wy);
+            return;
+        }
+        if (tool === 'graph') {
+            this._createGraph(wx, wy);
+            return;
+        }
+
+        // ── Pen tool: freehand drawing ────────────────
+        if (tool === 'pen') {
+            const penEl = new PenElement(wx, wy);
+            penEl.color = '#e0e0e0';
+            penEl.strokeWidth = this.settings.defaultPenSize || 2;
+            penEl.addPoint(wx, wy);
+            this.elements.push(penEl);
+            this._isPenDrawing = true;
+            this._penElement   = penEl;
+            this._penLastPoint = { wx, wy };
+            this.renderer.markDirty();
             return;
         }
     }
@@ -271,6 +329,18 @@ class App {
             this._lastPanScreen = { sx, sy };
             this._updateZoomDisplay();
             this.renderer.markDirty();
+            return;
+        }
+
+        // ── Pen drawing ──────────────────────────────
+        if (this._isPenDrawing && this._penElement) {
+            const minDist = (this.settings.defaultPenSmoothing || 3) / this.camera.zoom;
+            const last = this._penLastPoint;
+            if (Math.hypot(wx - last.wx, wy - last.wy) >= minDist) {
+                this._penElement.addPoint(wx, wy);
+                this._penLastPoint = { wx, wy };
+                this.renderer.markDirty();
+            }
             return;
         }
 
@@ -323,6 +393,28 @@ class App {
             return;
         }
 
+        // ── Finish pen drawing ─────────────────────
+        if (this._isPenDrawing && this._penElement) {
+            const el = this._penElement;
+            el.addPoint(wx, wy); // capture final position
+            if (el.points.length >= 2) {
+                if (el.optimize) el.optimize(2 / this.camera.zoom);
+                this.layerManager._reindex();
+                this.history.pushAdd(this, el);
+                this.selectionManager.select(el);
+                this.toolbar.setTool('select');
+            } else {
+                // Too few points — discard ghost element
+                const idx = this.elements.indexOf(el);
+                if (idx >= 0) this.elements.splice(idx, 1);
+            }
+            this._isPenDrawing = false;
+            this._penElement   = null;
+            this._penLastPoint = null;
+            this._refreshUI();
+            return;
+        }
+
         // ── Finish creating shape ──────────────────
         if (this._isCreating && this._creatingElement) {
             this._finishCreating(e.shiftKey);
@@ -370,6 +462,7 @@ class App {
                 }
                 if (info.mode === 'rotate') {
                     this.history.pushRotate(info.element, info.fromRotation, info.toRotation);
+                    this._updateConnectedLines([info.element.id]);
                 }
             }
             this._refreshUI();
@@ -565,6 +658,7 @@ class App {
         } else {
             el = new ShapeElement(tool, wx, wy, 0, 0);
         }
+
         el.color = '#e0e0e0';
         this._creatingElement = el;
         this.elements.push(el);
@@ -683,19 +777,30 @@ class App {
         this._createStart = null;
 
         // For data structures: open dialog after creation
-        if (['matrix', 'stack', 'queue'].includes(tool)) {
+        if (['matrix', 'stack', 'queue', 'tree', 'graph'].includes(tool)) {
+            // Force size to 0 so there is no empty collision box visible while typing for the first time
+            if (!el.inputText) {
+                if (tool === 'tree' || tool === 'graph') {
+                    el.buildFromText('', tool === 'graph' ? false : 'values');
+                } else {
+                    el.setFromText('');
+                }
+            }
             this.toolbar.setTool('select');
-            this._showDataStructureDialog(el);
-        } else if (tool === 'tree') {
-            this.toolbar.setTool('select');
-            this._showTreeDialog(el);
-        } else if (tool === 'graph') {
-            this.toolbar.setTool('select');
-            this._showGraphDialog(el);
+            if (tool === 'tree') this._showTreeDialog(el);
+            else if (tool === 'graph') this._showGraphDialog(el);
+            else this._showDataStructureDialog(el);
         } else {
             this.toolbar.setTool('select');
         }
         this._refreshUI();
+    }
+
+    _deleteElement(el) {
+        const idx = this.elements.indexOf(el);
+        if (idx >= 0) this.elements.splice(idx, 1);
+        this.selectionManager.selectedElements = this.selectionManager.selectedElements.filter(e => e !== el);
+        this.layerManager._reindex();
     }
 
     // ═════════════════════════════════════════════════════
@@ -703,6 +808,7 @@ class App {
     // ═════════════════════════════════════════════════════
     _createTextAt(wx, wy) {
         const el = new TextElement(wx, wy);
+        el.autoSize(this.ctx);
         this.elements.push(el);
         this.layerManager._reindex();
         this.history.pushAdd(this, el);
@@ -712,29 +818,61 @@ class App {
         this._refreshUI();
     }
 
+
     // ═════════════════════════════════════════════════════
     // Inline Text Editing
     // ═════════════════════════════════════════════════════
     _startTextEditing(el) {
         this._textEditing = el;
+        el.isEditing = true;
         const overlay = document.getElementById('text-edit-overlay');
         if (!overlay) return;
 
-        const b = el.getBounds();
-        const screenTL = this.camera.worldToScreen(b.x, b.y);
+        // Position overlay exactly at element origin (no padding offset)
+        const screenTL = this.camera.worldToScreen(el.x, el.y);
+        const scaleX = (el._baseWidth && el._baseWidth > 0) ? el.width / el._baseWidth : 1;
+        const effectiveFontSize = el.fontSize * scaleX * this.camera.zoom;
 
         overlay.style.display = 'block';
         overlay.style.left = screenTL.x + 'px';
         overlay.style.top = screenTL.y + 'px';
-        overlay.style.width = (b.w * this.camera.zoom) + 'px';
-        overlay.style.height = (b.h * this.camera.zoom) + 'px';
-        overlay.style.fontSize = (el.fontSize * this.camera.zoom) + 'px';
+        overlay.style.width = (el.width * this.camera.zoom) + 'px';
+        overlay.style.height = (el.height * this.camera.zoom) + 'px';
+        overlay.style.fontSize = effectiveFontSize + 'px';
+        overlay.style.fontFamily = el.fontFamily;
+        overlay.style.lineHeight = '1.3';
+        overlay.style.textAlign = 'left';
+        overlay.style.whiteSpace = 'pre';
+        overlay.style.color = 'transparent';
+        overlay.style.caretColor = el.color || 'var(--text-primary)';
+        
+        overlay.style.fontWeight = el.isBold ? 'bold' : 'normal';
+        overlay.style.fontStyle = el.isItalic ? 'italic' : 'normal';
+        overlay.style.textDecoration = el.isUnderline ? 'underline' : 'none';
+
+        if (el.rotation) {
+            overlay.style.transformOrigin = 'top left';
+            overlay.style.transform = `rotate(${el.rotation}rad)`;
+        } else {
+            overlay.style.transformOrigin = 'top left';
+            overlay.style.transform = 'none';
+        }
+
         overlay.value = el.text;
         overlay.focus();
         overlay.select();
 
         // Save old text for undo
         this._textEditOld = el.text;
+
+        this._textInputHandler = () => {
+            if (this._textEditing) {
+                this._textEditing.text = overlay.value;
+                this._textEditing.autoSize(this.ctx);
+                this.renderer.markDirty();
+            }
+        };
+        overlay.addEventListener('input', this._textInputHandler);
 
         overlay.onblur = () => this._finishTextEditing();
     }
@@ -744,12 +882,11 @@ class App {
         const overlay = document.getElementById('text-edit-overlay');
         if (!overlay) return;
 
+        overlay.removeEventListener('input', this._textInputHandler);
+
         const el = this._textEditing;
         const newText = overlay.value;
         const oldText = this._textEditOld;
-
-        el.text = newText;
-        el.autoSize(this.ctx);
 
         if (oldText !== newText) {
             this.history.pushPropertyChange(el, 'text', oldText, newText);
@@ -757,6 +894,7 @@ class App {
 
         overlay.style.display = 'none';
         overlay.onblur = null;
+        this._textEditing.isEditing = false;
         this._textEditing = null;
         this.renderer.markDirty();
     }
@@ -789,17 +927,32 @@ class App {
         const placeholder = el.type === 'matrix'
             ? '輸入矩陣，每行一列，數值以空格分隔\n例：\n1 2 3\n4 5 6\n\n或輸入維度建立空矩陣，例：3*5'
             : '輸入數值，以空格或換行分隔\n例：1 2 3 4 5';
+        const oldText = el.inputText || '';
         this.textInputDialog.show({
             title: `編輯${typeLabel}`,
             placeholder,
-            defaultText: el.inputText || '',
+            defaultText: oldText,
             onInput: (text) => {
                 if (!text.trim()) return;
                 el.setFromText(text);
                 this.renderer.markDirty();
             },
+            onCancel: () => {
+                if (!oldText.trim()) {
+                    this._deleteElement(el);
+                } else {
+                    el.setFromText(oldText);
+                }
+                this.renderer.markDirty();
+                this._refreshUI();
+            },
             onConfirm: (text) => {
-                const oldText = el.inputText || '';
+                if (!text.trim()) {
+                    this._deleteElement(el);
+                    this.renderer.markDirty();
+                    this._refreshUI();
+                    return;
+                }
                 el.setFromText(text);
                 if (oldText !== text) {
                     this.history.push({
@@ -829,10 +982,12 @@ class App {
     }
 
     _showTreeDialog(el) {
+        const oldText = el.inputText || '';
+        const oldType = el.treeType;
         this.textInputDialog.show({
             title: '編輯樹',
             placeholder: '父節點格式（每行：值 父值）或數值列表',
-            defaultText: el.inputText || '',
+            defaultText: oldText,
             showTypeSelect: true,
             types: [
                 { value: 'binary', label: '二元樹', selected: el.treeType === 'binary' },
@@ -849,9 +1004,23 @@ class App {
                 if (!type) el.treeType = prevType;
                 this.renderer.markDirty();
             },
+            onCancel: () => {
+                if (!oldText.trim()) {
+                    this._deleteElement(el);
+                } else {
+                    el.treeType = oldType;
+                    el.buildFromText(oldText, el._detectMode(oldText));
+                }
+                this.renderer.markDirty();
+                this._refreshUI();
+            },
             onConfirm: (text, type, mode) => {
-                const oldText = el.inputText || '';
-                const oldType = el.treeType;
+                if (!text.trim()) {
+                    this._deleteElement(el);
+                    this.renderer.markDirty();
+                    this._refreshUI();
+                    return;
+                }
                 if (type) el.treeType = type;
                 const error = el.buildFromText(text, mode || 'values');
                 if (error) {
@@ -904,6 +1073,12 @@ class App {
                 this.renderer.markDirty();
             },
             onConfirm: (text, _type, _mode, directed) => {
+                if (!text.trim()) {
+                    this._deleteElement(el);
+                    this.renderer.markDirty();
+                    this._refreshUI();
+                    return;
+                }
                 const oldText = el.inputText || '';
                 const oldDirected = el.directed;
                 el.buildFromText(text, directed);
@@ -973,6 +1148,7 @@ class App {
             const newValue = overlay.value.trim();
             if (matrixEl.data[row]) {
                 matrixEl.data[row][col] = newValue;
+                if (matrixEl.updateTextFromData) matrixEl.updateTextFromData();
             }
             overlay.style.display = 'none';
             resetOverlayStyle();
@@ -981,8 +1157,14 @@ class App {
             if (oldValue !== newValue) {
                 this.history.push({
                     description: 'Edit Matrix Cell',
-                    undo: () => { if (matrixEl.data[row]) matrixEl.data[row][col] = oldValue; },
-                    redo: () => { if (matrixEl.data[row]) matrixEl.data[row][col] = newValue; }
+                    undo: () => { 
+                        if (matrixEl.data[row]) matrixEl.data[row][col] = oldValue; 
+                        if (matrixEl.updateTextFromData) matrixEl.updateTextFromData();
+                    },
+                    redo: () => { 
+                        if (matrixEl.data[row]) matrixEl.data[row][col] = newValue; 
+                        if (matrixEl.updateTextFromData) matrixEl.updateTextFromData();
+                    }
                 });
             }
             this.renderer.markDirty();
@@ -1156,6 +1338,33 @@ class App {
                 e.preventDefault();
                 this.selectionManager.selectAll();
                 this._refreshUI();
+                return;
+            }
+
+            // ── Ctrl+C  Copy ──────────────────────
+            if (ctrl && e.key === 'c') {
+                e.preventDefault();
+                this._copyToClipboard();
+                return;
+            }
+
+            // ── Ctrl+X  Cut ───────────────────────
+            if (ctrl && e.key === 'x') {
+                e.preventDefault();
+                this._copyToClipboard();
+                const toRemove = this.selectionManager.selectedElements.slice();
+                if (toRemove.length) {
+                    this.history.pushDelete(this, toRemove);
+                    this.selectionManager.deleteSelected();
+                    this._refreshUI();
+                }
+                return;
+            }
+
+            // ── Ctrl+V  Paste ─────────────────────
+            if (ctrl && e.key === 'v') {
+                e.preventDefault();
+                this._pasteFromClipboard();
                 return;
             }
 
@@ -1335,6 +1544,11 @@ class App {
             s.style.display = '';
         });
 
+        const mPrefix = document.getElementById('ctx-matrix-prefix');
+        const mDiff = document.getElementById('ctx-matrix-diff');
+        if (mPrefix) mPrefix.style.display = (hit.type === 'matrix') ? '' : 'none';
+        if (mDiff) mDiff.style.display = (hit.type === 'matrix') ? '' : 'none';
+
         // Position (clamp inside viewport)
         const vw = window.innerWidth, vh = window.innerHeight;
         const mw = 180, mh = hasEl ? 270 : 8;
@@ -1407,6 +1621,16 @@ class App {
             this._hideContextMenu();
             this._duplicateSelected();
         });
+        document.getElementById('ctx-matrix-prefix')?.addEventListener('click', () => {
+            const el = this._ctxTarget;
+            this._hideContextMenu();
+            if (el && el.type === 'matrix') this._duplicateAndTransformMatrix(el, 'prefix');
+        });
+        document.getElementById('ctx-matrix-diff')?.addEventListener('click', () => {
+            const el = this._ctxTarget;
+            this._hideContextMenu();
+            if (el && el.type === 'matrix') this._duplicateAndTransformMatrix(el, 'diff');
+        });
         document.getElementById('ctx-bring-front')?.addEventListener('click', () => {
             const el = this._ctxTarget;
             this._hideContextMenu();
@@ -1440,6 +1664,53 @@ class App {
     }
 
     // ═════════════════════════════════════════════════════
+    // Clipboard (Copy / Paste)
+    // ═════════════════════════════════════════════════════
+    _copyToClipboard() {
+        const sel = this.selectionManager.selectedElements;
+        if (!sel.length) return;
+        this._clipboard = sel.map(el => el.serialize());
+    }
+
+    _pasteFromClipboard() {
+        if (!this._clipboard || !this._clipboard.length) return;
+        const newEls = [];
+        for (const data of this._clipboard) {
+            const newData = JSON.parse(JSON.stringify(data));
+            // Remove id to get new one
+            delete newData.id;
+            // Offset slightly
+            newData.x += 20;
+            newData.y += 20;
+            let newEl;
+            const TYPE_MAP = {
+                rectangle: ShapeElement, circle: ShapeElement, ellipse: ShapeElement,
+                line: ShapeElement, arrow: ShapeElement,
+                text: TextElement, matrix: MatrixElement, stack: StackElement,
+                queue: QueueElement, mermaid: MermaidElement,
+                pen: PenElement, tree: TreeElement, graph: GraphElement
+            };
+            const Cls = TYPE_MAP[newData.type];
+            if (!Cls) continue;
+            newEl = Cls.fromData ? Cls.fromData(newData) : new Cls();
+            newEl.deserialize(newData);
+            this.elements.push(newEl);
+            newEls.push(newEl);
+            
+            // Also update the clipboard data so next paste offsets again!
+            data.x += 20;
+            data.y += 20;
+        }
+        if (newEls.length) {
+            this.history.pushAdd(this, newEls);
+            this.selectionManager.clear();
+            for (const n of newEls) this.selectionManager.select(n);
+            this.layerManager._reindex();
+            this._refreshUI();
+        }
+    }
+
+    // ═════════════════════════════════════════════════════
     // Duplicate
     // ═════════════════════════════════════════════════════
     _duplicateSelected() {
@@ -1447,7 +1718,7 @@ class App {
         if (!sel.length) return;
         const newEls = [];
         for (const el of sel) {
-            const data = el.serialize();
+            const data = JSON.parse(JSON.stringify(el.serialize()));
             // Remove id to get new one
             delete data.id;
             // Offset
@@ -1458,7 +1729,8 @@ class App {
                 rectangle: ShapeElement, circle: ShapeElement, ellipse: ShapeElement,
                 line: ShapeElement, arrow: ShapeElement,
                 text: TextElement, matrix: MatrixElement, stack: StackElement,
-                queue: QueueElement, tree: TreeElement, graph: GraphElement
+                queue: QueueElement, mermaid: MermaidElement,
+                pen: PenElement
             };
             const Cls = TYPE_MAP[data.type];
             if (!Cls) continue;
@@ -1477,6 +1749,173 @@ class App {
         this.selectionManager.selectedElements = newEls;
         this.layerManager._reindex();
         this._refreshUI();
+    }
+
+    _duplicateAndTransformMatrix(el, transformType) {
+        const data = JSON.parse(JSON.stringify(el.serialize()));
+        delete data.id;
+        data.x += 50;
+        data.y += 50;
+        
+        let matrixData = data.data.map(row => row.map(val => Number(val) || 0));
+        let newMatrixData = [];
+        
+        if (transformType === 'prefix') {
+            const R = matrixData.length;
+            const C = (matrixData[0] || []).length;
+            
+            if (R === 1) {
+                // 1D horizontal prefix sum
+                newMatrixData.push(new Array(C + 1).fill(0));
+                for (let j = 1; j <= C; j++) {
+                    newMatrixData[0][j] = newMatrixData[0][j-1] + matrixData[0][j-1];
+                }
+            } else if (C === 1) {
+                // 1D vertical prefix sum
+                for (let i = 0; i <= R; i++) {
+                    newMatrixData.push([0]);
+                }
+                for (let i = 1; i <= R; i++) {
+                    newMatrixData[i][0] = newMatrixData[i-1][0] + matrixData[i-1][0];
+                }
+            } else {
+                // 2D Prefix Sum: P[i][j] = A[i-1][j-1] + P[i-1][j] + P[i][j-1] - P[i-1][j-1]
+                for (let i = 0; i <= R; i++) {
+                    newMatrixData.push(new Array(C + 1).fill(0));
+                }
+                for (let i = 1; i <= R; i++) {
+                    for (let j = 1; j <= C; j++) {
+                        newMatrixData[i][j] = matrixData[i-1][j-1] 
+                                            + newMatrixData[i-1][j] 
+                                            + newMatrixData[i][j-1] 
+                                            - newMatrixData[i-1][j-1];
+                    }
+                }
+            }
+        } else if (transformType === 'diff') {
+            // 2D Difference Array: D[i][j] = A[i][j] - A[i-1][j] - A[i][j-1] + A[i-1][j-1]
+            const R = matrixData.length;
+            const C = (matrixData[0] || []).length;
+            for (let i = 0; i < R; i++) {
+                newMatrixData.push(new Array(C).fill(0));
+            }
+            for (let i = 0; i < R; i++) {
+                for (let j = 0; j < C; j++) {
+                    const top = i > 0 ? matrixData[i-1][j] : 0;
+                    const left = j > 0 ? matrixData[i][j-1] : 0;
+                    const topLeft = (i > 0 && j > 0) ? matrixData[i-1][j-1] : 0;
+                    newMatrixData[i][j] = matrixData[i][j] - top - left + topLeft;
+                }
+            }
+        }
+        
+        // Convert to string and set
+        const newText = newMatrixData.map(row => row.join(' ')).join('\n');
+        data.inputText = newText;
+        data.data = newMatrixData.map(row => row.map(String));
+        data.rows = newMatrixData.length;
+        data.cols = (newMatrixData[0] || []).length;
+        
+        const newEl = MatrixElement.fromData(data);
+        newEl.deserialize(data);
+        
+        // Assign fresh ID
+        const nextEl = new Element('_tmp');
+        newEl.id = nextEl.id;
+        
+        newEl._updateSize();
+        
+        this.elements.push(newEl);
+        this.history.pushAdd(this, newEl);
+        this.selectionManager.clear();
+        this.selectionManager.select(newEl);
+        this.layerManager._reindex();
+        this._refreshUI();
+    }
+
+    // ═════════════════════════════════════════════════════
+    // Settings
+    // ═════════════════════════════════════════════════════
+    _bindSettings() {
+        // Close on backdrop click
+        document.getElementById('settings-modal')?.addEventListener('click', (e) => {
+            if (e.target.id === 'settings-modal') {
+                e.currentTarget.classList.remove('open');
+            }
+        });
+        document.getElementById('settings-close')?.addEventListener('click', () => {
+            document.getElementById('settings-modal')?.classList.remove('open');
+        });
+
+        const $s = id => document.getElementById(id);
+
+        $s('settings-show-grid')?.addEventListener('change', (e) => {
+            this.settings.showGrid = e.target.checked;
+            this.renderer.markDirty();
+            this._saveSettings();
+        });
+        $s('settings-grid-spacing')?.addEventListener('input', (e) => {
+            const v = parseInt(e.target.value);
+            this.settings.gridSpacing = v;
+            const disp = $s('settings-grid-spacing-val');
+            if (disp) disp.textContent = v;
+            this.grid.baseSpacing = v;
+            this.renderer.markDirty();
+            this._saveSettings();
+        });
+        $s('settings-pen-size')?.addEventListener('input', (e) => {
+            const v = parseInt(e.target.value);
+            this.settings.defaultPenSize = v;
+            const disp = $s('settings-pen-size-val');
+            if (disp) disp.textContent = v;
+            this._saveSettings();
+        });
+        $s('settings-pen-smoothing')?.addEventListener('input', (e) => {
+            const v = parseInt(e.target.value);
+            this.settings.defaultPenSmoothing = v;
+            const disp = $s('settings-pen-smoothing-val');
+            if (disp) disp.textContent = v;
+            this._saveSettings();
+        });
+        $s('settings-stroke-width')?.addEventListener('input', (e) => {
+            const v = parseInt(e.target.value);
+            this.settings.defaultStrokeWidth = v;
+            const disp = $s('settings-stroke-width-val');
+            if (disp) disp.textContent = v;
+            this._saveSettings();
+        });
+    }
+
+    _syncSettingsUI() {
+        const s = this.settings;
+        const $s = id => document.getElementById(id);
+        const setCb = (id, val) => { const el = $s(id); if (el) el.checked = !!val; };
+        const setRange = (id, val, dispId) => {
+            const el = $s(id); if (el) el.value = val;
+            const d  = $s(dispId); if (d) d.textContent = val;
+        };
+        setCb('settings-show-grid', s.showGrid !== false);
+        setRange('settings-grid-spacing',  s.gridSpacing     || 40, 'settings-grid-spacing-val');
+        setRange('settings-pen-size',      s.defaultPenSize  || 2,  'settings-pen-size-val');
+        setRange('settings-pen-smoothing', s.defaultPenSmoothing || 3, 'settings-pen-smoothing-val');
+        setRange('settings-stroke-width',  s.defaultStrokeWidth ?? 2, 'settings-stroke-width-val');
+    }
+
+    _saveSettings() {
+        try { localStorage.setItem('wb_settings', JSON.stringify(this.settings)); } catch (_) {}
+    }
+
+    _loadSettings() {
+        try {
+            const raw = localStorage.getItem('wb_settings');
+            if (raw) {
+                Object.assign(this.settings, JSON.parse(raw));
+                // Apply persisted grid spacing immediately
+                if (this.grid && this.settings.gridSpacing) {
+                    this.grid.baseSpacing = this.settings.gridSpacing;
+                }
+            }
+        } catch (_) {}
     }
 
     // ═════════════════════════════════════════════════════
@@ -1519,7 +1958,8 @@ class App {
                 line: ShapeElement, arrow: ShapeElement,
                 text: TextElement, matrix: MatrixElement,
                 stack: StackElement, queue: QueueElement,
-                tree: TreeElement, graph: GraphElement,
+                mermaid: MermaidElement,
+                pen: PenElement,
             };
             this._skipAutosave = true;
             this.elements = [];

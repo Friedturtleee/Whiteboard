@@ -6,8 +6,10 @@ import { TextElement } from '../elements/TextElement.js';
 import { MatrixElement } from '../elements/MatrixElement.js';
 import { StackElement } from '../elements/StackElement.js';
 import { QueueElement } from '../elements/QueueElement.js';
-import { TreeElement } from '../tree/TreeElement.js';
-import { GraphElement } from '../graph/GraphElement.js';
+import { PenElement } from '../elements/PenElement.js';
+import { MermaidElement } from '../elements/MermaidElement.js';
+import { TreeElement } from '../elements/TreeElement.js';
+import { GraphElement } from '../elements/GraphElement.js';
 import { Element } from './Element.js';
 
 const TYPE_MAP = {
@@ -20,6 +22,8 @@ const TYPE_MAP = {
     matrix: MatrixElement,
     stack: StackElement,
     queue: QueueElement,
+    pen: PenElement,
+    mermaid: MermaidElement,
     tree: TreeElement,
     graph: GraphElement,
 };

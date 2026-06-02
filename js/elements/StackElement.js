@@ -34,7 +34,13 @@ export class StackElement extends Element {
 
     _updateSize() {
         const count = Math.min(this.items.length, this.maxDisplay);
-        this.height = Math.max(80, count * this.cellHeight + 40);
+        if (count === 0) {
+            this.width = 0;
+            this.height = 0;
+        } else {
+            this.height = Math.max(this.cellHeight, count * this.cellHeight);
+            this.width = 60; // default stack width
+        }
     }
 
     /**
@@ -67,12 +73,20 @@ export class StackElement extends Element {
         ctx.strokeRect(x, y, w, this.height);
 
         // Items drawn bottom-up
-        ctx.font = `${fontSize}px Consolas, monospace`;
         ctx.textAlign = 'center';
         ctx.textBaseline = 'middle';
 
         const displayItems = items.slice(-this.maxDisplay);
         const baseY = y + this.height - 10;
+
+        // Adaptive font size: fit text within cell
+        const maxLen = Math.max(1, ...displayItems.map(v => String(v).length));
+        const cellInnerW = w - 12;
+        const cellInnerH = cellHeight - 8;
+        const fontByWidth = cellInnerW / (maxLen * 0.6);
+        const fontByHeight = cellInnerH * 0.5;
+        const adaptiveFontSize = Math.max(8, Math.min(fontByWidth, fontByHeight, 18));
+        ctx.font = `${adaptiveFontSize}px Consolas, monospace`;
 
         for (let i = 0; i < displayItems.length; i++) {
             const cy = baseY - (i + 1) * cellHeight + cellHeight / 2;
