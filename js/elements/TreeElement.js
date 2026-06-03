@@ -8,6 +8,8 @@ export class TreeElement extends Element {
         this.root = null;
         this.nodeRadius = 20;
         this.fontSize = 16;
+        this.levelHeight = 60;
+        this.nodeSpacing = 40;
     }
 
     _detectMode(text) {
@@ -56,31 +58,73 @@ export class TreeElement extends Element {
                 }
             }
         } else {
-            // parent mode: "val parent"
+            // CP style tree edges mode: "u v" (parent child)
             const lines = text.trim().split('\n');
             const nodes = {};
+            const inDegree = {};
             let rootVal = null;
-            for (const line of lines) {
-                const parts = line.trim().split(/\s+/);
-                if (parts.length > 0 && parts[0]) {
+            let firstNode = null;
+
+            for (let i = 0; i < lines.length; i++) {
+                const line = lines[i].trim();
+                if (!line) continue;
+                const parts = line.split(/\s+/);
+
+                if (parts.length === 1) {
                     const val = isNaN(Number(parts[0])) ? parts[0] : Number(parts[0]);
-                    const parent = parts.length > 1 ? (isNaN(Number(parts[1])) ? parts[1] : Number(parts[1])) : null;
-                    if (!nodes[val]) nodes[val] = { value: val, left: null, right: null };
-                    if (parent) {
-                        if (!nodes[parent]) nodes[parent] = { value: parent, left: null, right: null };
-                        if (!nodes[parent].left) nodes[parent].left = nodes[val];
-                        else if (!nodes[parent].right) nodes[parent].right = nodes[val];
-                    } else {
+                    if (i === 0) {
+                        // Usually N (number of nodes). Keep as fallback root.
                         rootVal = val;
+                        if (!nodes[val]) nodes[val] = { value: val, left: null, right: null };
+                    }
+                } else if (parts.length >= 2) {
+                    const u = isNaN(Number(parts[0])) ? parts[0] : Number(parts[0]); // parent
+                    const v = isNaN(Number(parts[1])) ? parts[1] : Number(parts[1]); // child
+
+                    if (firstNode === null) firstNode = u;
+
+                    if (!nodes[u]) nodes[u] = { value: u, left: null, right: null };
+                    if (!nodes[v]) nodes[v] = { value: v, left: null, right: null };
+
+                    // Append child
+                    if (!nodes[u].left) nodes[u].left = nodes[v];
+                    else if (!nodes[u].right) nodes[u].right = nodes[v];
+
+                    inDegree[v] = (inDegree[v] || 0) + 1;
+                    if (inDegree[u] === undefined) inDegree[u] = 0;
+                }
+            }
+
+            // Find root: node with in-degree 0
+            let bestRoot = null;
+            let maxChildren = -1;
+            
+            for (const key of Object.keys(nodes)) {
+                if (!inDegree[key]) {
+                    const childCount = (nodes[key].left ? 1 : 0) + (nodes[key].right ? 1 : 0);
+                    if (childCount > maxChildren) {
+                        maxChildren = childCount;
+                        bestRoot = key;
                     }
                 }
             }
-            if (rootVal !== null && nodes[rootVal]) {
+            
+            if (bestRoot !== null) {
+                this.root = nodes[bestRoot];
+            } else if (rootVal !== null && nodes[rootVal]) {
                 this.root = nodes[rootVal];
+            } else if (firstNode !== null) {
+                this.root = nodes[firstNode];
             } else {
                 const allVals = Object.keys(nodes);
                 if (allVals.length > 0) this.root = nodes[allVals[0]];
             }
+        }
+
+        if (!this.root) {
+            this.width = 0;
+            this.height = 0;
+            return null;
         }
 
         this._layoutTree();
@@ -96,8 +140,8 @@ export class TreeElement extends Element {
 
     _layoutTree() {
         if (!this.root) return;
-        const levelHeight = 60;
-        const nodeSpacing = 40;
+        const levelHeight = this.levelHeight || 60;
+        const nodeSpacing = this.nodeSpacing || 40;
         
         const computePos = (node, depth, minX) => {
             if (!node) return minX;
@@ -148,6 +192,48 @@ export class TreeElement extends Element {
 
     _getCurrentOffsets() {
         return { offsetX: this.x, offsetY: this.y };
+    }
+
+    onResizeStart() {
+        this._origW = this.width;
+        this._origH = this.height;
+        this._origRadius = this.nodeRadius;
+        this._origFontSize = this.fontSize;
+        this._origLevelHeight = this.levelHeight || 60;
+        this._origNodeSpacing = this.nodeSpacing || 40;
+        this._origNodes = new Map();
+        
+        const traverse = (n) => {
+            if (!n) return;
+            this._origNodes.set(n, { x: n.x, y: n.y });
+            traverse(n.left);
+            traverse(n.right);
+        };
+        traverse(this.root);
+    }
+
+    onResize(newW, newH) {
+        if (!this._origW || !this._origH) return;
+        const scaleX = newW / this._origW;
+        const scaleY = newH / this._origH;
+        const scale = Math.min(scaleX, scaleY);
+        
+        this.nodeRadius = Math.max(5, this._origRadius * scale);
+        this.fontSize = Math.max(8, this._origFontSize * scale);
+        this.levelHeight = Math.max(20, this._origLevelHeight * scaleY);
+        this.nodeSpacing = Math.max(10, this._origNodeSpacing * scaleX);
+        
+        const traverse = (n) => {
+            if (!n) return;
+            const orig = this._origNodes.get(n);
+            if (orig) {
+                n.x = orig.x * scaleX;
+                n.y = orig.y * scaleY;
+            }
+            traverse(n.left);
+            traverse(n.right);
+        };
+        traverse(this.root);
     }
 
     updateTextFromNodes() {

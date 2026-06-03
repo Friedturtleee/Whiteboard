@@ -43,6 +43,8 @@ export class Transform {
         this.startBounds = { x: el.x, y: el.y, w: el.width, h: el.height };
         this.startPoints = el.points ? el.points.map(p => ({ x: p.x, y: p.y })) : null;
         this.targetElement = el;
+        // Let element snapshot any internal state it needs for proportional resize
+        if (el.onResizeStart) el.onResizeStart();
     }
 
     startRotate(wx, wy, el) {
@@ -89,6 +91,8 @@ export class Transform {
         if (this.mode === 'resize') {
             const el = this.targetElement;
             const sb = this.startBounds;
+            const theta = el.rotation || 0;
+
             const dx = wx - this.startX;
             const dy = wy - this.startY;
 
@@ -195,6 +199,7 @@ export class Transform {
                     el.points[i].y = ny;
                 }
             }
+
 
             // Notify element of resize so it can update internal layout
             if (el.onResize) el.onResize(el.width, el.height);

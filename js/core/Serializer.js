@@ -26,6 +26,7 @@ const TYPE_MAP = {
     mermaid: MermaidElement,
     tree: TreeElement,
     graph: GraphElement,
+    pen: PenElement,
 };
 
 export class Serializer {

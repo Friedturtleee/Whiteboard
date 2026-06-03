@@ -822,23 +822,40 @@ class App {
     // ═════════════════════════════════════════════════════
     // Inline Text Editing
     // ═════════════════════════════════════════════════════
+    _updateTextEditingOverlay() {
+        if (!this._textEditing) return;
+        const el = this._textEditing;
+        const overlay = document.getElementById('text-edit-overlay');
+        if (!overlay) return;
+
+        const screenTL = this.camera.worldToScreen(el.x, el.y);
+        const scaleX = (el._baseWidth && el._baseWidth > 0) ? el.width / el._baseWidth : 1;
+        const effectiveFontSize = el.fontSize * scaleX * this.camera.zoom;
+
+        overlay.style.left = screenTL.x + 'px';
+        overlay.style.top = screenTL.y + 'px';
+        overlay.style.width = (el.width * this.camera.zoom) + 'px';
+        overlay.style.height = (el.height * this.camera.zoom) + 'px';
+        overlay.style.fontSize = effectiveFontSize + 'px';
+        
+        if (el.rotation) {
+            overlay.style.transformOrigin = 'top left';
+            overlay.style.transform = `rotate(${el.rotation}rad)`;
+        } else {
+            overlay.style.transformOrigin = 'top left';
+            overlay.style.transform = 'none';
+        }
+    }
+
     _startTextEditing(el) {
         this._textEditing = el;
         el.isEditing = true;
         const overlay = document.getElementById('text-edit-overlay');
         if (!overlay) return;
 
-        // Position overlay exactly at element origin (no padding offset)
-        const screenTL = this.camera.worldToScreen(el.x, el.y);
-        const scaleX = (el._baseWidth && el._baseWidth > 0) ? el.width / el._baseWidth : 1;
-        const effectiveFontSize = el.fontSize * scaleX * this.camera.zoom;
-
         overlay.style.display = 'block';
-        overlay.style.left = screenTL.x + 'px';
-        overlay.style.top = screenTL.y + 'px';
-        overlay.style.width = (el.width * this.camera.zoom) + 'px';
-        overlay.style.height = (el.height * this.camera.zoom) + 'px';
-        overlay.style.fontSize = effectiveFontSize + 'px';
+        this._updateTextEditingOverlay();
+        
         overlay.style.fontFamily = el.fontFamily;
         overlay.style.lineHeight = '1.3';
         overlay.style.textAlign = 'left';
@@ -849,14 +866,6 @@ class App {
         overlay.style.fontWeight = el.isBold ? 'bold' : 'normal';
         overlay.style.fontStyle = el.isItalic ? 'italic' : 'normal';
         overlay.style.textDecoration = el.isUnderline ? 'underline' : 'none';
-
-        if (el.rotation) {
-            overlay.style.transformOrigin = 'top left';
-            overlay.style.transform = `rotate(${el.rotation}rad)`;
-        } else {
-            overlay.style.transformOrigin = 'top left';
-            overlay.style.transform = 'none';
-        }
 
         overlay.value = el.text;
         overlay.focus();
@@ -869,6 +878,13 @@ class App {
             if (this._textEditing) {
                 this._textEditing.text = overlay.value;
                 this._textEditing.autoSize(this.ctx);
+                
+                this._updateTextEditingOverlay();
+                
+                // Reset scroll to prevent misaligned caret
+                overlay.scrollLeft = 0;
+                overlay.scrollTop = 0;
+                
                 this.renderer.markDirty();
             }
         };
@@ -947,18 +963,30 @@ class App {
                 this._refreshUI();
             },
             onConfirm: (text) => {
-                if (!text.trim()) {
+                el.setFromText(text);
+                if (!text.trim() || (el.width === 0 && el.height === 0)) {
                     this._deleteElement(el);
                     this.renderer.markDirty();
                     this._refreshUI();
                     return;
                 }
-                el.setFromText(text);
                 if (oldText !== text) {
                     this.history.push({
                         description: `Edit ${el.type}`,
-                        undo: () => { el.setFromText(oldText); },
-                        redo: () => { el.setFromText(text); }
+                        undo: () => { 
+                            if (!this.elements.includes(el)) {
+                                this.elements.push(el);
+                                this.layerManager._reindex();
+                            }
+                            el.setFromText(oldText); 
+                        },
+                        redo: () => { 
+                            if (!this.elements.includes(el)) {
+                                this.elements.push(el);
+                                this.layerManager._reindex();
+                            }
+                            el.setFromText(text); 
+                        }
                     });
                 }
                 this.renderer.markDirty();
@@ -982,11 +1010,11 @@ class App {
     }
 
     _showTreeDialog(el) {
-        const oldText = el.inputText || '';
-        const oldType = el.treeType;
+        const originalText = el.inputText || '';
+        const originalType = el.treeType;
         this.textInputDialog.show({
             title: '編輯樹',
-            placeholder: '父節點格式（每行：值 父值）或數值列表',
+            placeholder: '邊列表格式（首行節點數，其後每行：父 子）\n或層序數值列表',
             defaultText: oldText,
             showTypeSelect: true,
             types: [
@@ -1005,37 +1033,45 @@ class App {
                 this.renderer.markDirty();
             },
             onCancel: () => {
-                if (!oldText.trim()) {
+                if (!originalText.trim()) {
                     this._deleteElement(el);
                 } else {
-                    el.treeType = oldType;
-                    el.buildFromText(oldText, el._detectMode(oldText));
+                    el.treeType = originalType;
+                    el.buildFromText(originalText, el._detectMode(originalText));
                 }
                 this.renderer.markDirty();
                 this._refreshUI();
             },
             onConfirm: (text, type, mode) => {
-                if (!text.trim()) {
+                if (type) el.treeType = type;
+                const error = el.buildFromText(text, mode || 'values');
+                if (!text.trim() || (el.width === 0 && el.height === 0)) {
                     this._deleteElement(el);
                     this.renderer.markDirty();
                     this._refreshUI();
                     return;
                 }
-                if (type) el.treeType = type;
-                const error = el.buildFromText(text, mode || 'values');
                 if (error) {
                     this._toast('⚠ ' + error, 4000);
                 }
-                if (oldText !== text || oldType !== type) {
+                if (originalText !== text || originalType !== type) {
                     this.history.push({
                         description: 'Edit Tree',
                         undo: () => {
-                            el.treeType = oldType;
-                            if (oldText) el.buildFromText(oldText, el._detectMode(oldText));
+                            if (!this.elements.includes(el)) {
+                                this.elements.push(el);
+                                this.layerManager._reindex();
+                            }
+                            el.treeType = originalType;
+                            if (originalText) el.buildFromText(originalText, el._detectMode(originalText));
                             else { el.root = null; el.inputText = ''; }
                         },
                         redo: () => {
-                            el.treeType = type || oldType;
+                            if (!this.elements.includes(el)) {
+                                this.elements.push(el);
+                                this.layerManager._reindex();
+                            }
+                            el.treeType = type || originalType;
                             el.buildFromText(text, mode || 'values');
                         }
                     });
@@ -1061,35 +1097,57 @@ class App {
     }
 
     _showGraphDialog(el) {
+        const originalText = el.inputText || '';
+        const originalDirected = el.directed;
+
         this.textInputDialog.show({
             title: '編輯圖',
             placeholder: '第一行: N M (節點數 邊數)\n之後每行: u v [w]\n例：\n4 5\n1 2\n2 3 7\n3 4\n4 1\n1 3',
-            defaultText: el.inputText || '',
+            defaultText: originalText,
             showDirectedCheckbox: true,
-            directed: el.directed,
+            directed: originalDirected,
             onInput: (text, _type, _mode, directed) => {
                 if (!text.trim()) return;
                 el.buildFromText(text, directed);
                 this.renderer.markDirty();
             },
+            onCancel: () => {
+                if (!originalText.trim()) {
+                    this._deleteElement(el);
+                } else {
+                    el.buildFromText(originalText, originalDirected);
+                }
+                this.renderer.markDirty();
+                this._refreshUI();
+            },
             onConfirm: (text, _type, _mode, directed) => {
-                if (!text.trim()) {
+                el.buildFromText(text, directed);
+                
+                if (!text.trim() || (el.width === 0 && el.height === 0)) {
                     this._deleteElement(el);
                     this.renderer.markDirty();
                     this._refreshUI();
                     return;
                 }
-                const oldText = el.inputText || '';
-                const oldDirected = el.directed;
-                el.buildFromText(text, directed);
-                if (oldText !== text || oldDirected !== directed) {
+                
+                if (originalText !== text || originalDirected !== directed) {
                     this.history.push({
                         description: 'Edit Graph',
                         undo: () => {
-                            if (oldText) el.buildFromText(oldText, oldDirected);
-                            else { el.nodes.clear(); el.edges = []; el.inputText = ''; el.directed = oldDirected; }
+                            if (!this.elements.includes(el)) {
+                                this.elements.push(el);
+                                this.layerManager._reindex();
+                            }
+                            if (originalText) el.buildFromText(originalText, originalDirected);
+                            else { el.nodes.clear(); el.edges = []; el.inputText = ''; el.directed = originalDirected; }
                         },
-                        redo: () => { el.buildFromText(text, directed); }
+                        redo: () => { 
+                            if (!this.elements.includes(el)) {
+                                this.elements.push(el);
+                                this.layerManager._reindex();
+                            }
+                            el.buildFromText(text, directed); 
+                        }
                     });
                 }
                 this.renderer.markDirty();
@@ -1285,6 +1343,10 @@ class App {
             }
 
             this.renderer.markDirty();
+            
+            if (this._textEditing) {
+                this._updateTextEditingOverlay();
+            }
         }, { passive: false });
     }
 
@@ -1297,6 +1359,13 @@ class App {
             if (e.target.tagName === 'INPUT' || e.target.tagName === 'TEXTAREA' || e.target.tagName === 'SELECT') return;
 
             const ctrl = e.ctrlKey || e.metaKey;
+
+            // ── Escape  Close Modal / Reset Tool ──
+            if (e.key === 'Escape') {
+                document.getElementById('settings-modal')?.classList.remove('open');
+                this.setTool('select');
+                return;
+            }
 
             // ── Delete ─────────────────────────────
             if (e.key === 'Delete' || e.key === 'Backspace') {
@@ -1341,15 +1410,21 @@ class App {
                 return;
             }
 
+            const isCopy  = (e.code === 'KeyC' || e.key.toLowerCase() === 'c');
+            const isCut   = (e.code === 'KeyX' || e.key.toLowerCase() === 'x');
+            const isPaste = (e.code === 'KeyV' || e.key.toLowerCase() === 'v');
+            const isSave  = (e.code === 'KeyS' || e.key.toLowerCase() === 's');
+            const isDup   = (e.code === 'KeyD' || e.key.toLowerCase() === 'd');
+
             // ── Ctrl+C  Copy ──────────────────────
-            if (ctrl && e.key === 'c') {
+            if (ctrl && isCopy) {
                 e.preventDefault();
                 this._copyToClipboard();
                 return;
             }
 
             // ── Ctrl+X  Cut ───────────────────────
-            if (ctrl && e.key === 'x') {
+            if (ctrl && isCut) {
                 e.preventDefault();
                 this._copyToClipboard();
                 const toRemove = this.selectionManager.selectedElements.slice();
@@ -1362,14 +1437,14 @@ class App {
             }
 
             // ── Ctrl+V  Paste ─────────────────────
-            if (ctrl && e.key === 'v') {
+            if (ctrl && isPaste) {
                 e.preventDefault();
                 this._pasteFromClipboard();
                 return;
             }
 
             // ── Ctrl+S  Export JSON ───────────────
-            if (ctrl && e.key === 's') {
+            if (ctrl && isSave) {
                 e.preventDefault();
                 Serializer.exportJSON(this);
                 this._toast('已匯出 JSON');
@@ -1377,7 +1452,7 @@ class App {
             }
 
             // ── Ctrl+D  Duplicate ────────────────
-            if (ctrl && e.key === 'd') {
+            if (ctrl && isDup) {
                 e.preventDefault();
                 this._duplicateSelected();
                 return;
@@ -1765,13 +1840,14 @@ class App {
             const C = (matrixData[0] || []).length;
             
             if (R === 1) {
-                // 1D horizontal prefix sum
-                newMatrixData.push(new Array(C + 1).fill(0));
+                // 1D Row Prefix Sum
+                const P = new Array(C + 1).fill(0);
                 for (let j = 1; j <= C; j++) {
-                    newMatrixData[0][j] = newMatrixData[0][j-1] + matrixData[0][j-1];
+                    P[j] = P[j-1] + matrixData[0][j-1];
                 }
+                newMatrixData.push(P);
             } else if (C === 1) {
-                // 1D vertical prefix sum
+                // 1D Column Prefix Sum
                 for (let i = 0; i <= R; i++) {
                     newMatrixData.push([0]);
                 }
@@ -1793,18 +1869,35 @@ class App {
                 }
             }
         } else if (transformType === 'diff') {
-            // 2D Difference Array: D[i][j] = A[i][j] - A[i-1][j] - A[i][j-1] + A[i-1][j-1]
             const R = matrixData.length;
             const C = (matrixData[0] || []).length;
-            for (let i = 0; i < R; i++) {
-                newMatrixData.push(new Array(C).fill(0));
-            }
-            for (let i = 0; i < R; i++) {
+            
+            if (R === 1) {
+                // 1D Row Difference Array
+                const D = new Array(C).fill(0);
                 for (let j = 0; j < C; j++) {
-                    const top = i > 0 ? matrixData[i-1][j] : 0;
-                    const left = j > 0 ? matrixData[i][j-1] : 0;
-                    const topLeft = (i > 0 && j > 0) ? matrixData[i-1][j-1] : 0;
-                    newMatrixData[i][j] = matrixData[i][j] - top - left + topLeft;
+                    const left = j > 0 ? matrixData[0][j-1] : 0;
+                    D[j] = matrixData[0][j] - left;
+                }
+                newMatrixData.push(D);
+            } else if (C === 1) {
+                // 1D Column Difference Array
+                for (let i = 0; i < R; i++) {
+                    const top = i > 0 ? matrixData[i-1][0] : 0;
+                    newMatrixData.push([matrixData[i][0] - top]);
+                }
+            } else {
+                // 2D Difference Array: D[i][j] = A[i][j] - A[i-1][j] - A[i][j-1] + A[i-1][j-1]
+                for (let i = 0; i < R; i++) {
+                    newMatrixData.push(new Array(C).fill(0));
+                }
+                for (let i = 0; i < R; i++) {
+                    for (let j = 0; j < C; j++) {
+                        const top = i > 0 ? matrixData[i-1][j] : 0;
+                        const left = j > 0 ? matrixData[i][j-1] : 0;
+                        const topLeft = (i > 0 && j > 0) ? matrixData[i-1][j-1] : 0;
+                        newMatrixData[i][j] = matrixData[i][j] - top - left + topLeft;
+                    }
                 }
             }
         }

@@ -12,6 +12,7 @@ export class QueueElement extends Element {
         this.maxDisplay = 10;
         this.label = 'Queue';
         this.inputText = '';
+        this.highlights = {};      // { displayIndex: color }
     }
 
     enqueue(val) {
@@ -37,9 +38,21 @@ export class QueueElement extends Element {
             this.width = 0;
             this.height = 0;
         } else {
-            this.width = Math.max(this.cellWidth, count * this.cellWidth);
-            this.height = 60; // default queue height
+            this.height = this.cellWidth + 16;
+            this.width = Math.max(this.cellWidth * 2, count * this.cellWidth + 16);
+            this.fontSize = Math.max(10, Math.floor(this.cellWidth * 0.35));
         }
+    }
+
+    /**
+     * Called when element is resized via handle. Adjusts cell proportions.
+     */
+    /**
+     * Snapshot state before resize drag begins.
+     */
+    onResizeStart() {
+        this._origCellWidth = this.cellWidth;
+        this._origResizeH = this.height;
     }
 
     /**
@@ -90,6 +103,13 @@ export class QueueElement extends Element {
             const cx = startX + i * cellWidth + cellWidth / 2;
             const cy = y + h / 2;
 
+            // Highlight background
+            if (this.highlights[i]) {
+                ctx.fillStyle = this.highlights[i];
+                ctx.globalAlpha = this.opacity;
+                ctx.fillRect(startX + i * cellWidth, y + 8, cellWidth, h - 16);
+            }
+
             // Cell border
             ctx.strokeStyle = this.getEffectiveColor(this.color);
             ctx.lineWidth = 1;
@@ -130,12 +150,27 @@ export class QueueElement extends Element {
         return { x: this.x, y: this.y, w: this.width, h: this.height + 25 };
     }
 
+    /**
+     * Returns display index (0 = front/left) of item at (wx, wy), or -1.
+     */
+    hitTestItem(wx, wy) {
+        const displayItems = this.items.slice(0, this.maxDisplay);
+        for (let i = 0; i < displayItems.length; i++) {
+            if (wx >= this.x + i * this.cellWidth &&
+                wx <= this.x + (i + 1) * this.cellWidth &&
+                wy >= this.y + 8 && wy <= this.y + this.height - 8) {
+                return i;
+            }
+        }
+        return -1;
+    }
+
     serialize() {
         return {
             ...super.serialize(),
             items: this.items, cellWidth: this.cellWidth,
             fontSize: this.fontSize, maxDisplay: this.maxDisplay,
-            inputText: this.inputText
+            inputText: this.inputText, highlights: this.highlights
         };
     }
 

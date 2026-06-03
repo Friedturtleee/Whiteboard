@@ -35,6 +35,11 @@ export class GraphElement extends Element {
         const firstLineParts = lines[0].split(/\s+/);
         if (firstLineParts.length === 2 && !isNaN(firstLineParts[0]) && !isNaN(firstLineParts[1])) {
             startIdx = 1;
+            const n = parseInt(firstLineParts[0]);
+            for (let i = 1; i <= n; i++) {
+                const id = i.toString();
+                this.nodes.set(id, this._createNode(id));
+            }
         }
 
         for (let i = startIdx; i < lines.length; i++) {
@@ -49,6 +54,11 @@ export class GraphElement extends Element {
 
                 this.edges.push({ u, v, w });
             }
+        }
+        if (this.nodes.size === 0) {
+            this.width = 0;
+            this.height = 0;
+            return null;
         }
 
         this._layoutGraph();
@@ -124,6 +134,35 @@ export class GraphElement extends Element {
                 // Constrain to box
                 n.dx = Math.max(this.nodeRadius + 10, Math.min(this.width - this.nodeRadius - 10, n.dx));
                 n.dy = Math.max(this.nodeRadius + 10, Math.min(this.height - this.nodeRadius - 10, n.dy));
+            }
+        }
+    }
+
+    onResizeStart() {
+        this._origW = this.width;
+        this._origH = this.height;
+        this._origRadius = this.nodeRadius;
+        this._origFontSize = this.fontSize;
+        this._origNodes = new Map();
+        for (const [id, n] of this.nodes.entries()) {
+            this._origNodes.set(id, { dx: n.dx, dy: n.dy });
+        }
+    }
+
+    onResize(newW, newH) {
+        if (!this._origW || !this._origH) return;
+        const scaleX = newW / this._origW;
+        const scaleY = newH / this._origH;
+        const scale = Math.min(scaleX, scaleY);
+        
+        this.nodeRadius = Math.max(5, this._origRadius * scale);
+        this.fontSize = Math.max(8, this._origFontSize * scale);
+        
+        for (const [id, n] of this.nodes.entries()) {
+            const orig = this._origNodes.get(id);
+            if (orig) {
+                n.dx = orig.dx * scaleX;
+                n.dy = orig.dy * scaleY;
             }
         }
     }

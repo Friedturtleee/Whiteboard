@@ -157,4 +157,3 @@ function _douglasPeucker(points, epsilon) {
         return [points[0], points[end]];
     }
 }
-

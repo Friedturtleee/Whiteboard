@@ -154,14 +154,14 @@
 /* ===== Color Picker Grid ===== */
 .color-grid {
     display: grid;
-    grid-template-columns: repeat(8, 1fr);
-    gap: 3px;
+    grid-template-columns: repeat(5, 1fr);
+    gap: 4px;
     margin-top: 4px;
 }
 
 .color-swatch {
-    width: 20px;
-    height: 20px;
+    width: 100%;
+    aspect-ratio: 1;
     border-radius: 3px;
     cursor: pointer;
     border: 2px solid transparent;
@@ -175,34 +175,21 @@
     border-color: #fff;
 }
 
-/* Custom color input */
-.color-swatch-custom {
-    appearance: none;
-    -webkit-appearance: none;
-    cursor: pointer;
-    padding: 0;
-    overflow: hidden;
-    position: relative;
-}
-.color-swatch-custom::-webkit-color-swatch-wrapper {
-    padding: 0;
-}
-.color-swatch-custom::-webkit-color-swatch {
-    border: none;
-    border-radius: 1px;
-}
-
 .text-style-btn {
-    background: var(--bg-primary);
+    background: transparent;
     border: 1px solid var(--border-color);
-    color: var(--text-primary);
-    border-radius: 4px;
-    padding: 2px 0;
+    color: var(--text-secondary);
+    border-radius: 5px;
+    padding: 3px 0;
     cursor: pointer;
-    transition: background 0.1s, border-color 0.1s;
+    font-size: 11px;
+    letter-spacing: 0.2px;
+    transition: background 0.15s, border-color 0.15s, color 0.15s;
 }
 .text-style-btn:hover {
     background: var(--bg-hover);
+    color: var(--text-primary);
+    border-color: #606060;
 }
 .text-style-btn.active {
     background: var(--accent);
@@ -325,7 +312,8 @@
 .modal-overlay {
     position: fixed;
     top: 0; left: 0; right: 0; bottom: 0;
-    background: rgba(0, 0, 0, 0.6);
+    background: rgba(0, 0, 0, 0.65);
+    backdrop-filter: blur(3px);
     display: flex;
     align-items: center;
     justify-content: center;
@@ -333,41 +321,66 @@
 }
 
 .modal-dialog {
-    background: var(--bg-secondary);
+    background: var(--bg-primary);
     border: 1px solid var(--border-color);
+    border-top: 2px solid var(--accent);
     border-radius: 10px;
-    padding: 20px;
-    width: 460px;
-    max-width: 92vw;
-    box-shadow: 0 12px 48px rgba(0,0,0,0.65);
-    animation: dialogIn 0.15s ease;
+    padding: 20px 22px 18px;
+    width: 480px;
+    max-width: 94vw;
+    box-shadow: 0 16px 56px rgba(0,0,0,0.7), 0 2px 12px rgba(0,0,0,0.4);
+    animation: dialogIn 0.18s cubic-bezier(0.2, 0.8, 0.4, 1);
 }
 @keyframes dialogIn {
-    from { opacity: 0; transform: scale(0.96) translateY(-8px); }
+    from { opacity: 0; transform: scale(0.95) translateY(-10px); }
     to   { opacity: 1; transform: scale(1) translateY(0); }
 }
 
 .modal-dialog h3 {
-    font-size: 16px;
+    font-size: 15px;
     font-weight: 600;
     color: var(--text-primary);
     margin-bottom: 14px;
     letter-spacing: 0.3px;
+    padding-bottom: 10px;
+    border-bottom: 1px solid var(--border-color);
 }
 
 .modal-dialog select {
     width: 100%;
     margin-bottom: 10px;
-    font-size: 14px;
+    font-size: 13px;
     background: var(--bg-tertiary);
     color: var(--text-primary);
     border: 1px solid var(--border-color);
     border-radius: 5px;
     padding: 6px 8px;
     outline: none;
+    cursor: pointer;
+    appearance: none;
+    background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='12' height='12' viewBox='0 0 24 24' fill='none' stroke='%23a0a0a0' stroke-width='2'%3E%3Cpolyline points='6 9 12 15 18 9'%3E%3C/polyline%3E%3C/svg%3E");
+    background-repeat: no-repeat;
+    background-position: right 10px center;
+    padding-right: 28px;
 }
 .modal-dialog select:focus {
     border-color: var(--accent);
+    box-shadow: 0 0 0 2px rgba(86, 156, 214, 0.15);
+}
+
+/* Checkbox rows inside dialog */
+.modal-dialog label {
+    color: var(--text-secondary);
+    font-size: 13px;
+    cursor: pointer;
+    user-select: none;
+}
+.modal-dialog input[type="checkbox"] {
+    width: 15px;
+    height: 15px;
+    accent-color: var(--accent);
+    cursor: pointer;
+    flex-shrink: 0;
 }
 
 .dialog-row {
@@ -375,40 +388,50 @@
     align-items: center;
     gap: 8px;
     margin-bottom: 10px;
-    font-size: 14px;
+    font-size: 13px;
     color: var(--text-secondary);
 }
 
 .modal-dialog textarea {
     width: 100%;
-    min-height: 140px;
-    background: var(--bg-primary);
+    min-height: 150px;
+    background: var(--bg-secondary);
     color: var(--text-primary);
     border: 1px solid var(--border-color);
     border-radius: 6px;
     padding: 10px 12px;
     font-family: 'Consolas', 'JetBrains Mono', monospace;
-    font-size: 14px;
+    font-size: 13px;
     resize: vertical;
     outline: none;
-    line-height: 1.6;
+    line-height: 1.65;
+    box-sizing: border-box;
 }
 .modal-dialog textarea:focus {
     border-color: var(--accent);
-    box-shadow: 0 0 0 2px rgba(86, 156, 214, 0.18);
+    box-shadow: 0 0 0 2px rgba(86, 156, 214, 0.15);
 }
 
 .modal-actions {
     display: flex;
     justify-content: flex-end;
     gap: 8px;
-    margin-top: 16px;
+    margin-top: 14px;
 }
 
 .modal-actions button {
-    padding: 7px 18px;
-    font-size: 14px;
+    padding: 6px 18px;
+    font-size: 13px;
     border-radius: 6px;
+    background: var(--bg-tertiary);
+    border: 1px solid var(--border-color);
+    color: var(--text-secondary);
+    cursor: pointer;
+    transition: background 0.15s, color 0.15s;
+}
+.modal-actions button:hover {
+    background: var(--bg-hover);
+    color: var(--text-primary);
 }
 
 .modal-actions .btn-primary {
@@ -418,6 +441,7 @@
 }
 .modal-actions .btn-primary:hover {
     background: var(--accent-hover);
+    border-color: var(--accent-hover);
 }
 
 /* ===== Context Menu ===== */
@@ -634,4 +658,64 @@
     color: var(--text-primary);
     background: var(--bg-tertiary);
     border: 1px dashed var(--border-color);
+}
+
+/* ===== Settings Modal ===== */
+#settings-modal {
+    position: fixed;
+    inset: 0;
+    background: rgba(0, 0, 0, 0.55);
+    z-index: 4000;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+}
+
+#settings-panel {
+    background: var(--bg-secondary);
+    border: 1px solid var(--border-color);
+    border-radius: 8px;
+    width: 320px;
+    box-shadow: 0 8px 32px rgba(0,0,0,0.5);
+}
+
+.settings-header {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    padding: 12px 16px;
+    border-bottom: 1px solid var(--border-color);
+    align-items: center;
+}
+.settings-header button:hover { color: var(--text-primary); background: transparent; }
+.settings-header button .material-symbols-outlined { font-size: 18px; }
+
+.settings-body {
+    padding: 12px 14px 14px;
+}
+
+.settings-section-title {
+    font-size: 10px;
+    text-transform: uppercase;
+    letter-spacing: 1px;
+    color: var(--text-muted);
+    margin-bottom: 6px;
+}
+
+.settings-row {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 8px;
+    margin-bottom: 8px;
+    font-size: 12px;
+    color: var(--text-secondary);
+    cursor: default;
+}
+.settings-row input[type="checkbox"] {
+    accent-color: var(--accent);
+    width: 14px;
+    height: 14px;
+    cursor: pointer;
+    flex-shrink: 0;
 }

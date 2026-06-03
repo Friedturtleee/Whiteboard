@@ -222,15 +222,7 @@ export class Renderer {
             const ports = el.getConnectionPorts();
             if (!ports || ports.length === 0) continue;
 
-            for (const port of ports) {
-                ctx.beginPath();
-                ctx.arc(port.x, port.y, 7 / camera.zoom, 0, Math.PI * 2);
-                ctx.fillStyle = 'rgba(80, 140, 200, 0.15)';
-                ctx.fill();
-                ctx.strokeStyle = 'rgba(80, 140, 200, 0.60)';
-                ctx.lineWidth = 1.5 / camera.zoom;
-                ctx.stroke();
-            }
+            // Port hint circles are hidden (transparent); only the snap target is shown
         }
 
         // Highlight the snapped port (if any)

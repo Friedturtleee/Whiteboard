@@ -200,9 +200,9 @@
             <div class="panel-row" id="text-styles-row" style="display:none">
                 <label>樣式</label>
                 <div style="display:flex;gap:4px;flex:1">
-                    <button id="prop-bold" class="text-style-btn" title="粗體" style="flex:1;font-weight:bold;">B</button>
-                    <button id="prop-italic" class="text-style-btn" title="斜體" style="flex:1;font-style:italic;">I</button>
-                    <button id="prop-underline" class="text-style-btn" title="底線" style="flex:1;text-decoration:underline;">U</button>
+                    <button id="prop-bold" class="text-style-btn" title="粗體" style="flex:1;font-weight:bold;">粗體</button>
+                    <button id="prop-underline" class="text-style-btn" title="底線" style="flex:1;text-decoration:underline;">底線</button>
+                    <button id="prop-italic" class="text-style-btn" title="斜體" style="flex:1;font-style:italic;">斜體</button>
                 </div>
             </div>
         </div>
@@ -222,6 +222,49 @@
 
     <!-- Hidden file input for JSON import -->
     <input type="file" id="json-file-input" accept=".json" style="display:none">
+
+    <!-- Settings Modal -->
+    <div id="settings-modal" style="display:none">
+        <div id="settings-panel">
+            <div class="settings-header">
+                <span>設定</span>
+                <button id="settings-close"><span class="material-symbols-outlined">close</span></button>
+            </div>
+            <div class="settings-body">
+                <div class="settings-section-title">格線</div>
+                <label class="settings-row">
+                    <span>顯示格線</span>
+                    <input type="checkbox" id="settings-show-grid" checked>
+                </label>
+                <div class="settings-row">
+                    <span>格線間距</span>
+                    <input type="range" id="settings-grid-spacing" min="20" max="120" step="10" value="40" style="flex:1;margin:0 8px">
+                    <span id="settings-grid-spacing-val" style="min-width:28px;text-align:right;font-size:11px">40</span>
+                </div>
+                <div class="settings-section-title" style="margin-top:12px">畫筆與線條</div>
+                <div class="settings-row">
+                    <span>預設筆刷大小</span>
+                    <input type="range" id="settings-pen-size" min="1" max="20" step="1" value="2" style="flex:1;margin:0 8px">
+                    <span id="settings-pen-size-val" style="min-width:28px;text-align:right;font-size:11px">2</span>
+                </div>
+                <div class="settings-row">
+                    <span>筆刷平滑度</span>
+                    <input type="range" id="settings-pen-smoothing" min="1" max="10" step="1" value="3" style="flex:1;margin:0 8px">
+                    <span id="settings-pen-smoothing-val" style="min-width:28px;text-align:right;font-size:11px">3</span>
+                </div>
+                <div class="settings-row">
+                    <span>預設線寬</span>
+                    <input type="range" id="settings-stroke-width" min="1" max="10" step="1" value="2" style="flex:1;margin:0 8px">
+                    <span id="settings-stroke-width-val" style="min-width:28px;text-align:right;font-size:11px">2</span>
+                </div>
+                <div class="settings-section-title" style="margin-top:12px">其他</div>
+                <div class="settings-row">
+                    <span>版本</span>
+                    <span style="font-size:11px;color:var(--text-muted)">CP WhiteBoard 1.0</span>
+                </div>
+            </div>
+        </div>
+    </div>
 
     <!-- Bottom Zoom Bar -->
     <div id="zoom-bar">
@@ -257,55 +300,7 @@
     <textarea id="text-edit-overlay" autocomplete="off" spellcheck="false" wrap="off"></textarea>
 
 
-    <!-- Settings Modal -->
-    <div id="settings-modal">
-        <div id="settings-panel">
-            <div id="settings-header">
-                <span>設定</span>
-                <button id="settings-close" title="關閉">
-                    <span class="material-symbols-outlined">close</span>
-                </button>
-            </div>
-            <div id="settings-body">
-                <!-- 畫布 -->
-                <div class="settings-section">
-                    <div class="settings-section-title">畫布</div>
-                    <div class="settings-row">
-                        <label for="settings-show-grid">顯示網格</label>
-                        <input type="checkbox" id="settings-show-grid" checked>
-                    </div>
-                    <div class="settings-row">
-                        <label for="settings-grid-spacing">網格間距</label>
-                        <input type="range" id="settings-grid-spacing" min="20" max="160" step="10" value="40">
-                        <span class="settings-val" id="settings-grid-spacing-val">40</span>
-                    </div>
-                </div>
-                <!-- 線條 -->
-                <div class="settings-section">
-                    <div class="settings-section-title">線條預設</div>
-                    <div class="settings-row">
-                        <label for="settings-stroke-width">線寬</label>
-                        <input type="range" id="settings-stroke-width" min="1" max="10" value="2">
-                        <span class="settings-val" id="settings-stroke-width-val">2</span>
-                    </div>
-                </div>
-                <!-- 畫筆 -->
-                <div class="settings-section">
-                    <div class="settings-section-title">畫筆</div>
-                    <div class="settings-row">
-                        <label for="settings-pen-size">筆觸大小</label>
-                        <input type="range" id="settings-pen-size" min="1" max="20" value="2">
-                        <span class="settings-val" id="settings-pen-size-val">2</span>
-                    </div>
-                    <div class="settings-row">
-                        <label for="settings-pen-smoothing">抽點間距</label>
-                        <input type="range" id="settings-pen-smoothing" min="1" max="12" value="3">
-                        <span class="settings-val" id="settings-pen-smoothing-val">3</span>
-                    </div>
-                </div>
-            </div>
-        </div>
-    </div>
+
 
     <!-- Loading Screen Controller -->
     <script>

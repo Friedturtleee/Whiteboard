@@ -10,12 +10,12 @@ export class PropertyPanel {
         this._buildColorGrid();
     }
 
-    /** 15 muted colors + custom picker */
+    /** 14 muted colors + custom picker */
     static COLORS = [
         '#b34d4d', '#b3734d', '#b39b4d', '#8a9e4d',
         '#4d8a4d', '#4d8a7a', '#4d8a9e', '#4d6eb3',
         '#4d4db3', '#6b4db3', '#8a4db3', '#b34d8a',
-        '#8a6b4d', '#b0b0b0', '#e8e8e8'
+        '#b0b0b0', '#e8e8e8'
     ];
 
     _buildColorGrid() {
