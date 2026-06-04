@@ -13,6 +13,9 @@ export class QueueElement extends Element {
         this.label = 'Queue';
         this.inputText = '';
         this.highlights = {};      // { displayIndex: color }
+        this.selectedIndices = new Set(); // item indices for cell selection
+        this._hoverEdge = null;           // 'left' | null
+        this._lastItemIdx = -1;           // for shift-range select
     }
 
     enqueue(val) {
@@ -29,29 +32,24 @@ export class QueueElement extends Element {
     setFromText(text) {
         this.inputText = text;
         this.items = text.trim().split(/[\s,\n]+/).filter(v => v);
+        this.selectedIndices.clear();
+        this._lastItemIdx = -1;
         this._updateSize();
     }
 
     _updateSize() {
-        const count = Math.min(this.items.length, this.maxDisplay);
-        if (count === 0) {
-            this.width = 0;
-            this.height = 0;
-        } else {
-            this.height = this.cellWidth + 16;
-            this.width = Math.max(this.cellWidth * 2, count * this.cellWidth + 16);
-            this.fontSize = Math.max(10, Math.floor(this.cellWidth * 0.35));
-        }
+        const count = Math.max(1, Math.min(this.items.length, this.maxDisplay));
+        this.height = this.cellWidth + 16;
+        this.width = count * this.cellWidth + 16;
+        this.fontSize = Math.max(10, Math.floor(this.cellWidth * 0.35));
     }
 
-    /**
-     * Called when element is resized via handle. Adjusts cell proportions.
-     */
     /**
      * Snapshot state before resize drag begins.
      */
     onResizeStart() {
         this._origCellWidth = this.cellWidth;
+        this._origResizeW = this.width;
         this._origResizeH = this.height;
     }
 
@@ -59,14 +57,24 @@ export class QueueElement extends Element {
      * Called when element is resized via handle. Adjusts cell proportions.
      */
     onResize(newW, newH) {
-        this.cellWidth = Math.max(24, newH - 16);
+        const count = Math.max(1, Math.min(this.items.length, this.maxDisplay));
+        const newCellW = Math.floor((newW - 16) / count);
+        const newCellH = Math.floor(newH - 16);
+        this.cellWidth = Math.max(20, Math.min(newCellW, newCellH));
         this._updateSize();
-        if (this.width < newW) this.width = newW; // allow stretching wider
+    }
+
+    /** Returns 'left' | null if (wx,wy) is in the left edge-add zone. */
+    hitTestEdgeAdd(wx, wy) {
+        const zone = 28;
+        if (wy >= this.y && wy <= this.y + this.height &&
+            wx >= this.x - zone && wx <= this.x + 4) return 'left';
+        return null;
     }
 
     draw(ctx, camera) {
         this.applyStyle(ctx);
-        const { x, y, height: h, rotation, items, cellWidth, fontSize } = this;
+        const { x, y, height: h, rotation, items, cellWidth } = this;
 
         ctx.save();
         if (rotation) {
@@ -88,45 +96,56 @@ export class QueueElement extends Element {
         ctx.textBaseline = 'middle';
 
         const displayItems = items.slice(0, this.maxDisplay);
-        const startX = x; // no left padding
+        const startX = x + 8; // 8px left padding
 
-        // Adaptive font size: fit text within cell
+        // Adaptive font size
         const maxLen = Math.max(1, ...displayItems.map(v => String(v).length));
         const cellInnerW = cellWidth - 6;
         const cellInnerH = h - 16;
         const fontByWidth = cellInnerW / (maxLen * 0.6);
         const fontByHeight = cellInnerH * 0.5;
-        const adaptiveFontSize = Math.max(8, Math.min(fontByWidth, fontByHeight, 18));
+        const adaptiveFontSize = Math.max(8, Math.min(fontByWidth, fontByHeight, 36));
         ctx.font = `${adaptiveFontSize}px Consolas, monospace`;
 
-        for (let i = 0; i < displayItems.length; i++) {
+        const slotsToDraw = Math.max(1, displayItems.length);
+        for (let i = 0; i < slotsToDraw; i++) {
             const cx = startX + i * cellWidth + cellWidth / 2;
             const cy = y + h / 2;
 
-            // Highlight background
+            // Highlight background (user-defined colour)
             if (this.highlights[i]) {
                 ctx.fillStyle = this.highlights[i];
                 ctx.globalAlpha = this.opacity;
-                ctx.fillRect(startX + i * cellWidth, y + 8, cellWidth, h - 16);
+                ctx.fillRect(startX + i * cellWidth, y + 8, cellWidth, cellWidth);
             }
 
             // Cell border
             ctx.strokeStyle = this.getEffectiveColor(this.color);
             ctx.lineWidth = 1;
             ctx.globalAlpha = this.opacity * 0.3;
-            ctx.strokeRect(startX + i * cellWidth, y + 8, cellWidth, h - 16);
+            ctx.strokeRect(startX + i * cellWidth, y + 8, cellWidth, cellWidth);
             ctx.globalAlpha = this.opacity;
 
-            // Value
-            ctx.fillStyle = this.getEffectiveColor(this.color);
-            ctx.fillText(String(displayItems[i]), cx, cy, cellWidth - 6);
+            // Value (skip rendering the full-width space placeholder)
+            if (i < displayItems.length && displayItems[i] !== '　') {
+                ctx.fillStyle = this.getEffectiveColor(this.color);
+                ctx.fillText(String(displayItems[i]), cx, cy, cellWidth - 6);
+            }
+
+            // Cell selection highlight
+            if (this.selectedIndices.has(i)) {
+                ctx.strokeStyle = '#56b3e6';
+                ctx.lineWidth = 2.5;
+                ctx.globalAlpha = this.opacity;
+                ctx.strokeRect(startX + i * cellWidth + 1.5, y + 8 + 1.5, cellWidth - 3, cellWidth - 3);
+            }
         }
 
         // Direction arrow
         ctx.strokeStyle = this.getEffectiveColor('#808080');
         ctx.lineWidth = 1.5;
         const arrowY = y + h + 10;
-        const contentW = Math.max(cellWidth, displayItems.length * cellWidth);
+        const contentW = slotsToDraw * cellWidth;
         ctx.beginPath();
         ctx.moveTo(startX, arrowY);
         ctx.lineTo(startX + contentW, arrowY);
@@ -143,6 +162,16 @@ export class QueueElement extends Element {
         ctx.textAlign = 'right';
         ctx.fillText('Back', startX + contentW, arrowY + 12);
 
+        // "+" edge-add indicator at left
+        if (this._hoverEdge === 'left') {
+            ctx.globalAlpha = 0.95;
+            ctx.fillStyle = '#56b3e6';
+            ctx.font = 'bold 22px sans-serif';
+            ctx.textAlign = 'center';
+            ctx.textBaseline = 'middle';
+            ctx.fillText('+', x - 14, y + h / 2);
+        }
+
         ctx.restore();
     }
 
@@ -150,14 +179,11 @@ export class QueueElement extends Element {
         return { x: this.x, y: this.y, w: this.width, h: this.height + 25 };
     }
 
-    /**
-     * Returns display index (0 = front/left) of item at (wx, wy), or -1.
-     */
     hitTestItem(wx, wy) {
-        const displayItems = this.items.slice(0, this.maxDisplay);
-        for (let i = 0; i < displayItems.length; i++) {
-            if (wx >= this.x + i * this.cellWidth &&
-                wx <= this.x + (i + 1) * this.cellWidth &&
+        const slots = Math.max(1, Math.min(this.items.length, this.maxDisplay));
+        for (let i = 0; i < slots; i++) {
+            if (wx >= this.x + 8 + i * this.cellWidth &&
+                wx <= this.x + 8 + (i + 1) * this.cellWidth &&
                 wy >= this.y + 8 && wy <= this.y + this.height - 8) {
                 return i;
             }

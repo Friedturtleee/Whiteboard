@@ -1,11 +1,13 @@
 /**
  * LayerPanel — bottom-right panel for z-order management.
+ * Supports multi-select (Ctrl+click) and range-select (Shift+click).
  */
 export class LayerPanel {
     constructor(app) {
         this.app = app;
         this._list = document.getElementById('layer-list');
         this._dragSrc = null;   // element being dragged
+        this._lastClickedEl = null; // for shift-range select
 
         document.getElementById('layer-up')?.addEventListener('click', () => {
             const sel = this.app.selectionManager.selectedElements;
@@ -68,10 +70,33 @@ export class LayerPanel {
             item.appendChild(name);
             item.appendChild(vis);
 
-            // Click to select
-            item.addEventListener('click', () => {
-                this.app.selectionManager.select(el);
-                this.app._focusOnElement(el);
+            // ── Click to select (with Ctrl/Shift multi-select) ─────────────────
+            item.addEventListener('click', (e) => {
+                e.stopPropagation();
+                const sel = this.app.selectionManager;
+
+                if (e.ctrlKey || e.metaKey) {
+                    // Ctrl+click: toggle this element in selection
+                    sel.toggleSelect(el);
+                } else if (e.shiftKey && this._lastClickedEl) {
+                    // Shift+click: range select between lastClicked and this
+                    const allEls = this.app.elements.slice().sort((a, b) => b.zIndex - a.zIndex);
+                    const fromIdx = allEls.indexOf(this._lastClickedEl);
+                    const toIdx   = allEls.indexOf(el);
+                    if (fromIdx >= 0 && toIdx >= 0) {
+                        const lo = Math.min(fromIdx, toIdx);
+                        const hi = Math.max(fromIdx, toIdx);
+                        for (let i = lo; i <= hi; i++) {
+                            if (!sel.isSelected(allEls[i])) sel.toggleSelect(allEls[i]);
+                        }
+                    }
+                } else {
+                    // Single click: exclusive select
+                    sel.select(el);
+                    this.app._focusOnElement(el);
+                }
+
+                this._lastClickedEl = el;
                 this.app.propertyPanel.update();
                 this.update();
             });

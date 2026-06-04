@@ -25,8 +25,8 @@ import { StackElement } from './elements/StackElement.js';
 import { QueueElement } from './elements/QueueElement.js';
 import { PenElement } from './elements/PenElement.js';
 import { MermaidElement } from './elements/MermaidElement.js';
-import { TreeElement } from './elements/TreeElement.js';
-import { GraphElement } from './elements/GraphElement.js';
+import { TreeElement } from './tree/TreeElement.js';
+import { GraphElement } from './graph/GraphElement.js';
 
 // ── UI ──────────────────────────────────────────────────
 import { Toolbar } from './ui/Toolbar.js';
@@ -103,6 +103,39 @@ class App {
         this._autosaveTimer = null;
         this._skipAutosave = false;
         this._tryLoadAutosave();
+
+        this._fetchGitHubVersion();
+    }
+
+    // ═════════════════════════════════════════════════════
+    // GitHub Version Tracking
+    // ═════════════════════════════════════════════════════
+    async _fetchGitHubVersion() {
+        const display = document.getElementById('settings-version-display');
+        if (!display) return;
+        try {
+            const response = await fetch('https://api.github.com/repos/Friedturtleee/Whiteboard/tags');
+            if (response.ok) {
+                const data = await response.json();
+                if (data.length > 0) {
+                    const latestTag = data[0].name;
+                    display.textContent = `CP WhiteBoard ${latestTag}`;
+                    
+                    // Keep the GitHub URL for clicking
+                    display.style.cursor = 'pointer';
+                    display.style.textDecoration = 'underline';
+                    display.addEventListener('click', () => {
+                        window.open(`https://github.com/Friedturtleee/Whiteboard/releases/tag/${latestTag}`, '_blank');
+                    });
+                } else {
+                    display.textContent = 'CP WhiteBoard (Local)';
+                }
+            } else {
+                display.textContent = 'CP WhiteBoard (Local)';
+            }
+        } catch (e) {
+            display.textContent = 'CP WhiteBoard (Local)';
+        }
     }
 
     // ═════════════════════════════════════════════════════
@@ -265,7 +298,28 @@ class App {
         }
 
         // ── Right click context ────────────────────
-        if (e.button === 2) return;
+        if (e.button === 2) {
+            const hit = HitTest.hitTestAll(this.elements, wx, wy, this.camera);
+            if (!hit) {
+                // Right click on empty canvas: temporarily toggle between Select and Pan
+                this._tempRightClickTool = tool;
+                if (tool === 'select') {
+                    this.toolbar.setTool('pan');
+                    this._isPanning = true;
+                    this._lastPanScreen = { sx, sy };
+                    this.canvas.style.cursor = 'grabbing';
+                } else if (tool === 'pan') {
+                    this.toolbar.setTool('select');
+                    // Immediately start rubber band for selection
+                    this.selectionManager.clear();
+                    this.selectionManager.startRubberBand(wx, wy);
+                    this._refreshUI();
+                }
+                return;
+            }
+            // If hit an element, do nothing here and let contextmenu event handle it
+            return;
+        }
 
         // ── Select tool ────────────────────────────
         if (tool === 'select') {
@@ -383,7 +437,27 @@ class App {
 
     // ────────── Pointer Up ──────────────────────────────
     _onPointerUp(e) {
+        if (e.pointerId) {
+            try { this.canvas.releasePointerCapture(e.pointerId); } catch(err) {}
+        }
         const { x: wx, y: wy } = this._worldPos(e);
+
+        // ── Revert temporary right-click tool toggle ──
+        if (e.button === 2 && this._tempRightClickTool) {
+            this.toolbar.setTool(this._tempRightClickTool);
+            this._tempRightClickTool = null;
+            if (this._isPanning) {
+                this._isPanning = false;
+                this._lastPanScreen = null;
+                this.canvas.style.cursor = '';
+            }
+            if (this.selectionManager.rubberBand) {
+                this.selectionManager.finishRubberBand(e.shiftKey);
+                this._refreshUI();
+                this.canvas.style.cursor = '';
+            }
+            return;
+        }
 
         // ── Finish panning ─────────────────────────
         if (this._isPanning) {
@@ -537,6 +611,17 @@ class App {
     _handleSelectDown(wx, wy, e) {
         const sel = this.selectionManager;
 
+        // 0) Check if clicking on an edge "+" add zone (outside any element)
+        for (const el of this.elements) {
+            if (['matrix', 'stack', 'queue'].includes(el.type) && typeof el.hitTestEdgeAdd === 'function') {
+                const edge = el.hitTestEdgeAdd(wx, wy);
+                if (edge) {
+                    this._handleEdgeInsert(el, edge);
+                    return;
+                }
+            }
+        }
+
         // 1) Check handle hit on currently selected single element
         if (sel.selectedElements.length === 1) {
             const el = sel.selectedElements[0];
@@ -564,6 +649,54 @@ class App {
         const hit = HitTest.hitTestAll(this.elements, wx, wy, this.camera);
 
         if (hit) {
+            // ── Cell / item selection for already-selected data structures ──
+            if (sel.isSelected(hit) && ['matrix', 'stack', 'queue'].includes(hit.type)) {
+                if (hit.type === 'matrix' && typeof hit.hitTestCell === 'function') {
+                    const cell = hit.hitTestCell(wx, wy);
+                    if (cell) {
+                        const key = `${cell.row},${cell.col}`;
+                        if (e.ctrlKey || e.metaKey) {
+                            // Toggle single cell
+                            if (hit.selectedCells.has(key)) hit.selectedCells.delete(key);
+                            else hit.selectedCells.add(key);
+                        } else if (e.shiftKey && hit._lastCellKey) {
+                            // Range select
+                            const [r0, c0] = hit._lastCellKey.split(',').map(Number);
+                            for (let r = Math.min(r0, cell.row); r <= Math.max(r0, cell.row); r++) {
+                                for (let c = Math.min(c0, cell.col); c <= Math.max(c0, cell.col); c++) {
+                                    hit.selectedCells.add(`${r},${c}`);
+                                }
+                            }
+                        } else {
+                            hit.selectedCells.clear();
+                            hit.selectedCells.add(key);
+                        }
+                        hit._lastCellKey = key;
+                        this.renderer.markDirty();
+                        return; // Don't start drag
+                    }
+                }
+                if ((hit.type === 'stack' || hit.type === 'queue') && typeof hit.hitTestItem === 'function') {
+                    const idx = hit.hitTestItem(wx, wy);
+                    if (idx >= 0) {
+                        if (e.ctrlKey || e.metaKey) {
+                            if (hit.selectedIndices.has(idx)) hit.selectedIndices.delete(idx);
+                            else hit.selectedIndices.add(idx);
+                        } else if (e.shiftKey && hit._lastItemIdx >= 0) {
+                            for (let i = Math.min(hit._lastItemIdx, idx); i <= Math.max(hit._lastItemIdx, idx); i++) {
+                                hit.selectedIndices.add(i);
+                            }
+                        } else {
+                            hit.selectedIndices.clear();
+                            hit.selectedIndices.add(idx);
+                        }
+                        hit._lastItemIdx = idx;
+                        this.renderer.markDirty();
+                        return; // Don't start drag
+                    }
+                }
+            }
+
             // ── Graph node drag or edge creation ───
             if (hit.type === 'graph' && hit.hitTestNode) {
                 const node = hit.hitTestNode(wx, wy);
@@ -593,7 +726,11 @@ class App {
                 }
             }
 
-            // ── Tree node → select the tree element ─
+            // Clear cell selections when switching to a different element
+            if (!sel.isSelected(hit) && !e.shiftKey) {
+                this._clearAllCellSelections();
+            }
+
             // Shift = add to selection; otherwise replace
             if (e.shiftKey) {
                 sel.toggleSelect(hit);
@@ -605,7 +742,8 @@ class App {
             this.transform.startDrag(wx, wy);
             this.canvas.style.cursor = 'move';
         } else {
-            // Click on empty space → start rubber-band
+            // Click on empty space → clear cell selections and start rubber-band
+            this._clearAllCellSelections();
             if (!e.shiftKey) sel.clear();
             sel.startRubberBand(wx, wy);
         }
@@ -618,6 +756,23 @@ class App {
     // ═════════════════════════════════════════════════════
     _updateCursorHover(wx, wy) {
         if (this.toolbar.currentTool !== 'select') return;
+
+        // ── Check edge-add zones on data structure elements ──
+        let edgeHit = false;
+        let dirty = false;
+        for (const el of this.elements) {
+            if (['matrix', 'stack', 'queue'].includes(el.type) && typeof el.hitTestEdgeAdd === 'function') {
+                const prev = el._hoverEdge;
+                el._hoverEdge = el.hitTestEdgeAdd(wx, wy);
+                if (el._hoverEdge !== prev) dirty = true;
+                if (el._hoverEdge) edgeHit = true;
+            }
+        }
+        if (dirty) this.renderer.markDirty();
+        if (edgeHit) {
+            this.canvas.style.cursor = 'cell';
+            return;
+        }
 
         // Handle hover
         if (this.selectionManager.selectedElements.length === 1) {
@@ -804,6 +959,96 @@ class App {
     }
 
     // ═════════════════════════════════════════════════════
+    // Data Structure Cell Selection Helpers
+    // ═════════════════════════════════════════════════════
+
+    /** Clear all cell/item selections from every data structure element. */
+    _clearAllCellSelections() {
+        let dirty = false;
+        for (const el of this.elements) {
+            if (el.selectedCells && el.selectedCells.size > 0) { el.selectedCells.clear(); dirty = true; }
+            if (el.selectedIndices && el.selectedIndices.size > 0) { el.selectedIndices.clear(); dirty = true; }
+            if (el._hoverEdge) { el._hoverEdge = null; dirty = true; }
+        }
+        if (dirty) this.renderer.markDirty();
+    }
+
+    /** Insert a row or column into a data structure element based on the hovered edge. */
+    _handleEdgeInsert(el, edge) {
+        const EMPTY = '　'; // full-width space used as empty-slot placeholder
+        if (el.type === 'matrix') {
+            if (edge === 'right')  el.insertCol();
+            else if (edge === 'bottom') el.insertRow();
+        } else if (el.type === 'stack') {
+            // Insert an empty slot at the top (push)
+            el.items.push(EMPTY);
+            el._updateSize();
+            el.inputText = el.items.filter(v => v !== EMPTY).join(' ');
+        } else if (el.type === 'queue') {
+            // Insert an empty slot at the front (unshift)
+            el.items.unshift(EMPTY);
+            el._updateSize();
+            el.inputText = el.items.filter(v => v !== EMPTY).join(' ');
+        }
+        this.renderer.markDirty();
+    }
+
+    /** Delete selected cells from a MatrixElement. Clears values; removes entire rows/cols if all empty. */
+    _deleteSelectedMatrixCells(el) {
+        const EMPTY = '　';
+        const isEmpty = v => v === '' || v === EMPTY || v == null;
+        if (!el.selectedCells || el.selectedCells.size === 0) return;
+        // Step 1: clear values of selected cells
+        for (const key of el.selectedCells) {
+            const [r, c] = key.split(',').map(Number);
+            if (el.data[r]) el.data[r][c] = EMPTY;
+        }
+        el.selectedCells.clear();
+        el._lastCellKey = null;
+        // Step 2: remove fully-empty rows (from bottom up)
+        for (let r = el.rows - 1; r >= 0; r--) {
+            if (el.data[r] && el.data[r].every(v => isEmpty(v))) {
+                el.deleteRow(r);
+            }
+        }
+        // Step 3: remove fully-empty cols (from right to left)
+        for (let c = el.cols - 1; c >= 0; c--) {
+            if (el.data.every(row => isEmpty(row[c]))) {
+                el.deleteCol(c);
+            }
+        }
+        el.updateTextFromData();
+        // Auto-delete element if completely empty
+        if (el.rows === 0 || el.cols === 0) {
+            this._deleteElement(el);
+            this.selectionManager.selectedElements = this.selectionManager.selectedElements.filter(e => e !== el);
+        }
+        this.renderer.markDirty();
+    }
+
+    /** Delete selected items from a StackElement or QueueElement. */
+    _deleteSelectedItems(el) {
+        if (!el.selectedIndices || el.selectedIndices.size === 0) return;
+        // Sort descending so splicing doesn't shift indices
+        const indices = [...el.selectedIndices].sort((a, b) => b - a);
+        for (const idx of indices) {
+            el.items.splice(idx, 1);
+        }
+        el.selectedIndices.clear();
+        el._lastItemIdx = -1;
+        el._updateSize();
+        el.inputText = el.items.filter(v => v !== '　').join(' ');
+        // Auto-delete element if completely empty
+        if (el.items.length === 0) {
+            this._deleteElement(el);
+            this.selectionManager.selectedElements = this.selectionManager.selectedElements.filter(e => e !== el);
+        }
+        this.renderer.markDirty();
+    }
+
+
+
+    // ═════════════════════════════════════════════════════
     // Text Element Creation
     // ═════════════════════════════════════════════════════
     _createTextAt(wx, wy) {
@@ -853,6 +1098,8 @@ class App {
         const overlay = document.getElementById('text-edit-overlay');
         if (!overlay) return;
 
+        overlay.style.cssText = '';
+        overlay.className = 'transparent-selection';
         overlay.style.display = 'block';
         this._updateTextEditingOverlay();
         
@@ -1015,7 +1262,7 @@ class App {
         this.textInputDialog.show({
             title: '編輯樹',
             placeholder: '邊列表格式（首行節點數，其後每行：父 子）\n或層序數值列表',
-            defaultText: oldText,
+            defaultText: originalText,
             showTypeSelect: true,
             types: [
                 { value: 'binary', label: '二元樹', selected: el.treeType === 'binary' },
@@ -1169,6 +1416,9 @@ class App {
         const overlay = document.getElementById('text-edit-overlay');
         if (!overlay) return;
 
+        overlay.style.cssText = '';
+        overlay.className = '';
+        
         // Style to match the matrix cell exactly (no visible "floating" box)
         const cellColor = matrixEl.color || '#e0e0e0';
         overlay.style.display = 'block';
@@ -1185,7 +1435,9 @@ class App {
         overlay.style.fontFamily = 'Consolas, monospace';
         overlay.style.border = `1.5px solid ${cellColor}`;
         overlay.style.boxSizing = 'border-box';
-        overlay.value = String(matrixEl.data[row]?.[col] ?? '');
+        // Strip full-width space sentinel (　) when entering edit mode
+        const rawVal = String(matrixEl.data[row]?.[col] ?? '');
+        overlay.value = rawVal === '　' ? '' : rawVal;
         overlay.focus();
         overlay.select();
 
@@ -1261,6 +1513,9 @@ class App {
         const overlay = document.getElementById('text-edit-overlay');
         if (!overlay) return;
 
+        overlay.style.cssText = '';
+        overlay.className = '';
+        
         overlay.style.display = 'block';
         overlay.style.left = (nodeScreenPos.x - r) + 'px';
         overlay.style.top = (nodeScreenPos.y - r / 2) + 'px';
@@ -1268,6 +1523,10 @@ class App {
         overlay.style.height = r + 'px';
         overlay.style.fontSize = (13 * this.camera.zoom) + 'px';
         overlay.style.textAlign = 'center';
+        overlay.style.background = 'var(--bg-panel, #2a2a2a)';
+        overlay.style.color = 'var(--text-primary, #fff)';
+        overlay.style.border = '1px solid var(--accent, #6366f1)';
+        overlay.style.borderRadius = '4px';
         overlay.value = String(treeNode.value);
         overlay.focus();
         overlay.select();
@@ -1360,15 +1619,27 @@ class App {
 
             const ctrl = e.ctrlKey || e.metaKey;
 
-            // ── Escape  Close Modal / Reset Tool ──
+            // ── Escape  Close Modal / Reset Tool / Clear cell selection ──
             if (e.key === 'Escape') {
                 document.getElementById('settings-modal')?.classList.remove('open');
+                this._clearAllCellSelections();
                 this.setTool('select');
                 return;
             }
 
             // ── Delete ─────────────────────────────
             if (e.key === 'Delete' || e.key === 'Backspace') {
+                // First check if any data structure has selected cells/items
+                const dsEl = this.selectionManager.selectedElements.find(el =>
+                    (el.type === 'matrix' && el.selectedCells && el.selectedCells.size > 0) ||
+                    ((el.type === 'stack' || el.type === 'queue') && el.selectedIndices && el.selectedIndices.size > 0)
+                );
+                if (dsEl) {
+                    if (dsEl.type === 'matrix') this._deleteSelectedMatrixCells(dsEl);
+                    else this._deleteSelectedItems(dsEl);
+                    return;
+                }
+                // Otherwise delete entire selected elements
                 const toRemove = this.selectionManager.selectedElements.slice();
                 if (toRemove.length) {
                     this.history.pushDelete(this, toRemove);
@@ -1813,13 +2084,14 @@ class App {
             newEl.deserialize(data);
             // Assign new id
             newEl.id = undefined; // will be set by constructor next time...
-            // Actually we need a fresh id — let's use the Element constructor's counter
             const nextEl = new Element('_tmp');
             newEl.id = nextEl.id;
             // Remove the tmp from nothing
             this.elements.push(newEl);
             newEls.push(newEl);
-            this.history.pushAdd(this, newEl);
+        }
+        if (newEls.length) {
+            this.history.pushAdd(this, newEls);
         }
         this.selectionManager.selectedElements = newEls;
         this.layerManager._reindex();
@@ -2040,7 +2312,8 @@ class App {
             // Silently restore — no prompt (avoids repeated reload confusion)
             this._restoreFromData(data);
         } catch (e) {
-            console.warn('[Autosave load]', e);
+            console.error('[Autosave load ERROR]', e.stack || e);
+            alert('解析自動存檔 JSON 時發生錯誤: ' + e.message);
         }
     }
 
@@ -2052,7 +2325,7 @@ class App {
                 text: TextElement, matrix: MatrixElement,
                 stack: StackElement, queue: QueueElement,
                 mermaid: MermaidElement,
-                pen: PenElement,
+                pen: PenElement, tree: TreeElement, graph: GraphElement
             };
             this._skipAutosave = true;
             this.elements = [];
@@ -2076,7 +2349,8 @@ class App {
             // (silent restore — no toast)
         } catch (e) {
             this._skipAutosave = false;
-            console.warn('[Autosave restore]', e);
+            console.error('[Autosave restore ERROR]', e.stack || e);
+            alert('載入自動存檔時發生錯誤: ' + e.message);
         }
     }
 }

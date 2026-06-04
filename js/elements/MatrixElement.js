@@ -14,6 +14,9 @@ export class MatrixElement extends Element {
         this.fontSize = 14;
         this.label = 'Matrix';
         this.inputText = '';
+        this.selectedCells = new Set(); // "r,c" keys for cell selection
+        this._hoverEdge = null;         // 'right' | 'bottom' | null
+        this._lastCellKey = null;       // for shift-range select
         this._initData();
     }
 
@@ -56,8 +59,72 @@ export class MatrixElement extends Element {
         this.fontSize = Math.max(9, Math.min(18, Math.floor(this.cellSize * 0.35)));
     }
 
+    // ── Row / Col insertion & deletion ──────────────────
+
+    insertRow(afterRow) {
+        const at = (afterRow == null || afterRow < 0) ? this.rows : afterRow + 1;
+        const newRow = new Array(this.cols).fill('　'); // full-width space placeholder
+        this.data.splice(at, 0, newRow);
+        this.rows++;
+        this._updateSize();
+        this.updateTextFromData();
+    }
+
+    deleteRow(row) {
+        if (this.rows <= 1) return;
+        this.data.splice(row, 1);
+        this.rows--;
+        // Remap selected cells
+        const next = new Set();
+        for (const k of this.selectedCells) {
+            const [r, c] = k.split(',').map(Number);
+            if (r < row) next.add(k);
+            else if (r > row) next.add(`${r - 1},${c}`);
+        }
+        this.selectedCells = next;
+        this._updateSize();
+        this.updateTextFromData();
+    }
+
+    insertCol(afterCol) {
+        const at = (afterCol == null || afterCol < 0) ? this.cols : afterCol + 1;
+        for (const row of this.data) row.splice(at, 0, '　'); // full-width space placeholder
+        this.cols++;
+        this._updateSize();
+        this.updateTextFromData();
+    }
+
+    deleteCol(col) {
+        if (this.cols <= 1) return;
+        for (const row of this.data) row.splice(col, 1);
+        this.cols--;
+        const next = new Set();
+        for (const k of this.selectedCells) {
+            const [r, c] = k.split(',').map(Number);
+            if (c < col) next.add(k);
+            else if (c > col) next.add(`${r},${c - 1}`);
+        }
+        this.selectedCells = next;
+        this._updateSize();
+        this.updateTextFromData();
+    }
+
+    /**
+     * Returns 'right' | 'bottom' | null if (wx,wy) is in an edge-add zone.
+     */
+    hitTestEdgeAdd(wx, wy) {
+        const zone = 28;
+        const ex = this.x + this.width;
+        const ey = this.y + this.height;
+        if (wx >= ex - 4 && wx <= ex + zone && wy >= this.y && wy <= ey) return 'right';
+        if (wy >= ey - 4 && wy <= ey + zone && wx >= this.x && wx <= ex) return 'bottom';
+        return null;
+    }
+
     setFromText(text) {
         this.inputText = text;
+        this.selectedCells.clear();
+        this._lastCellKey = null;
 
         // Support dimension format: "3*5" or "3x5" or "3 * 5" → creates empty matrix
         const dimMatch = text.trim().match(/^(\d+)\s*[*xX×]\s*(\d+)$/);
@@ -106,7 +173,8 @@ export class MatrixElement extends Element {
     }
 
     updateTextFromData() {
-        this.inputText = this.data.map(row => row.join(' ')).join('\n');
+        // Strip full-width space placeholders when building the text representation
+        this.inputText = this.data.map(row => row.map(v => v === '　' ? '' : v).join(' ')).join('\n');
     }
 
     draw(ctx, camera) {
@@ -135,11 +203,12 @@ export class MatrixElement extends Element {
             for (let c = 0; c < cols; c++) {
                 const cx = x + pad + c * cellSize;
                 const cy = y + pad + r * cellSize;
-
-                // Highlight
                 const hkey = `${r},${c}`;
+
+                // Highlight (user-defined colour)
                 if (this.highlights[hkey]) {
                     ctx.fillStyle = this.highlights[hkey];
+                    ctx.globalAlpha = this.opacity;
                     ctx.fillRect(cx, cy, cellSize, cellSize);
                 }
 
@@ -150,10 +219,20 @@ export class MatrixElement extends Element {
                 ctx.strokeRect(cx, cy, cellSize, cellSize);
                 ctx.globalAlpha = this.opacity;
 
-                // Value
+                // Value (skip rendering the full-width space placeholder)
                 const val = this.data[r]?.[c] ?? '';
-                ctx.fillStyle = this.getEffectiveColor(this.color);
-                ctx.fillText(String(val), cx + cellSize / 2, cy + cellSize / 2, cellSize - 4);
+                if (val !== '　') {
+                    ctx.fillStyle = this.getEffectiveColor(this.color);
+                    ctx.fillText(String(val), cx + cellSize / 2, cy + cellSize / 2, cellSize - 4);
+                }
+
+                // Cell selection highlight
+                if (this.selectedCells.has(hkey)) {
+                    ctx.strokeStyle = '#56b3e6';
+                    ctx.lineWidth = 2.5;
+                    ctx.globalAlpha = this.opacity;
+                    ctx.strokeRect(cx + 1.5, cy + 1.5, cellSize - 3, cellSize - 3);
+                }
             }
         }
 
@@ -172,6 +251,20 @@ export class MatrixElement extends Element {
         ctx.beginPath();
         ctx.moveTo(bx + bw - 6, by); ctx.lineTo(bx + bw, by); ctx.lineTo(bx + bw, by + bh); ctx.lineTo(bx + bw - 6, by + bh);
         ctx.stroke();
+
+        // "+" edge-add indicators (drawn in world space, outside brackets)
+        if (this._hoverEdge) {
+            ctx.globalAlpha = 0.95;
+            ctx.fillStyle = '#56b3e6';
+            ctx.font = 'bold 22px sans-serif';
+            ctx.textAlign = 'center';
+            ctx.textBaseline = 'middle';
+            if (this._hoverEdge === 'right') {
+                ctx.fillText('+', x + this.width + 16, y + this.height / 2);
+            } else if (this._hoverEdge === 'bottom') {
+                ctx.fillText('+', x + this.width / 2, y + this.height + 16);
+            }
+        }
 
         ctx.restore();
     }

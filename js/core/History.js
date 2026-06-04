@@ -52,16 +52,22 @@ export class History {
         });
     }
 
-    /** Helper: create an add element command */
-    pushAdd(app, el) {
+    /** Helper: create an add element(s) command */
+    pushAdd(app, elements) {
+        const arr = Array.isArray(elements) ? elements : [elements];
+        const desc = arr.length === 1 ? 'Add ' + arr[0].type : 'Add ' + arr.length + ' elements';
         this.push({
-            description: 'Add ' + el.type,
+            description: desc,
             undo() {
-                const idx = app.elements.indexOf(el);
-                if (idx >= 0) app.elements.splice(idx, 1);
+                for (const el of arr) {
+                    const idx = app.elements.indexOf(el);
+                    if (idx >= 0) app.elements.splice(idx, 1);
+                }
             },
             redo() {
-                app.elements.push(el);
+                for (const el of arr) {
+                    app.elements.push(el);
+                }
             }
         });
     }
