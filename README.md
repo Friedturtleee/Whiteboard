@@ -1,4 +1,4 @@
-# CPW Whiteboard — 競程白板
+# CP Whiteboard — 競程白板
 純前端競程 (Competitive Programming) 白板工具。
 
 總之可以用 :D
