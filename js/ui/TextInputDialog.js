@@ -119,9 +119,91 @@ export class TextInputDialog {
             dialog.appendChild(modeSelect);
         }
 
+        const textareaContainer = document.createElement('div');
+        textareaContainer.style.position = 'relative';
+        textareaContainer.style.width = '100%';
+        textareaContainer.style.height = '160px'; // typical dialog textarea height
+        textareaContainer.style.marginBottom = '16px';
+        textareaContainer.style.border = '1px solid var(--border, #444)';
+        textareaContainer.style.borderRadius = '4px';
+        textareaContainer.style.background = 'var(--bg-panel, #1e1e1e)';
+
+        const textareaBackdrop = document.createElement('div');
+        textareaBackdrop.style.position = 'absolute';
+        textareaBackdrop.style.top = '0';
+        textareaBackdrop.style.left = '0';
+        textareaBackdrop.style.width = '100%';
+        textareaBackdrop.style.height = '100%';
+        textareaBackdrop.style.padding = '8px'; // match textarea padding
+        textareaBackdrop.style.fontFamily = 'monospace';
+        textareaBackdrop.style.fontSize = '14px';
+        textareaBackdrop.style.lineHeight = '1.5';
+        textareaBackdrop.style.boxSizing = 'border-box';
+        textareaBackdrop.style.whiteSpace = 'pre-wrap';
+        textareaBackdrop.style.wordWrap = 'break-word';
+        textareaBackdrop.style.color = 'var(--text-primary, #fff)';
+        textareaBackdrop.style.overflow = 'hidden';
+        textareaBackdrop.style.pointerEvents = 'none';
+
         const textarea = document.createElement('textarea');
         textarea.placeholder = opts.placeholder || '在此輸入...';
         textarea.value = opts.defaultText || '';
+        textarea.style.position = 'absolute';
+        textarea.style.top = '0';
+        textarea.style.left = '0';
+        textarea.style.width = '100%';
+        textarea.style.height = '100%';
+        textarea.style.margin = '0';
+        textarea.style.padding = '8px';
+        textarea.style.fontFamily = 'monospace';
+        textarea.style.fontSize = '14px';
+        textarea.style.lineHeight = '1.5';
+        textarea.style.boxSizing = 'border-box';
+        textarea.style.border = 'none';
+        textarea.style.background = 'transparent';
+        textarea.style.color = 'transparent';
+        textarea.style.caretColor = 'var(--text-primary, #fff)';
+        textarea.style.resize = 'none';
+        textarea.style.outline = 'none';
+
+        textareaContainer.appendChild(textareaBackdrop);
+        textareaContainer.appendChild(textarea);
+
+        const updateBackdrop = () => {
+            const text = textarea.value;
+            // Escape HTML
+            let html = text.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
+            // Highlight full-width space
+            html = html.replace(/　/g, '<span style="background-color: rgba(120, 180, 255, 0.3); border-radius: 2px;">　</span>');
+            // Deal with trailing newlines
+            if (html.endsWith('\n')) html += ' ';
+            textareaBackdrop.innerHTML = html;
+        };
+
+        textarea.addEventListener('keydown', (e) => {
+            if (e.key.length === 1 && !e.ctrlKey && !e.altKey && !e.metaKey) {
+                const start = textarea.selectionStart;
+                const end = textarea.selectionEnd;
+                if (start === end && textarea.value[start] === '　') {
+                    e.preventDefault();
+                    const text = textarea.value;
+                    textarea.value = text.substring(0, start) + e.key + text.substring(start + 1);
+                    textarea.selectionStart = textarea.selectionEnd = start + 1;
+                    updateBackdrop();
+                    
+                    // Fire the debounced input event so it previews immediately
+                    const event = new Event('input', { bubbles: true });
+                    textarea.dispatchEvent(event);
+                }
+            }
+        });
+
+        textarea.addEventListener('input', updateBackdrop);
+        textarea.addEventListener('scroll', () => {
+            textareaBackdrop.scrollTop = textarea.scrollTop;
+        });
+        // Initial render
+        updateBackdrop();
 
         const _getValues = () => ({
             text:      textarea.value,
@@ -180,13 +262,17 @@ export class TextInputDialog {
 
         actions.appendChild(cancelBtn);
         actions.appendChild(confirmBtn);
-        dialog.appendChild(textarea);
+        dialog.appendChild(textareaContainer);
         dialog.appendChild(actions);
         overlay.appendChild(dialog);
 
-        // Close on overlay click
+        // Close on overlay click (confirm)
         overlay.addEventListener('click', (e) => {
-            if (e.target === overlay) fireCancel();
+            if (e.target === overlay) {
+                const v = _getValues();
+                if (opts.onConfirm) opts.onConfirm(v.text, v.type, v.mode, v.directed, v.zeroBased, v.graphMode);
+                this.close();
+            }
         });
 
         // ESC to close

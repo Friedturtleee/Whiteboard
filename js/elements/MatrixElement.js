@@ -109,18 +109,6 @@ export class MatrixElement extends Element {
         this.updateTextFromData();
     }
 
-    /**
-     * Returns 'right' | 'bottom' | null if (wx,wy) is in an edge-add zone.
-     */
-    hitTestEdgeAdd(wx, wy) {
-        const zone = 28;
-        const ex = this.x + this.width;
-        const ey = this.y + this.height;
-        if (wx >= ex - 4 && wx <= ex + zone && wy >= this.y && wy <= ey) return 'right';
-        if (wy >= ey - 4 && wy <= ey + zone && wx >= this.x && wx <= ex) return 'bottom';
-        return null;
-    }
-
     setFromText(text) {
         this.inputText = text;
         this.selectedCells.clear();
@@ -157,7 +145,12 @@ export class MatrixElement extends Element {
         this.cols = 0;
         this.data = [];
         for (let r = 0; r < lines.length; r++) {
-            let vals = lines[r].split(/[\s,]+/).map(v => v.trim());
+            // Protect the placeholder before splitting
+            let line = lines[r].replace(/　/g, '__EMPTY__');
+            let vals = line.split(/[\s,]+/).filter(v => v).map(v => {
+                if (v === '__EMPTY__') return '';
+                return v.trim();
+            });
             // CP char grid detection (e.g. #.#.)
             if (vals.length === 1 && vals[0].length > 1 && !/^\d+$/.test(vals[0])) {
                 vals = vals[0].split('');
@@ -173,8 +166,8 @@ export class MatrixElement extends Element {
     }
 
     updateTextFromData() {
-        // Strip full-width space placeholders when building the text representation
-        this.inputText = this.data.map(row => row.map(v => v === '　' ? '' : v).join(' ')).join('\n');
+        // Convert empty cells to the visual placeholder '　' when building the text representation
+        this.inputText = this.data.map(row => row.map(v => v === '' ? '　' : v).join(' ')).join('\n');
     }
 
     draw(ctx, camera) {
@@ -219,9 +212,9 @@ export class MatrixElement extends Element {
                 ctx.strokeRect(cx, cy, cellSize, cellSize);
                 ctx.globalAlpha = this.opacity;
 
-                // Value (skip rendering the full-width space placeholder)
+                // Value (do not render placeholders)
                 const val = this.data[r]?.[c] ?? '';
-                if (val !== '　') {
+                if (val !== '　' && val !== '') {
                     ctx.fillStyle = this.getEffectiveColor(this.color);
                     ctx.fillText(String(val), cx + cellSize / 2, cy + cellSize / 2, cellSize - 4);
                 }
@@ -251,20 +244,6 @@ export class MatrixElement extends Element {
         ctx.beginPath();
         ctx.moveTo(bx + bw - 6, by); ctx.lineTo(bx + bw, by); ctx.lineTo(bx + bw, by + bh); ctx.lineTo(bx + bw - 6, by + bh);
         ctx.stroke();
-
-        // "+" edge-add indicators (drawn in world space, outside brackets)
-        if (this._hoverEdge) {
-            ctx.globalAlpha = 0.95;
-            ctx.fillStyle = '#56b3e6';
-            ctx.font = 'bold 22px sans-serif';
-            ctx.textAlign = 'center';
-            ctx.textBaseline = 'middle';
-            if (this._hoverEdge === 'right') {
-                ctx.fillText('+', x + this.width + 16, y + this.height / 2);
-            } else if (this._hoverEdge === 'bottom') {
-                ctx.fillText('+', x + this.width / 2, y + this.height + 16);
-            }
-        }
 
         ctx.restore();
     }

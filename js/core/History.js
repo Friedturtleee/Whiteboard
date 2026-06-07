@@ -11,6 +11,7 @@ export class History {
 
     push(command) {
         // command = { description, undo(), redo() }
+        command.timestamp = Date.now();
         this.undoStack.push(command);
         if (this.undoStack.length > this.maxSize) this.undoStack.shift();
         this.redoStack = [];
@@ -62,12 +63,15 @@ export class History {
                 for (const el of arr) {
                     const idx = app.elements.indexOf(el);
                     if (idx >= 0) app.elements.splice(idx, 1);
+                    app.selectionManager.remove(el);
                 }
+                app.layerManager._reindex();
             },
             redo() {
                 for (const el of arr) {
                     app.elements.push(el);
                 }
+                app.layerManager._reindex();
             }
         });
     }

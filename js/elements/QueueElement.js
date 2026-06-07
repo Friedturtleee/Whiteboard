@@ -31,10 +31,19 @@ export class QueueElement extends Element {
 
     setFromText(text) {
         this.inputText = text;
-        this.items = text.trim().split(/[\s,\n]+/).filter(v => v);
+        let textProcessed = text.trim().replace(/　/g, '__EMPTY__');
+        const vals = textProcessed.split(/[\s,\n]+/).filter(v => v).map(v => {
+            if (v === '__EMPTY__') return '';
+            return v;
+        });
+        this.items = vals;
         this.selectedIndices.clear();
         this._lastItemIdx = -1;
         this._updateSize();
+    }
+
+    updateTextFromData() {
+        this.inputText = this.items.map(v => v === '' ? '　' : v).join(' ');
     }
 
     _updateSize() {
@@ -62,14 +71,6 @@ export class QueueElement extends Element {
         const newCellH = Math.floor(newH - 16);
         this.cellWidth = Math.max(20, Math.min(newCellW, newCellH));
         this._updateSize();
-    }
-
-    /** Returns 'left' | null if (wx,wy) is in the left edge-add zone. */
-    hitTestEdgeAdd(wx, wy) {
-        const zone = 28;
-        if (wy >= this.y && wy <= this.y + this.height &&
-            wx >= this.x - zone && wx <= this.x + 4) return 'left';
-        return null;
     }
 
     draw(ctx, camera) {
@@ -127,9 +128,9 @@ export class QueueElement extends Element {
             ctx.globalAlpha = this.opacity;
 
             // Value (skip rendering the full-width space placeholder)
-            if (i < displayItems.length && displayItems[i] !== '　') {
+            if (i < displayItems.length && displayItems[i] !== '　' && displayItems[i] !== '') {
                 ctx.fillStyle = this.getEffectiveColor(this.color);
-                ctx.fillText(String(displayItems[i]), cx, cy, cellWidth - 6);
+                ctx.fillText(String(displayItems[i]), cx, cy, cellInnerW);
             }
 
             // Cell selection highlight
@@ -161,16 +162,6 @@ export class QueueElement extends Element {
         ctx.fillText('Front', startX, arrowY + 12);
         ctx.textAlign = 'right';
         ctx.fillText('Back', startX + contentW, arrowY + 12);
-
-        // "+" edge-add indicator at left
-        if (this._hoverEdge === 'left') {
-            ctx.globalAlpha = 0.95;
-            ctx.fillStyle = '#56b3e6';
-            ctx.font = 'bold 22px sans-serif';
-            ctx.textAlign = 'center';
-            ctx.textBaseline = 'middle';
-            ctx.fillText('+', x - 14, y + h / 2);
-        }
 
         ctx.restore();
     }

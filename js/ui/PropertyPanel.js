@@ -27,7 +27,17 @@ export class PropertyPanel {
             swatch.style.background = color;
             swatch.dataset.color = color;
             swatch.addEventListener('click', () => {
-                this.app.selectionManager.setProperty('color', color);
+                const sel = this.app.selectionManager;
+                const oldVals = sel.selectedElements.map(e => ({ el: e, old: e.color }));
+                sel.setProperty('color', color);
+                
+                if (oldVals.length > 0) {
+                    this.app.history.push({
+                        description: 'Change color',
+                        undo: () => { oldVals.forEach(c => c.el.color = c.old); this.app.renderer.markDirty(); },
+                        redo: () => { oldVals.forEach(c => c.el.color = color); this.app.renderer.markDirty(); }
+                    });
+                }
                 this._updateColorSelection(color);
                 this.app.renderer.markDirty();
             });
@@ -48,7 +58,17 @@ export class PropertyPanel {
                     customBtn.dataset.color = c;
                     this._colorGrid.querySelectorAll('.color-swatch').forEach(s => s.classList.remove('selected'));
                     customBtn.classList.add('selected');
-                    this.app.selectionManager.setProperty('color', c);
+                    const sel = this.app.selectionManager;
+                    const oldVals = sel.selectedElements.map(e => ({ el: e, old: e.color }));
+                    sel.setProperty('color', c);
+                    
+                    if (oldVals.length > 0) {
+                        this.app.history.push({
+                            description: 'Change custom color',
+                            undo: () => { oldVals.forEach(v => v.el.color = v.old); this.app.renderer.markDirty(); },
+                            redo: () => { oldVals.forEach(v => v.el.color = c); this.app.renderer.markDirty(); }
+                        });
+                    }
                     this.app.renderer.markDirty();
                 });
             });
@@ -66,14 +86,32 @@ export class PropertyPanel {
         const bind = (id, prop, transform = v => v) => {
             const el = document.getElementById(id);
             if (!el) return;
+            let oldVals = null;
+
+            const startEdit = () => {
+                if (oldVals) return;
+                const sel = this.app.selectionManager;
+                oldVals = sel.selectedElements.map(e => ({ el: e, old: e[prop] }));
+            };
+
+            el.addEventListener('pointerdown', startEdit);
+            el.addEventListener('focus', startEdit);
+
             el.addEventListener('input', () => {
                 const val = transform(el.value);
-                const sel = this.app.selectionManager;
-                const oldVals = sel.selectedElements.map(e => ({ el: e, old: e[prop] }));
-                sel.setProperty(prop, val);
-                // Push history for each
-                if (oldVals.length === 1) {
-                    this.app.history.pushPropertyChange(oldVals[0].el, prop, oldVals[0].old, val);
+                this.app.selectionManager.setProperty(prop, val);
+            });
+
+            el.addEventListener('change', () => {
+                const val = transform(el.value);
+                if (oldVals && oldVals.length > 0) {
+                    const localOlds = [...oldVals];
+                    this.app.history.push({
+                        description: `Change ${prop}`,
+                        undo: () => { localOlds.forEach(c => c.el[prop] = c.old); this.app.renderer.markDirty(); },
+                        redo: () => { localOlds.forEach(c => c.el[prop] = val); this.app.renderer.markDirty(); }
+                    });
+                    oldVals = null;
                 }
             });
         };
@@ -109,6 +147,15 @@ export class PropertyPanel {
         const cellSizeInput = document.getElementById('prop-cell-size');
         const cellSizeVal = document.getElementById('prop-cell-size-val');
         if (cellSizeInput) {
+            let oldCellSizeVals = null;
+            const startCellSizeEdit = () => {
+                if (oldCellSizeVals) return;
+                const sel = this.app.selectionManager;
+                oldCellSizeVals = sel.selectedElements.map(e => ({ el: e, old: e.cellSize }));
+            };
+            cellSizeInput.addEventListener('pointerdown', startCellSizeEdit);
+            cellSizeInput.addEventListener('focus', startCellSizeEdit);
+
             cellSizeInput.addEventListener('input', () => {
                 const val = Number(cellSizeInput.value);
                 if (cellSizeVal) cellSizeVal.textContent = val;
@@ -120,6 +167,25 @@ export class PropertyPanel {
                     }
                 }
                 this.app.renderer.markDirty();
+            });
+
+            cellSizeInput.addEventListener('change', () => {
+                const val = Number(cellSizeInput.value);
+                if (oldCellSizeVals && oldCellSizeVals.length > 0) {
+                    const localOlds = [...oldCellSizeVals];
+                    this.app.history.push({
+                        description: 'Change cell size',
+                        undo: () => { 
+                            localOlds.forEach(c => { c.el.cellSize = c.old; c.el._updateSize(); });
+                            this.app.renderer.markDirty(); 
+                        },
+                        redo: () => { 
+                            localOlds.forEach(c => { c.el.cellSize = val; c.el._updateSize(); });
+                            this.app.renderer.markDirty(); 
+                        }
+                    });
+                    oldCellSizeVals = null;
+                }
             });
         }
 

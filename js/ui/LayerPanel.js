@@ -60,7 +60,9 @@ export class LayerPanel {
             vis.textContent = el.hidden ? '◯' : '◉';
             vis.addEventListener('click', (e) => {
                 e.stopPropagation();
+                const oldVal = el.hidden;
                 el.hidden = !el.hidden;
+                this.app.history.pushPropertyChange(el, 'hidden', oldVal, el.hidden);
                 this.app.renderer.markDirty();
                 this.update();
             });
@@ -131,12 +133,19 @@ export class LayerPanel {
                 const dstIdx = this.app.elements.indexOf(dstEl);
                 if (srcIdx < 0 || dstIdx < 0) return;
 
+                const oldArr = this.app.elements.slice();
+
                 this.app.elements.splice(srcIdx, 1);
                 const newDst = this.app.elements.indexOf(dstEl);
                 // The panel shows in reverse order (top=high zIndex), so dropping ON an item
                 // means the dragged item should go ABOVE it in the sorted view = higher index in array
                 this.app.elements.splice(newDst + (srcIdx > dstIdx ? 1 : 0), 0, this._dragSrc);
                 this.app.layerManager._reindex();
+                
+                if (this.app.layerManager._pushHistory) {
+                    this.app.layerManager._pushHistory(oldArr);
+                }
+
                 this._dragSrc = null;
                 this.update();
             });

@@ -336,6 +336,7 @@ class App {
         // ── Text tool ──────────────────────────────
         if (tool === 'text') {
             this._createTextAt(wx, wy);
+            this.toolbar.setTool('select');
             return;
         }
 
@@ -476,7 +477,6 @@ class App {
                 this.layerManager._reindex();
                 this.history.pushAdd(this, el);
                 this.selectionManager.select(el);
-                this.toolbar.setTool('select');
             } else {
                 // Too few points — discard ghost element
                 const idx = this.elements.indexOf(el);
@@ -561,6 +561,32 @@ class App {
     // Double Click
     // ═════════════════════════════════════════════════════
     _onDoubleClick(e) {
+        if (this.toolbar && this.toolbar.currentTool !== 'select') {
+            this.toolbar.setTool('select');
+            
+            // Cleanup accidental creations caused by the first click of this double-click
+            const now = Date.now();
+            let popped = 0;
+            while (this.history.undoStack.length > 0 && popped < 2) {
+                const cmd = this.history.undoStack[this.history.undoStack.length - 1];
+                if (cmd.description && cmd.description.startsWith('Add ') && (now - cmd.timestamp < 600)) {
+                    this.history.undo();
+                    this.history.redoStack.pop(); // Remove it completely
+                    popped++;
+                } else {
+                    break;
+                }
+            }
+
+            // Close dialogs if they were opened by the first click
+            if (this.textInputDialog) this.textInputDialog.close();
+            this._finishTextEditing();
+
+            this.renderer.markDirty();
+            this._refreshUI();
+            return;
+        }
+
         const { x: wx, y: wy } = this._worldPos(e);
         const hit = HitTest.hitTestAll(this.elements, wx, wy, this.camera);
         if (!hit) return;
@@ -610,17 +636,6 @@ class App {
     // ═════════════════════════════════════════════════════
     _handleSelectDown(wx, wy, e) {
         const sel = this.selectionManager;
-
-        // 0) Check if clicking on an edge "+" add zone (outside any element)
-        for (const el of this.elements) {
-            if (['matrix', 'stack', 'queue'].includes(el.type) && typeof el.hitTestEdgeAdd === 'function') {
-                const edge = el.hitTestEdgeAdd(wx, wy);
-                if (edge) {
-                    this._handleEdgeInsert(el, edge);
-                    return;
-                }
-            }
-        }
 
         // 1) Check handle hit on currently selected single element
         if (sel.selectedElements.length === 1) {
@@ -756,23 +771,6 @@ class App {
     // ═════════════════════════════════════════════════════
     _updateCursorHover(wx, wy) {
         if (this.toolbar.currentTool !== 'select') return;
-
-        // ── Check edge-add zones on data structure elements ──
-        let edgeHit = false;
-        let dirty = false;
-        for (const el of this.elements) {
-            if (['matrix', 'stack', 'queue'].includes(el.type) && typeof el.hitTestEdgeAdd === 'function') {
-                const prev = el._hoverEdge;
-                el._hoverEdge = el.hitTestEdgeAdd(wx, wy);
-                if (el._hoverEdge !== prev) dirty = true;
-                if (el._hoverEdge) edgeHit = true;
-            }
-        }
-        if (dirty) this.renderer.markDirty();
-        if (edgeHit) {
-            this.canvas.style.cursor = 'cell';
-            return;
-        }
 
         // Handle hover
         if (this.selectionManager.selectedElements.length === 1) {
@@ -941,12 +939,11 @@ class App {
                     el.setFromText('');
                 }
             }
-            this.toolbar.setTool('select');
             if (tool === 'tree') this._showTreeDialog(el);
             else if (tool === 'graph') this._showGraphDialog(el);
             else this._showDataStructureDialog(el);
         } else {
-            this.toolbar.setTool('select');
+            // Keep current tool
         }
         this._refreshUI();
     }
@@ -968,36 +965,19 @@ class App {
         for (const el of this.elements) {
             if (el.selectedCells && el.selectedCells.size > 0) { el.selectedCells.clear(); dirty = true; }
             if (el.selectedIndices && el.selectedIndices.size > 0) { el.selectedIndices.clear(); dirty = true; }
-            if (el._hoverEdge) { el._hoverEdge = null; dirty = true; }
         }
         if (dirty) this.renderer.markDirty();
     }
 
-    /** Insert a row or column into a data structure element based on the hovered edge. */
-    _handleEdgeInsert(el, edge) {
-        const EMPTY = '　'; // full-width space used as empty-slot placeholder
-        if (el.type === 'matrix') {
-            if (edge === 'right')  el.insertCol();
-            else if (edge === 'bottom') el.insertRow();
-        } else if (el.type === 'stack') {
-            // Insert an empty slot at the top (push)
-            el.items.push(EMPTY);
-            el._updateSize();
-            el.inputText = el.items.filter(v => v !== EMPTY).join(' ');
-        } else if (el.type === 'queue') {
-            // Insert an empty slot at the front (unshift)
-            el.items.unshift(EMPTY);
-            el._updateSize();
-            el.inputText = el.items.filter(v => v !== EMPTY).join(' ');
-        }
-        this.renderer.markDirty();
-    }
-
-    /** Delete selected cells from a MatrixElement. Clears values; removes entire rows/cols if all empty. */
     _deleteSelectedMatrixCells(el) {
         const EMPTY = '　';
         const isEmpty = v => v === '' || v === EMPTY || v == null;
         if (!el.selectedCells || el.selectedCells.size === 0) return;
+        
+        const oldData = el.data.map(row => [...row]);
+        const oldRows = el.rows;
+        const oldCols = el.cols;
+        
         // Step 1: clear values of selected cells
         for (const key of el.selectedCells) {
             const [r, c] = key.split(',').map(Number);
@@ -1018,6 +998,28 @@ class App {
             }
         }
         el.updateTextFromData();
+        
+        const newData = el.data.map(row => [...row]);
+        const newRows = el.rows;
+        const newCols = el.cols;
+        
+        this.history.push({
+            description: 'Delete matrix cells',
+            undo: () => {
+                el.data = oldData.map(row => [...row]);
+                el.rows = oldRows;
+                el.cols = oldCols;
+                el.updateTextFromData();
+                this.renderer.markDirty();
+            },
+            redo: () => {
+                el.data = newData.map(row => [...row]);
+                el.rows = newRows;
+                el.cols = newCols;
+                el.updateTextFromData();
+                this.renderer.markDirty();
+            }
+        });
         // Auto-delete element if completely empty
         if (el.rows === 0 || el.cols === 0) {
             this._deleteElement(el);
@@ -1026,9 +1028,12 @@ class App {
         this.renderer.markDirty();
     }
 
-    /** Delete selected items from a StackElement or QueueElement. */
     _deleteSelectedItems(el) {
         if (!el.selectedIndices || el.selectedIndices.size === 0) return;
+        
+        const oldItems = [...el.items];
+        const oldText = el.inputText;
+
         // Sort descending so splicing doesn't shift indices
         const indices = [...el.selectedIndices].sort((a, b) => b - a);
         for (const idx of indices) {
@@ -1038,6 +1043,25 @@ class App {
         el._lastItemIdx = -1;
         el._updateSize();
         el.inputText = el.items.filter(v => v !== '　').join(' ');
+        
+        const newItems = [...el.items];
+        const newText = el.inputText;
+        
+        this.history.push({
+            description: 'Delete items',
+            undo: () => {
+                el.items = [...oldItems];
+                el.inputText = oldText;
+                el._updateSize();
+                this.renderer.markDirty();
+            },
+            redo: () => {
+                el.items = [...newItems];
+                el.inputText = newText;
+                el._updateSize();
+                this.renderer.markDirty();
+            }
+        });
         // Auto-delete element if completely empty
         if (el.items.length === 0) {
             this._deleteElement(el);
@@ -1058,7 +1082,6 @@ class App {
         this.layerManager._reindex();
         this.history.pushAdd(this, el);
         this.selectionManager.select(el);
-        this.toolbar.setTool('select');
         this._startTextEditing(el);
         this._refreshUI();
     }
@@ -1140,7 +1163,7 @@ class App {
         overlay.onblur = () => this._finishTextEditing();
     }
 
-    _finishTextEditing() {
+    _finishTextEditing(cancel = false) {
         if (!this._textEditing) return;
         const overlay = document.getElementById('text-edit-overlay');
         if (!overlay) return;
@@ -1151,14 +1174,27 @@ class App {
         const newText = overlay.value;
         const oldText = this._textEditOld;
 
-        if (oldText !== newText) {
+        if (cancel) {
+            el.text = oldText;
+            el.autoSize(this.ctx);
+        } else if (oldText !== newText) {
             this.history.pushPropertyChange(el, 'text', oldText, newText);
         }
 
         overlay.style.display = 'none';
         overlay.onblur = null;
-        this._textEditing.isEditing = false;
+        el.isEditing = false;
         this._textEditing = null;
+
+        if (!el.text.trim() && el.type === 'text') {
+            this._deleteElement(el);
+            // Remove the 'Add text' from history if it was just created
+            const lastCmd = this.history.undoStack[this.history.undoStack.length - 1];
+            if (lastCmd && lastCmd.description === 'Add text') {
+                this.history.undoStack.pop();
+            }
+        }
+
         this.renderer.markDirty();
     }
 
@@ -1178,7 +1214,6 @@ class App {
         this.layerManager._reindex();
         this.history.pushAdd(this, el);
         this.selectionManager.select(el);
-        this.toolbar.setTool('select');
 
         // Open the input dialog immediately
         this._showDataStructureDialog(el);
@@ -1205,6 +1240,7 @@ class App {
                     this._deleteElement(el);
                 } else {
                     el.setFromText(oldText);
+                    this.selectionManager.clear();
                 }
                 this.renderer.markDirty();
                 this._refreshUI();
@@ -1217,6 +1253,7 @@ class App {
                     this._refreshUI();
                     return;
                 }
+                this.toolbar.setTool('select');
                 if (oldText !== text) {
                     this.history.push({
                         description: `Edit ${el.type}`,
@@ -1251,7 +1288,6 @@ class App {
         this.layerManager._reindex();
         this.history.pushAdd(this, el);
         this.selectionManager.select(el);
-        this.toolbar.setTool('select');
         this._showTreeDialog(el);
         this._refreshUI();
     }
@@ -1285,6 +1321,7 @@ class App {
                 } else {
                     el.treeType = originalType;
                     el.buildFromText(originalText, el._detectMode(originalText));
+                    this.selectionManager.clear();
                 }
                 this.renderer.markDirty();
                 this._refreshUI();
@@ -1298,6 +1335,7 @@ class App {
                     this._refreshUI();
                     return;
                 }
+                this.toolbar.setTool('select');
                 if (error) {
                     this._toast('⚠ ' + error, 4000);
                 }
@@ -1338,7 +1376,6 @@ class App {
         this.layerManager._reindex();
         this.history.pushAdd(this, el);
         this.selectionManager.select(el);
-        this.toolbar.setTool('select');
         this._showGraphDialog(el);
         this._refreshUI();
     }
@@ -1363,6 +1400,7 @@ class App {
                     this._deleteElement(el);
                 } else {
                     el.buildFromText(originalText, originalDirected);
+                    this.selectionManager.clear();
                 }
                 this.renderer.markDirty();
                 this._refreshUI();
@@ -1376,6 +1414,7 @@ class App {
                     this._refreshUI();
                     return;
                 }
+                this.toolbar.setTool('select');
                 
                 if (originalText !== text || originalDirected !== directed) {
                     this.history.push({
@@ -1435,9 +1474,9 @@ class App {
         overlay.style.fontFamily = 'Consolas, monospace';
         overlay.style.border = `1.5px solid ${cellColor}`;
         overlay.style.boxSizing = 'border-box';
-        // Strip full-width space sentinel (　) when entering edit mode
+        // Strip full-width space sentinel when entering edit mode
         const rawVal = String(matrixEl.data[row]?.[col] ?? '');
-        overlay.value = rawVal === '　' ? '' : rawVal;
+        overlay.value = (rawVal === '　' || rawVal === '　 　') ? '' : rawVal;
         overlay.focus();
         overlay.select();
 
@@ -1468,12 +1507,18 @@ class App {
                 this.history.push({
                     description: 'Edit Matrix Cell',
                     undo: () => { 
-                        if (matrixEl.data[row]) matrixEl.data[row][col] = oldValue; 
-                        if (matrixEl.updateTextFromData) matrixEl.updateTextFromData();
+                        if (matrixEl.data[row]) {
+                            matrixEl.data[row][col] = oldValue; 
+                            matrixEl._updateSize();
+                        }
+                        this.renderer.markDirty();
                     },
                     redo: () => { 
-                        if (matrixEl.data[row]) matrixEl.data[row][col] = newValue; 
-                        if (matrixEl.updateTextFromData) matrixEl.updateTextFromData();
+                        if (matrixEl.data[row]) {
+                            matrixEl.data[row][col] = newValue; 
+                            matrixEl._updateSize();
+                        }
+                        this.renderer.markDirty();
                     }
                 });
             }
@@ -1542,8 +1587,8 @@ class App {
             if (oldValue !== newValue) {
                 this.history.push({
                     description: 'Edit Tree Node',
-                    undo: () => { treeNode.value = oldValue; },
-                    redo: () => { treeNode.value = newValue; }
+                    undo: () => { treeNode.value = oldValue; this.renderer.markDirty(); },
+                    redo: () => { treeNode.value = newValue; this.renderer.markDirty(); }
                 });
             }
             this.renderer.markDirty();
@@ -1572,9 +1617,11 @@ class App {
                 description: 'Add Edge',
                 undo: () => {
                     graph.edges.pop();
+                    this.renderer.markDirty();
                 },
                 redo: () => {
                     graph.addEdge(ep.sourceNode.id, tgtNode.id);
+                    this.renderer.markDirty();
                 }
             });
         }
@@ -1619,13 +1666,7 @@ class App {
 
             const ctrl = e.ctrlKey || e.metaKey;
 
-            // ── Escape  Close Modal / Reset Tool / Clear cell selection ──
-            if (e.key === 'Escape') {
-                document.getElementById('settings-modal')?.classList.remove('open');
-                this._clearAllCellSelections();
-                this.setTool('select');
-                return;
-            }
+
 
             // ── Delete ─────────────────────────────
             if (e.key === 'Delete' || e.key === 'Backspace') {
@@ -1749,6 +1790,8 @@ class App {
 
             // ── Escape ──────────────────────────
             if (e.key === 'Escape') {
+                document.getElementById('settings-modal')?.classList.remove('open');
+                this._clearAllCellSelections();
                 this.selectionManager.clear();
                 this._finishTextEditing();
                 this._edgePreview = null;
@@ -1760,7 +1803,7 @@ class App {
                     this._creatingElement = null;
                 }
                 this.transform.cancel();
-                this.toolbar.setTool('select');
+                if (this.toolbar) this.toolbar.setTool('select');
                 this._refreshUI();
                 return;
             }

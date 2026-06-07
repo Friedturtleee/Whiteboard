@@ -23,6 +23,10 @@ export class StackElement extends Element {
         this._updateSize();
     }
 
+    updateTextFromData() {
+        this.inputText = this.items.map(v => v === '' ? '　' : v).join(' ');
+    }
+
     pop() {
         const v = this.items.pop();
         this._updateSize();
@@ -31,7 +35,11 @@ export class StackElement extends Element {
 
     setFromText(text) {
         this.inputText = text;
-        const vals = text.trim().split(/[\s,\n]+/).filter(v => v);
+        let textProcessed = text.trim().replace(/　/g, '__EMPTY__');
+        const vals = textProcessed.split(/[\s,\n]+/).filter(v => v).map(v => {
+            if (v === '__EMPTY__') return '';
+            return v;
+        });
         this.items = vals;
         this.selectedIndices.clear();
         this._lastItemIdx = -1;
@@ -63,14 +71,6 @@ export class StackElement extends Element {
         const newCellH = Math.floor((newH - 32) / count); // 32 = 8 + 24
         this.cellHeight = Math.max(20, Math.min(newCellW, newCellH));
         this._updateSize();
-    }
-
-    /** Returns 'top' | null if (wx,wy) is in the top edge-add zone. */
-    hitTestEdgeAdd(wx, wy) {
-        const zone = 28;
-        if (wx >= this.x && wx <= this.x + this.width &&
-            wy >= this.y - zone && wy <= this.y + 4) return 'top';
-        return null;
     }
 
     draw(ctx, camera) {
@@ -133,7 +133,7 @@ export class StackElement extends Element {
             ctx.globalAlpha = this.opacity;
 
             // Value (skip rendering the full-width space placeholder)
-            if (i < displayItems.length && displayItems[i] !== '　') {
+            if (i < displayItems.length && displayItems[i] !== '　' && displayItems[i] !== '') {
                 ctx.fillStyle = this.getEffectiveColor(this.color);
                 ctx.fillText(String(displayItems[i]), cx, cy, w - 16);
             }
@@ -159,16 +159,6 @@ export class StackElement extends Element {
         ctx.lineTo(arrowX, topCellY);
         ctx.lineTo(arrowX + 4, topCellY + 6);
         ctx.stroke();
-
-        // "+" edge-add indicator at top
-        if (this._hoverEdge === 'top') {
-            ctx.globalAlpha = 0.95;
-            ctx.fillStyle = '#56b3e6';
-            ctx.font = 'bold 22px sans-serif';
-            ctx.textAlign = 'center';
-            ctx.textBaseline = 'middle';
-            ctx.fillText('+', x + w / 2, y - 14);
-        }
 
         ctx.restore();
     }
