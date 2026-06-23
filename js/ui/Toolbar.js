@@ -22,7 +22,7 @@ export class Toolbar {
         // Keyboard shortcuts
         document.addEventListener('keydown', (e) => {
             if (e.target.tagName === 'INPUT' || e.target.tagName === 'TEXTAREA' || e.target.tagName === 'SELECT') return;
-            const map = { v: 'select', h: 'pan', r: 'rectangle', c: 'circle', l: 'line', a: 'arrow', t: 'text', p: 'pen' };
+            const map = { v: 'select', h: 'pan', r: 'rectangle', c: 'circle', l: 'line', a: 'arrow', t: 'text', m: 'markdown', p: 'pen' };
             const tool = map[e.key.toLowerCase()];
             if (tool && !e.ctrlKey && !e.metaKey) this.setTool(tool);
         });
@@ -40,7 +40,7 @@ export class Toolbar {
         const canvas = document.getElementById('main-canvas');
         canvas.className = '';
         if (tool === 'pan') canvas.classList.add('panning');
-        else if (['rectangle', 'circle', 'line', 'arrow', 'text', 'pen'].includes(tool)) canvas.classList.add('crosshair');
+        else if (['rectangle', 'circle', 'line', 'arrow', 'text', 'markdown', 'pen'].includes(tool)) canvas.classList.add('crosshair');
 
         this.app.renderer.markDirty();
     }

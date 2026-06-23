@@ -25,6 +25,7 @@ import { StackElement } from './elements/StackElement.js';
 import { QueueElement } from './elements/QueueElement.js';
 import { PenElement } from './elements/PenElement.js';
 import { MermaidElement } from './elements/MermaidElement.js';
+import { MarkdownElement } from './elements/MarkdownElement.js';
 import { TreeElement } from './tree/TreeElement.js';
 import { GraphElement } from './graph/GraphElement.js';
 
@@ -340,6 +341,12 @@ class App {
             return;
         }
 
+        // ── Markdown tool ───────────────────────────
+        if (tool === 'markdown') {
+            this._createMarkdown(wx, wy);
+            return;
+        }
+
         // ── Data structures: drag to size ──
         if (['matrix', 'stack', 'queue'].includes(tool)) {
             this._startCreating(tool, wx, wy);
@@ -627,6 +634,12 @@ class App {
         // ── Graph → input dialog ───────────────────
         if (hit.type === 'graph') {
             this._showGraphDialog(hit);
+            return;
+        }
+
+        // ── Markdown → edit dialog ─────────────────
+        if (hit.type === 'markdown') {
+            this._showMarkdownDialog(hit);
             return;
         }
     }
@@ -1602,6 +1615,204 @@ class App {
     }
 
     // ═════════════════════════════════════════════════════
+    // Markdown Element
+    // ═════════════════════════════════════════════════════
+    _createMarkdown(wx, wy) {
+        const el = new MarkdownElement(wx, wy, '');
+        this._showMarkdownDialog(el, true);
+    }
+
+    /**
+     * Show the split-pane Markdown editor dialog.
+     * @param {MarkdownElement} el
+     * @param {boolean} isNew - if true, element hasn't been added yet
+     */
+    _showMarkdownDialog(el, isNew = false) {
+        const oldText = el.markdownText;
+
+        // ── Build overlay ───────────────────────────
+        const overlay = document.createElement('div');
+        overlay.className = 'markdown-dialog-overlay';
+
+        const dialog = document.createElement('div');
+        dialog.className = 'markdown-dialog';
+
+        // ── Header ──────────────────────────────────
+        const header = document.createElement('div');
+        header.className = 'markdown-dialog-header';
+        const h3 = document.createElement('h3');
+        h3.innerHTML = '<span class="md-icon">MD</span> Markdown 編輯器';
+        header.appendChild(h3);
+        dialog.appendChild(header);
+
+        // ── Body (split pane) ───────────────────────
+        const body = document.createElement('div');
+        body.className = 'markdown-dialog-body';
+
+        // Left: editor
+        const editorPane = document.createElement('div');
+        editorPane.className = 'markdown-editor-pane';
+        const editorLabel = document.createElement('div');
+        editorLabel.className = 'pane-label';
+        editorLabel.textContent = '編輯';
+        const textarea = document.createElement('textarea');
+        textarea.value = el.markdownText || '';
+        textarea.placeholder = '在此輸入 Markdown…\n\n# 標題\n## 副標題\n\n- 列表項目\n- **粗體** 和 *斜體*\n\n```python\nprint("Hello")\n```';
+        textarea.spellcheck = false;
+        editorPane.appendChild(editorLabel);
+        editorPane.appendChild(textarea);
+
+        // Right: preview
+        const previewPane = document.createElement('div');
+        previewPane.className = 'markdown-preview-pane';
+        const previewLabel = document.createElement('div');
+        previewLabel.className = 'pane-label';
+        previewLabel.textContent = '預覽';
+        const previewContent = document.createElement('div');
+        previewContent.className = 'markdown-preview-content';
+        previewPane.appendChild(previewLabel);
+        previewPane.appendChild(previewContent);
+
+        body.appendChild(editorPane);
+        body.appendChild(previewPane);
+        dialog.appendChild(body);
+
+        // ── Footer ──────────────────────────────────
+        const footer = document.createElement('div');
+        footer.className = 'markdown-dialog-footer';
+        const cancelBtn = document.createElement('button');
+        cancelBtn.className = 'md-btn-cancel';
+        cancelBtn.textContent = '取消';
+        const confirmBtn = document.createElement('button');
+        confirmBtn.className = 'md-btn-confirm';
+        confirmBtn.textContent = '確認';
+        footer.appendChild(cancelBtn);
+        footer.appendChild(confirmBtn);
+        dialog.appendChild(footer);
+
+        overlay.appendChild(dialog);
+        document.body.appendChild(overlay);
+
+        // ── Live preview ────────────────────────────
+        const updatePreview = () => {
+            const md = textarea.value;
+            if (typeof marked !== 'undefined') {
+                let html;
+                try {
+                    marked.setOptions({
+                        highlight: (code, lang) => {
+                            if (typeof hljs !== 'undefined') {
+                                if (lang && hljs.getLanguage(lang)) {
+                                    try { return hljs.highlight(code, { language: lang }).value; }
+                                    catch (_) { /* fall through */ }
+                                }
+                                return hljs.highlightAuto(code).value;
+                            }
+                            return code;
+                        },
+                        breaks: true,
+                        gfm: true,
+                    });
+                    html = marked.parse(md);
+                } catch (_) {
+                    html = `<pre>${md.replace(/</g, '&lt;')}</pre>`;
+                }
+                previewContent.innerHTML = html;
+            } else {
+                previewContent.innerHTML = `<pre style="white-space:pre-wrap">${md.replace(/</g, '&lt;')}</pre>`;
+            }
+        };
+
+        // Initial preview
+        updatePreview();
+
+        // Debounced preview updates
+        let previewTimer = null;
+        textarea.addEventListener('input', () => {
+            clearTimeout(previewTimer);
+            previewTimer = setTimeout(updatePreview, 80);
+        });
+
+        // Focus textarea
+        requestAnimationFrame(() => {
+            textarea.focus();
+            if (textarea.value) textarea.select();
+        });
+
+        // ── Close helper ────────────────────────────
+        const closeDialog = () => {
+            clearTimeout(previewTimer);
+            if (overlay.parentNode) overlay.parentNode.removeChild(overlay);
+        };
+
+        // ── Confirm ─────────────────────────────────
+        const confirm = () => {
+            const text = textarea.value.trim();
+            if (!text) {
+                // Empty text: if new, don't create; if existing, delete
+                if (!isNew) {
+                    this._deleteElement(el);
+                    this.selectionManager.clear();
+                }
+                closeDialog();
+                this.toolbar.setTool('select');
+                this._refreshUI();
+                return;
+            }
+
+            el.markdownText = text;
+            el._render();
+
+            if (isNew) {
+                this.elements.push(el);
+                this.layerManager._reindex();
+                this.history.pushAdd(this, el);
+            } else if (oldText !== text) {
+                this.history.push({
+                    description: 'Edit Markdown',
+                    undo: () => { el.markdownText = oldText; el._render(); this.renderer.markDirty(); },
+                    redo: () => { el.markdownText = text; el._render(); this.renderer.markDirty(); }
+                });
+            }
+
+            this.selectionManager.select(el);
+            closeDialog();
+            this.toolbar.setTool('select');
+            this._refreshUI();
+        };
+
+        // ── Cancel ──────────────────────────────────
+        const cancel = () => {
+            if (!isNew) {
+                el.markdownText = oldText;
+                el._render();
+            }
+            this.selectionManager.clear();
+            closeDialog();
+            this.toolbar.setTool('select');
+            this._refreshUI();
+        };
+
+        confirmBtn.addEventListener('click', confirm);
+        cancelBtn.addEventListener('click', cancel);
+
+        // Click overlay background to confirm
+        overlay.addEventListener('click', (e) => {
+            if (e.target === overlay) confirm();
+        });
+
+        // ESC to cancel
+        const onKey = (e) => {
+            if (e.key === 'Escape') {
+                e.stopPropagation();
+                cancel();
+                document.removeEventListener('keydown', onKey, true);
+            }
+        };
+        document.addEventListener('keydown', onKey, true);
+    }
+
+    // ═════════════════════════════════════════════════════
     // Edge Creation (graph — Alt+click node, drag to another)
     // ═════════════════════════════════════════════════════
     _finishEdgeCreation(wx, wy) {
@@ -2077,7 +2288,8 @@ class App {
                 line: ShapeElement, arrow: ShapeElement,
                 text: TextElement, matrix: MatrixElement, stack: StackElement,
                 queue: QueueElement, mermaid: MermaidElement,
-                pen: PenElement, tree: TreeElement, graph: GraphElement
+                pen: PenElement, tree: TreeElement, graph: GraphElement,
+                markdown: MarkdownElement
             };
             const Cls = TYPE_MAP[newData.type];
             if (!Cls) continue;
@@ -2119,7 +2331,8 @@ class App {
                 line: ShapeElement, arrow: ShapeElement,
                 text: TextElement, matrix: MatrixElement, stack: StackElement,
                 queue: QueueElement, mermaid: MermaidElement,
-                pen: PenElement
+                pen: PenElement,
+                markdown: MarkdownElement
             };
             const Cls = TYPE_MAP[data.type];
             if (!Cls) continue;
@@ -2368,7 +2581,8 @@ class App {
                 text: TextElement, matrix: MatrixElement,
                 stack: StackElement, queue: QueueElement,
                 mermaid: MermaidElement,
-                pen: PenElement, tree: TreeElement, graph: GraphElement
+                pen: PenElement, tree: TreeElement, graph: GraphElement,
+                markdown: MarkdownElement
             };
             this._skipAutosave = true;
             this.elements = [];

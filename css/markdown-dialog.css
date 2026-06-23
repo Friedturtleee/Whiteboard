@@ -1,0 +1,259 @@
+/* ═══════════════════════════════════════════════════════
+   Markdown Dialog — split-pane editor with live preview
+   ═══════════════════════════════════════════════════════ */
+
+.markdown-dialog-overlay {
+    position: fixed;
+    inset: 0;
+    background: rgba(0,0,0,0.65);
+    backdrop-filter: blur(6px);
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    z-index: 10000;
+    animation: md-fade-in 0.15s ease;
+}
+
+@keyframes md-fade-in {
+    from { opacity: 0; }
+    to   { opacity: 1; }
+}
+
+.markdown-dialog {
+    width: min(90vw, 960px);
+    height: min(80vh, 640px);
+    background: var(--bg-panel, #1e1e2e);
+    border: 1px solid rgba(99,102,241,0.25);
+    border-radius: 14px;
+    box-shadow: 0 20px 60px rgba(0,0,0,0.5), 0 0 0 1px rgba(255,255,255,0.04);
+    display: flex;
+    flex-direction: column;
+    overflow: hidden;
+    animation: md-dialog-in 0.2s ease;
+}
+
+@keyframes md-dialog-in {
+    from { opacity: 0; transform: translateY(16px) scale(0.98); }
+    to   { opacity: 1; transform: translateY(0) scale(1); }
+}
+
+/* ── Header ────────────────────────────────── */
+.markdown-dialog-header {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    padding: 14px 20px;
+    border-bottom: 1px solid rgba(255,255,255,0.06);
+    flex-shrink: 0;
+}
+
+.markdown-dialog-header h3 {
+    margin: 0;
+    font-size: 15px;
+    font-weight: 600;
+    color: #e0e0e0;
+    display: flex;
+    align-items: center;
+    gap: 8px;
+}
+
+.markdown-dialog-header h3 .md-icon {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    width: 26px;
+    height: 26px;
+    background: rgba(99,102,241,0.15);
+    border-radius: 6px;
+    font-size: 12px;
+    font-weight: 700;
+    color: #818cf8;
+}
+
+/* ── Body (split pane) ─────────────────────── */
+.markdown-dialog-body {
+    display: flex;
+    flex: 1;
+    min-height: 0;
+    overflow: hidden;
+}
+
+.markdown-editor-pane {
+    flex: 1;
+    display: flex;
+    flex-direction: column;
+    border-right: 1px solid rgba(255,255,255,0.06);
+    min-width: 0;
+}
+
+.markdown-editor-pane .pane-label {
+    font-size: 11px;
+    font-weight: 500;
+    text-transform: uppercase;
+    letter-spacing: 0.6px;
+    color: #888;
+    padding: 8px 14px 4px;
+    flex-shrink: 0;
+}
+
+.markdown-editor-pane textarea {
+    flex: 1;
+    width: 100%;
+    padding: 10px 14px;
+    background: transparent;
+    border: none;
+    outline: none;
+    color: #e0e0e0;
+    font-family: 'Fira Code', 'JetBrains Mono', Consolas, monospace;
+    font-size: 13px;
+    line-height: 1.65;
+    resize: none;
+    tab-size: 4;
+}
+
+.markdown-editor-pane textarea::placeholder {
+    color: #555;
+}
+
+.markdown-preview-pane {
+    flex: 1;
+    display: flex;
+    flex-direction: column;
+    min-width: 0;
+}
+
+.markdown-preview-pane .pane-label {
+    font-size: 11px;
+    font-weight: 500;
+    text-transform: uppercase;
+    letter-spacing: 0.6px;
+    color: #888;
+    padding: 8px 14px 4px;
+    flex-shrink: 0;
+}
+
+.markdown-preview-content {
+    flex: 1;
+    overflow-y: auto;
+    padding: 10px 18px 18px;
+    font-family: 'Inter', 'Zen Maru Gothic', -apple-system, sans-serif;
+    font-size: 14px;
+    line-height: 1.7;
+    color: #e0e0e0;
+}
+
+/* ── Preview markdown styles ───────────────── */
+.markdown-preview-content h1 {
+    font-size: 24px; font-weight: 700; margin: 0 0 10px;
+    color: #fff; border-bottom: 1px solid #444; padding-bottom: 6px;
+}
+.markdown-preview-content h2 {
+    font-size: 20px; font-weight: 600; margin: 14px 0 8px;
+    color: #f0f0f0; border-bottom: 1px solid #333; padding-bottom: 5px;
+}
+.markdown-preview-content h3 { font-size: 17px; font-weight: 600; margin: 12px 0 6px; color: #e8e8e8; }
+.markdown-preview-content h4 { font-size: 15px; font-weight: 600; margin: 10px 0 4px; color: #ddd; }
+.markdown-preview-content p { margin: 0 0 8px; }
+.markdown-preview-content ul, .markdown-preview-content ol { margin: 0 0 8px; padding-left: 22px; }
+.markdown-preview-content li { margin: 2px 0; }
+.markdown-preview-content blockquote {
+    margin: 0 0 8px; padding: 8px 14px;
+    border-left: 3px solid #6366f1;
+    background: rgba(99,102,241,0.06);
+    color: #b0b0b0; border-radius: 0 6px 6px 0;
+}
+.markdown-preview-content a { color: #818cf8; text-decoration: none; }
+.markdown-preview-content strong { color: #fff; }
+.markdown-preview-content code {
+    font-family: 'Fira Code', 'JetBrains Mono', Consolas, monospace;
+    font-size: 12.5px;
+    background: rgba(255,255,255,0.07);
+    padding: 2px 5px; border-radius: 4px;
+    color: #e8b4b8;
+}
+.markdown-preview-content pre {
+    margin: 0 0 10px; padding: 12px 14px;
+    background: #1a1a2e; border-radius: 8px;
+    border: 1px solid #2a2a3e;
+    overflow-x: auto;
+}
+.markdown-preview-content pre code {
+    background: none; padding: 0;
+    font-size: 12.5px; line-height: 1.55; color: #e0e0e0;
+}
+.markdown-preview-content table { border-collapse: collapse; margin: 0 0 10px; width: 100%; }
+.markdown-preview-content th,
+.markdown-preview-content td { border: 1px solid #444; padding: 5px 8px; text-align: left; }
+.markdown-preview-content th { background: rgba(99,102,241,0.12); color: #c8c8ff; font-weight: 600; }
+.markdown-preview-content tr:nth-child(even) { background: rgba(255,255,255,0.02); }
+.markdown-preview-content hr { border: none; border-top: 1px solid #444; margin: 12px 0; }
+.markdown-preview-content img { max-width: 100%; border-radius: 6px; }
+
+/* highlight.js token colours (Palenight-ish) */
+.markdown-preview-content .hljs-keyword { color: #c792ea; }
+.markdown-preview-content .hljs-string  { color: #c3e88d; }
+.markdown-preview-content .hljs-number  { color: #f78c6c; }
+.markdown-preview-content .hljs-comment { color: #676e95; font-style: italic; }
+.markdown-preview-content .hljs-function,
+.markdown-preview-content .hljs-title   { color: #82aaff; }
+.markdown-preview-content .hljs-built_in,
+.markdown-preview-content .hljs-type    { color: #ffcb6b; }
+.markdown-preview-content .hljs-attr,
+.markdown-preview-content .hljs-variable { color: #f07178; }
+.markdown-preview-content .hljs-meta     { color: #89ddff; }
+.markdown-preview-content .hljs-operator,
+.markdown-preview-content .hljs-punctuation { color: #89ddff; }
+
+/* ── Footer ────────────────────────────────── */
+.markdown-dialog-footer {
+    display: flex;
+    align-items: center;
+    justify-content: flex-end;
+    gap: 10px;
+    padding: 12px 20px;
+    border-top: 1px solid rgba(255,255,255,0.06);
+    flex-shrink: 0;
+}
+
+.markdown-dialog-footer button {
+    padding: 7px 22px;
+    border: none;
+    border-radius: 8px;
+    font-size: 13px;
+    font-weight: 500;
+    cursor: pointer;
+    transition: all 0.15s ease;
+}
+
+.markdown-dialog-footer .md-btn-cancel {
+    background: rgba(255,255,255,0.06);
+    color: #aaa;
+}
+.markdown-dialog-footer .md-btn-cancel:hover {
+    background: rgba(255,255,255,0.1);
+    color: #ccc;
+}
+
+.markdown-dialog-footer .md-btn-confirm {
+    background: #6366f1;
+    color: #fff;
+}
+.markdown-dialog-footer .md-btn-confirm:hover {
+    background: #7c7ff7;
+}
+
+/* ── Scrollbar ─────────────────────────────── */
+.markdown-preview-content::-webkit-scrollbar { width: 6px; }
+.markdown-preview-content::-webkit-scrollbar-track { background: transparent; }
+.markdown-preview-content::-webkit-scrollbar-thumb {
+    background: rgba(255,255,255,0.1); border-radius: 3px;
+}
+.markdown-preview-content::-webkit-scrollbar-thumb:hover {
+    background: rgba(255,255,255,0.18);
+}
+
+.markdown-editor-pane textarea::-webkit-scrollbar { width: 6px; }
+.markdown-editor-pane textarea::-webkit-scrollbar-track { background: transparent; }
+.markdown-editor-pane textarea::-webkit-scrollbar-thumb {
+    background: rgba(255,255,255,0.1); border-radius: 3px;
+}
