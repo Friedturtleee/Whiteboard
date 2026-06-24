@@ -138,23 +138,32 @@ export default {
 
     const url = new URL(request.url);
 
-    // If it's not a WebSocket upgrade request, just return a health check
-    if (request.headers.get("Upgrade") !== "websocket") {
-      return new Response("Whiteboard Server is running. Please connect via WebSocket.", { status: 200 });
-    }
-
-    // Development fallback (if no token, allow for testing)
+    // Verify token FIRST so we can see the exact error via browser HTTP GET
     const token = url.searchParams.get("token");
+    let authError = null;
+
     if (token) {
       try {
         const clerk = createClerkClient({ secretKey: env.CLERK_SECRET_KEY });
         await clerk.verifyToken(token);
       } catch (err) {
-        return new Response("Unauthorized: Invalid token", { status: 401 });
+        authError = "Unauthorized: Invalid token. Details: " + err.message;
       }
     } else if (env.CLERK_SECRET_KEY) {
-      // If server expects Clerk but no token is provided
-      return new Response("Unauthorized: Missing token", { status: 401 });
+      authError = "Unauthorized: Missing token in URL query parameters.";
+    }
+
+    // If it's not a WebSocket upgrade request, return health check OR the auth error
+    if (request.headers.get("Upgrade") !== "websocket") {
+      if (authError) {
+        return new Response("Auth Error: " + authError, { status: 401 });
+      }
+      return new Response("Auth Success! Whiteboard Server is running. Please connect via WebSocket.", { status: 200 });
+    }
+
+    // If it is a WebSocket request but auth failed, reject it
+    if (authError) {
+      return new Response(authError, { status: 401 });
     }
 
     const roomId = url.searchParams.get("room") || "default-room";
