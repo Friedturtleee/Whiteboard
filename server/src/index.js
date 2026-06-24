@@ -3,7 +3,7 @@ import * as syncProtocol from 'y-protocols/sync';
 import * as awarenessProtocol from 'y-protocols/awareness';
 import * as encoding from 'lib0/encoding';
 import * as decoding from 'lib0/decoding';
-import { createClerkClient } from '@clerk/backend';
+import { verifyToken } from '@clerk/backend';
 import { DurableObject } from "cloudflare:workers";
 
 export class WhiteboardRoom extends DurableObject {
@@ -144,8 +144,7 @@ export default {
 
     if (token) {
       try {
-        const clerk = createClerkClient({ secretKey: env.CLERK_SECRET_KEY });
-        await clerk.verifyToken(token);
+        await verifyToken(token, { secretKey: env.CLERK_SECRET_KEY });
       } catch (err) {
         authError = "Unauthorized: Invalid token. Details: " + err.message;
       }
