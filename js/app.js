@@ -1659,6 +1659,18 @@ class App {
         textarea.value = el.markdownText || '';
         textarea.placeholder = '在此輸入 Markdown…\n\n# 標題\n## 副標題\n\n- 列表項目\n- **粗體** 和 *斜體*\n\n```python\nprint("Hello")\n```';
         textarea.spellcheck = false;
+
+        // Tab key inserts spaces
+        textarea.addEventListener('keydown', (e) => {
+            if (e.key === 'Tab') {
+                e.preventDefault();
+                const s = textarea.selectionStart, end = textarea.selectionEnd;
+                textarea.value = textarea.value.substring(0, s) + '    ' + textarea.value.substring(end);
+                textarea.selectionStart = textarea.selectionEnd = s + 4;
+                textarea.dispatchEvent(new Event('input'));
+            }
+        });
+
         editorPane.appendChild(editorLabel);
         editorPane.appendChild(textarea);
 
@@ -1696,29 +1708,9 @@ class App {
         // ── Live preview ────────────────────────────
         const updatePreview = () => {
             const md = textarea.value;
-            if (typeof marked !== 'undefined') {
-                let html;
-                try {
-                    marked.setOptions({
-                        highlight: (code, lang) => {
-                            if (typeof hljs !== 'undefined') {
-                                if (lang && hljs.getLanguage(lang)) {
-                                    try { return hljs.highlight(code, { language: lang }).value; }
-                                    catch (_) { /* fall through */ }
-                                }
-                                return hljs.highlightAuto(code).value;
-                            }
-                            return code;
-                        },
-                        breaks: true,
-                        gfm: true,
-                    });
-                    html = marked.parse(md);
-                } catch (_) {
-                    html = `<pre>${md.replace(/</g, '&lt;')}</pre>`;
-                }
-                previewContent.innerHTML = html;
-            } else {
+            try {
+                previewContent.innerHTML = MarkdownElement.renderToHTML(md);
+            } catch (_) {
                 previewContent.innerHTML = `<pre style="white-space:pre-wrap">${md.replace(/</g, '&lt;')}</pre>`;
             }
         };

@@ -189,6 +189,61 @@ export class PropertyPanel {
             });
         }
 
+        // Font size slider (for text, markdown)
+        const fontSizeInput = document.getElementById('prop-font-size');
+        const fontSizeVal = document.getElementById('prop-font-size-val');
+        if (fontSizeInput) {
+            let oldFontSizeVals = null;
+            const startFontSizeEdit = () => {
+                if (oldFontSizeVals) return;
+                const sel = this.app.selectionManager;
+                oldFontSizeVals = sel.selectedElements.map(e => ({ el: e, old: e.fontSize }));
+            };
+            fontSizeInput.addEventListener('pointerdown', startFontSizeEdit);
+            fontSizeInput.addEventListener('focus', startFontSizeEdit);
+
+            fontSizeInput.addEventListener('input', () => {
+                const val = Number(fontSizeInput.value);
+                if (fontSizeVal) fontSizeVal.textContent = val;
+                const sel = this.app.selectionManager;
+                for (const el of sel.selectedElements) {
+                    if (el.fontSize !== undefined) {
+                        el.fontSize = val;
+                        if (el.type === 'text') el.autoSize(this.app.renderer.ctx);
+                        if (el.type === 'markdown') el._render();
+                    }
+                }
+                this.app.renderer.markDirty();
+            });
+
+            fontSizeInput.addEventListener('change', () => {
+                const val = Number(fontSizeInput.value);
+                if (oldFontSizeVals && oldFontSizeVals.length > 0) {
+                    const localOlds = [...oldFontSizeVals];
+                    this.app.history.push({
+                        description: 'Change font size',
+                        undo: () => { 
+                            localOlds.forEach(c => { 
+                                c.el.fontSize = c.old; 
+                                if (c.el.type === 'text') c.el.autoSize(this.app.renderer.ctx); 
+                                if (c.el.type === 'markdown') c.el._render();
+                            });
+                            this.app.renderer.markDirty(); 
+                        },
+                        redo: () => { 
+                            localOlds.forEach(c => { 
+                                c.el.fontSize = val; 
+                                if (c.el.type === 'text') c.el.autoSize(this.app.renderer.ctx); 
+                                if (c.el.type === 'markdown') c.el._render();
+                            });
+                            this.app.renderer.markDirty(); 
+                        }
+                    });
+                    oldFontSizeVals = null;
+                }
+            });
+        }
+
         // Range display values
         const rangeDisplay = (inputId, displayId, suffix = '') => {
             const inp = document.getElementById(inputId);
@@ -303,6 +358,20 @@ export class PropertyPanel {
                 if (cellSizeValSpan) cellSizeValSpan.textContent = el.cellSize;
             } else {
                 cellSizeRow.style.display = 'none';
+            }
+        }
+
+        // Font size row: show for text and markdown
+        const fontSizeRow = document.getElementById('font-size-row');
+        const fontSizeInput = document.getElementById('prop-font-size');
+        const fontSizeValSpan = document.getElementById('prop-font-size-val');
+        if (fontSizeRow) {
+            if (el.fontSize !== undefined) {
+                fontSizeRow.style.display = '';
+                if (fontSizeInput) fontSizeInput.value = el.fontSize;
+                if (fontSizeValSpan) fontSizeValSpan.textContent = el.fontSize;
+            } else {
+                fontSizeRow.style.display = 'none';
             }
         }
 

@@ -141,7 +141,7 @@ export class Transform {
                     break;
             }
 
-            const DATA_TYPES = ['text', 'matrix', 'stack', 'queue', 'tree', 'graph'];
+            const DATA_TYPES = ['text', 'matrix', 'stack', 'queue', 'tree', 'graph', 'markdown'];
             const forceProportional = DATA_TYPES.includes(el.type) || shiftKey;
             if (forceProportional && sb.h > 0) {
                 const ratio = sb.w / sb.h;

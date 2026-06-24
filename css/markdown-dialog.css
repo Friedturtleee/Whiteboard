@@ -189,20 +189,6 @@
 .markdown-preview-content hr { border: none; border-top: 1px solid #444; margin: 12px 0; }
 .markdown-preview-content img { max-width: 100%; border-radius: 6px; }
 
-/* highlight.js token colours (Palenight-ish) */
-.markdown-preview-content .hljs-keyword { color: #c792ea; }
-.markdown-preview-content .hljs-string  { color: #c3e88d; }
-.markdown-preview-content .hljs-number  { color: #f78c6c; }
-.markdown-preview-content .hljs-comment { color: #676e95; font-style: italic; }
-.markdown-preview-content .hljs-function,
-.markdown-preview-content .hljs-title   { color: #82aaff; }
-.markdown-preview-content .hljs-built_in,
-.markdown-preview-content .hljs-type    { color: #ffcb6b; }
-.markdown-preview-content .hljs-attr,
-.markdown-preview-content .hljs-variable { color: #f07178; }
-.markdown-preview-content .hljs-meta     { color: #89ddff; }
-.markdown-preview-content .hljs-operator,
-.markdown-preview-content .hljs-punctuation { color: #89ddff; }
 
 /* ── Footer ────────────────────────────────── */
 .markdown-dialog-footer {
@@ -256,4 +242,36 @@
 .markdown-editor-pane textarea::-webkit-scrollbar-track { background: transparent; }
 .markdown-editor-pane textarea::-webkit-scrollbar-thumb {
     background: rgba(255,255,255,0.1); border-radius: 3px;
+}
+
+/* ── KaTeX (LaTeX math) ────────────────────── */
+.markdown-preview-content .md-katex-display {
+    text-align: center;
+    margin: 14px 0;
+    overflow-x: auto;
+}
+.markdown-preview-content .katex-display {
+    margin: 0;
+}
+.markdown-preview-content .katex {
+    font-size: 1.1em;
+}
+.markdown-preview-content .katex-error {
+    color: #f07178;
+    font-family: 'Fira Code', monospace;
+    font-size: 13px;
+    background: rgba(240,113,120,0.08);
+    padding: 2px 6px;
+    border-radius: 4px;
+}
+
+
+/* ── Hidden render container (for html2canvas) ─ */
+.md-render-container {
+    /* all inline, but just in case */
+    position: fixed !important;
+    left: -9999px !important;
+    top: 0 !important;
+    z-index: -1 !important;
+    pointer-events: none !important;
 }
