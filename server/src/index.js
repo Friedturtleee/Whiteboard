@@ -4,13 +4,14 @@ import * as awarenessProtocol from 'y-protocols/awareness';
 import * as encoding from 'lib0/encoding';
 import * as decoding from 'lib0/decoding';
 import { createClerkClient } from '@clerk/backend';
+import { DurableObject } from "cloudflare:workers";
 
-export class WhiteboardRoom {
-  constructor(state, env) {
-    this.state = state;
+export class WhiteboardRoom extends DurableObject {
+  constructor(ctx, env) {
+    super(ctx, env);
     this.env = env;
     this.sessions = new Map();
-    this.sql = state.storage.sql;
+    this.sql = ctx.storage.sql;
     
     this.doc = new Y.Doc();
     this.awareness = new awarenessProtocol.Awareness(this.doc);
@@ -68,7 +69,7 @@ export class WhiteboardRoom {
     }
 
     const { 0: client, 1: server } = new WebSocketPair();
-    this.state.acceptWebSocket(server);
+    this.ctx.acceptWebSocket(server);
     this.sessions.set(server, {});
 
     const encoder = encoding.createEncoder();
