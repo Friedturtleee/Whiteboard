@@ -20,12 +20,22 @@ export class Collaboration {
 
     async init() {
         if (!window.Clerk) {
-            console.error('Clerk SDK not found.');
-            return false;
+            await new Promise((resolve, reject) => {
+                const script = document.createElement('script');
+                script.src = 'https://cdn.jsdelivr.net/npm/@clerk/clerk-js@5.0.0/dist/clerk.browser.js';
+                script.setAttribute('data-clerk-publishable-key', this.clerkPubKey);
+                script.crossOrigin = 'anonymous';
+                script.async = true;
+                script.onload = resolve;
+                script.onerror = () => reject(new Error('Failed to load Clerk SDK'));
+                document.head.appendChild(script);
+            });
         }
 
-        const clerk = new window.Clerk(this.clerkPubKey);
-        await clerk.load();
+        const clerk = window.Clerk;
+        if (!clerk.isReady) {
+            await clerk.load();
+        }
 
         if (!clerk.user) {
             clerk.openSignIn();
