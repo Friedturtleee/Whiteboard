@@ -20,6 +20,7 @@
     <script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/highlight.min.js"></script>
     <script src="https://cdn.jsdelivr.net/npm/katex@0.16.9/dist/katex.min.js"></script>
     <script src="https://cdn.jsdelivr.net/npm/html2canvas@1.4.1/dist/html2canvas.min.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/@clerk/clerk-js@5.0.0/dist/clerk.browser.js"></script>
 </head>
 <body>
     <!-- Loading Screen -->
@@ -58,6 +59,11 @@
         <button class="top-bar-btn" id="btn-settings" data-tooltip="設定">
             <span class="material-symbols-outlined">settings</span>
         </button>
+        <span style="width:1px;height:20px;background:var(--border-color)"></span>
+        <div id="collab-status" class="top-bar-btn" style="width: auto; padding: 0 8px; font-size: 13px; color: var(--text-secondary); cursor: default;" data-tooltip="未連線">
+            <span class="material-symbols-outlined" style="font-size: 16px; margin-right: 4px; color: #ff4444;">cloud_off</span>
+            <span id="collab-status-text">離線</span>
+        </div>
     </div>
 
     <!-- Left Toolbar -->

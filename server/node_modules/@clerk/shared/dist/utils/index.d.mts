@@ -1,0 +1,10 @@
+import { handleValueOrFn } from "./handleValueOrFn.mjs";
+import { createDeferredPromise } from "./createDeferredPromise.mjs";
+import { allSettled } from "./allSettled.mjs";
+import { isStaging } from "./instance.mjs";
+import { logErrorInDevMode } from "./logErrorInDevMode.mjs";
+import { noop } from "./noop.mjs";
+import { automatedEnvironmentVariables, isAutomatedEnvironment, isDevelopmentEnvironment, isProductionEnvironment, isTestEnvironment } from "./runtimeEnvironment.mjs";
+import { runIfFunctionOrReturn } from "./runIfFunctionOrReturn.mjs";
+import { fastDeepMergeAndKeep, fastDeepMergeAndReplace } from "./fastDeepMerge.mjs";
+export { allSettled, automatedEnvironmentVariables, createDeferredPromise, fastDeepMergeAndKeep, fastDeepMergeAndReplace, handleValueOrFn, isAutomatedEnvironment, isDevelopmentEnvironment, isProductionEnvironment, isStaging, isTestEnvironment, logErrorInDevMode, noop, runIfFunctionOrReturn };

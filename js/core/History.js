@@ -10,7 +10,27 @@ export class History {
     }
 
     push(command) {
-        // command = { description, undo(), redo() }
+        if (this.app.collaboration && this.app.collaboration.provider) {
+            // In multiplayer mode, sync all changes to Yjs instead of local stack
+            this.app.collaboration.doc.transact(() => {
+                // 1. Delete elements that were removed locally
+                for (const id of this.app.collaboration.elementsMap.keys()) {
+                    if (!this.app.elements.find(e => e.id === id)) {
+                        this.app.collaboration.elementsMap.delete(id);
+                    }
+                }
+                // 2. Update/Add elements that changed locally
+                for (const el of this.app.elements) {
+                    const serialized = JSON.stringify(el.serialize());
+                    if (this.app.collaboration.elementsMap.get(el.id) !== serialized) {
+                        this.app.collaboration.elementsMap.set(el.id, serialized);
+                    }
+                }
+            });
+            return;
+        }
+
+        // Single player fallback
         command.timestamp = Date.now();
         this.undoStack.push(command);
         if (this.undoStack.length > this.maxSize) this.undoStack.shift();
@@ -18,6 +38,10 @@ export class History {
     }
 
     undo() {
+        if (this.app.collaboration && this.app.collaboration.provider) {
+            this.app.collaboration.undoManager.undo();
+            return;
+        }
         if (this.undoStack.length === 0) return;
         const cmd = this.undoStack.pop();
         cmd.undo();
@@ -26,6 +50,10 @@ export class History {
     }
 
     redo() {
+        if (this.app.collaboration && this.app.collaboration.provider) {
+            this.app.collaboration.undoManager.redo();
+            return;
+        }
         if (this.redoStack.length === 0) return;
         const cmd = this.redoStack.pop();
         cmd.redo();

@@ -78,6 +78,11 @@ export class Renderer {
 
         // Draw selection visuals
         this._drawSelectionOverlay(ctx, dpr);
+
+        // Draw multiplayer cursors
+        if (this.app.collaboration) {
+            this.app.collaboration.drawCursors(ctx, this.camera);
+        }
     }
 
     _drawSelectionOverlay(ctx, dpr) {

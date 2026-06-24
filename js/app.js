@@ -16,6 +16,7 @@ import { Transform } from './core/Transform.js';
 import { History } from './core/History.js';
 import { Serializer } from './core/Serializer.js';
 import { Element } from './core/Element.js';
+import { Collaboration } from './network/Collaboration.js';
 
 // ── Elements ────────────────────────────────────────────
 import { ShapeElement } from './elements/ShapeElement.js';
@@ -64,6 +65,12 @@ class App {
         this.selectionManager = new SelectionManager(this);
         this.layerManager = new LayerManager(this);
         this.transform = new Transform(this);
+        
+        // Initialize Collaboration (Multiplayer)
+        const clerkPubKey = 'pk_live_Y2xlcmsuY3B3LmZyaWVkdHVydGxlZWUubWUk'; // 請替換成你的 Clerk Publishable Key
+        const workerUrl = 'https://whiteboard-server.friedturtleee.workers.dev'; // 開發中可以先指回 localhost，未來改為 Cloudflare Worker 網址
+        this.collaboration = new Collaboration(this, workerUrl, clerkPubKey);
+        
         this.history = new History(this);
         this.renderer = new Renderer(this.canvas, this.ctx, this.camera, this.grid, this);
 
@@ -96,6 +103,9 @@ class App {
         this._bindResize();
         this._bindSettings();
 
+        // Start collaboration
+        this.collaboration.init().catch(err => console.error('Collaboration failed:', err));
+
         // ── Start Render Loop ───────────────────────────
         this.renderer.start();
         this._updateZoomDisplay();
@@ -106,6 +116,21 @@ class App {
         this._tryLoadAutosave();
 
         this._fetchGitHubVersion();
+    }
+
+    // ═════════════════════════════════════════════════════
+    // Helpers
+    // ═════════════════════════════════════════════════════
+    getTypeMap() {
+        return {
+            rectangle: ShapeElement, circle: ShapeElement, ellipse: ShapeElement,
+            line: ShapeElement, arrow: ShapeElement,
+            text: TextElement, matrix: MatrixElement,
+            stack: StackElement, queue: QueueElement,
+            mermaid: MermaidElement,
+            pen: PenElement, tree: TreeElement, graph: GraphElement,
+            markdown: MarkdownElement
+        };
     }
 
     // ═════════════════════════════════════════════════════
@@ -2567,15 +2592,7 @@ class App {
 
     _restoreFromData(data) {
         try {
-            const TYPE_MAP = {
-                rectangle: ShapeElement, circle: ShapeElement, ellipse: ShapeElement,
-                line: ShapeElement, arrow: ShapeElement,
-                text: TextElement, matrix: MatrixElement,
-                stack: StackElement, queue: QueueElement,
-                mermaid: MermaidElement,
-                pen: PenElement, tree: TreeElement, graph: GraphElement,
-                markdown: MarkdownElement
-            };
+            const TYPE_MAP = this.getTypeMap();
             this._skipAutosave = true;
             this.elements = [];
             let maxId = 0;

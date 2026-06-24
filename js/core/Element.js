@@ -1,11 +1,9 @@
 /**
  * Element — abstract base class for all whiteboard elements.
  */
-let _nextId = 1;
-
 export class Element {
     constructor(type, x = 0, y = 0, w = 100, h = 100) {
-        this.id = _nextId++;
+        this.id = crypto.randomUUID();
         this.type = type;
         this.x = x;
         this.y = y;
@@ -17,7 +15,7 @@ export class Element {
         this.opacity = 1;            // 0..1
         this.saturation = 1;         // 0..1
         this.strokeWidth = 2;
-        this.zIndex = _nextId;
+        this.zIndex = Date.now();
         this.hidden = false;
         this.locked = false;
         this.label = type;
@@ -131,8 +129,8 @@ export class Element {
         return this;
     }
 
-    /** Reset the global ID counter (used after import) */
+    /** Reset the global ID counter (No longer needed with UUID) */
     static resetIdCounter(maxId) {
-        _nextId = maxId + 1;
+        // No-op for backward compatibility
     }
 }
