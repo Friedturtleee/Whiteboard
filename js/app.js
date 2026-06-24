@@ -16,7 +16,7 @@ import { Transform } from './core/Transform.js';
 import { History } from './core/History.js';
 import { Serializer } from './core/Serializer.js';
 import { Element } from './core/Element.js';
-import { Collaboration } from './network/Collaboration.js';
+import { Collaboration } from './network/Collaboration.js?v=3';
 
 // ── Elements ────────────────────────────────────────────
 import { ShapeElement } from './elements/ShapeElement.js';
