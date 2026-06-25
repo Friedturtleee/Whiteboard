@@ -61,6 +61,29 @@ export class WhiteboardRoom extends DurableObject {
 
   saveUpdateToSqlite(update) {
     this.sql.exec(`INSERT INTO updates (data) VALUES (?)`, update.buffer);
+    this.updateCount = (this.updateCount || 0) + 1;
+    
+    // Periodically compact the Yjs document into a single row to prevent unbounded DB growth
+    if (this.updateCount >= 100) {
+      this.compactSqlite();
+    }
+  }
+
+  compactSqlite() {
+    try {
+      // Encode the current fully merged document state
+      const state = Y.encodeStateAsUpdate(this.doc);
+      // Run the compaction in a transaction
+      this.sql.exec(`BEGIN TRANSACTION`);
+      this.sql.exec(`DELETE FROM updates`);
+      this.sql.exec(`INSERT INTO updates (data) VALUES (?)`, state.buffer);
+      this.sql.exec(`COMMIT`);
+      this.updateCount = 0;
+      console.log("SQLite Yjs history compacted.");
+    } catch (e) {
+      console.error("Failed to compact sqlite", e);
+      this.sql.exec(`ROLLBACK`);
+    }
   }
 
   async fetch(request) {
@@ -165,7 +188,12 @@ export default {
       return new Response(authError, { status: 401 });
     }
 
-    const roomId = url.searchParams.get("room") || "default-room";
+    // Extract room ID from pathname (e.g. /my-room)
+    let roomId = url.pathname.slice(1);
+    if (!roomId || roomId === "") {
+        roomId = "default-room";
+    }
+
     const id = env.WHITEBOARD_ROOM.idFromName(roomId);
     const room = env.WHITEBOARD_ROOM.get(id);
 

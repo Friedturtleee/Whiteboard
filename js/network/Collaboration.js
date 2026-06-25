@@ -68,8 +68,8 @@ export class Collaboration {
                 if (event.status === 'connected') {
                     iconEl.textContent = 'cloud_done';
                     iconEl.style.color = '#10b981'; // Green
-                    textEl.textContent = '已連線';
-                    statusEl.dataset.tooltip = '已連線至多人協作伺服器';
+                    textEl.textContent = `${this.roomName}`;
+                    statusEl.dataset.tooltip = '已連線 (點擊更改房間)';
                 } else {
                     iconEl.textContent = 'cloud_off';
                     iconEl.style.color = '#ff4444'; // Red
@@ -79,14 +79,26 @@ export class Collaboration {
             }
         });
 
+        // Add UI handler for changing rooms
+        const statusEl = document.getElementById('collab-status');
+        if (statusEl && !statusEl.dataset.roomBound) {
+            statusEl.dataset.roomBound = 'true';
+            statusEl.style.cursor = 'pointer';
+            statusEl.addEventListener('click', () => {
+                const newRoom = prompt('請輸入要加入的房間號碼：\n（將此號碼分享給朋友即可在同一個白板協作）', this.roomName);
+                if (newRoom && newRoom.trim() !== '' && newRoom !== this.roomName) {
+                    window.location.search = `?room=${encodeURIComponent(newRoom.trim())}`;
+                }
+            });
+        }
+
         this.provider.awareness.setLocalStateField('user', this.user);
         this.provider.awareness.on('change', this.handleAwarenessChange.bind(this));
 
         // Listen for mouse movements for presence
         this.app.renderer.canvas.addEventListener('pointermove', this.broadcastCursor.bind(this));
 
-        // When connected, we should optionally push all local elements to Yjs if it's a new room
-        // But for Yjs, if elementsMap is empty, and we have local elements, we push them.
+        // When connected, optionally push all local elements to Yjs if it's a new room
         this.provider.on('sync', isSynced => {
             if (isSynced && this.elementsMap.size === 0 && this.app.elements.length > 0) {
                 this.doc.transact(() => {
@@ -97,6 +109,13 @@ export class Collaboration {
             } else if (isSynced) {
                 // Force sync down
                 this.handleMapUpdate({ keysChanged: new Set(this.elementsMap.keys()) });
+            }
+        });
+
+        // Clean up on disconnect / page close
+        window.addEventListener('beforeunload', () => {
+            if (this.provider && this.provider.awareness) {
+                this.provider.awareness.setLocalState(null);
             }
         });
 
@@ -160,9 +179,24 @@ export class Collaboration {
     }
 
     broadcastCursor(e) {
-        if (!this.provider || !this.user) return;
-        const pt = this.app.camera.screenToWorld(e.clientX, e.clientY);
-        this.provider.awareness.setLocalStateField('cursor', pt);
+        if (!this.provider || !this.provider.awareness) return;
+
+        const now = Date.now();
+        if (this._lastCursorTime && now - this._lastCursorTime < 33) {
+            return; // Throttle to ~30fps
+        }
+        this._lastCursorTime = now;
+
+        const rect = this.app.renderer.canvas.getBoundingClientRect();
+        const screenX = e.clientX - rect.left;
+        const screenY = e.clientY - rect.top;
+        const worldPos = this.app.camera.screenToWorld(screenX, screenY);
+        
+        this.provider.awareness.setLocalStateField('cursor', {
+            x: worldPos.x,
+            y: worldPos.y,
+            color: this.color
+        });
     }
 
     handleAwarenessChange() {
