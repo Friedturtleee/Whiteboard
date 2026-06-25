@@ -113,6 +113,9 @@ class App {
         // ── Autosave ─────────────────────────────────────
         this._autosaveTimer = null;
         this._skipAutosave = false;
+        const urlParams = new URLSearchParams(window.location.search);
+        this.roomName = urlParams.get('room') || 'whiteboard';
+        this.autosaveKey = 'cp_whiteboard_autosave_' + this.roomName;
         this._tryLoadAutosave();
 
         this._fetchGitHubVersion();
@@ -256,7 +259,7 @@ class App {
             try {
                 this._skipAutosave = true;  // prevent immediate re-save during import
                 await Serializer.importJSON(this, file);
-                localStorage.removeItem('wb_autosave'); // clear stale cache
+                localStorage.removeItem(this.autosaveKey); // clear stale cache
                 this._skipAutosave = false;
                 this._refreshUI();
                 this._toast('已匯入');
@@ -2569,7 +2572,7 @@ class App {
                     elements: this.elements.map(el => el.serialize()),
                     camera: { x: this.camera.x, y: this.camera.y, zoom: this.camera.zoom }
                 };
-                localStorage.setItem('wb_autosave', JSON.stringify(data));
+                localStorage.setItem(this.autosaveKey, JSON.stringify(data));
             } catch (e) {
                 console.warn('[Autosave]', e);
             }
@@ -2578,7 +2581,7 @@ class App {
 
     _tryLoadAutosave() {
         try {
-            const raw = localStorage.getItem('wb_autosave');
+            const raw = localStorage.getItem(this.autosaveKey);
             if (!raw) return;
             const data = JSON.parse(raw);
             if (!data?.elements?.length) return;
