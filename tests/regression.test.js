@@ -8,6 +8,7 @@ import { History } from '../js/core/History.js';
 import { GraphElement } from '../js/graph/GraphElement.js';
 import { GraphParser } from '../js/graph/GraphParser.js';
 import { GraphLayout } from '../js/graph/GraphLayout.js';
+import { GraphRenderer } from '../js/graph/GraphRenderer.js';
 import { TreeElement } from '../js/tree/TreeElement.js';
 import { TreeLayout } from '../js/tree/TreeLayout.js';
 import { TreeParser } from '../js/tree/TreeParser.js';
@@ -99,6 +100,31 @@ test('tree edge parser rejects cycles and accepts a connected acyclic tree', () 
     const valid = TreeParser.parseEdgeFormat(['1 2', '1 3', '2 4']);
     assert.equal(valid.error, null);
     assert.equal(valid.nodes.size, 4);
+});
+
+test('parallel undirected graph edges render on distinct lanes', () => {
+    const paths = [];
+    let path = null;
+    const ctx = {
+        beginPath() { path = []; paths.push(path); },
+        moveTo(x, y) { path.push([x, y]); },
+        lineTo(x, y) { path.push([x, y]); },
+        arc() {}, stroke() {}, fill() {}, fillRect() {}, strokeRect() {}, fillText() {},
+        measureText() { return { width: 0 }; }
+    };
+    const nodes = new Map([
+        ['1', { id: '1', x: 0, y: 0, label: '1' }],
+        ['2', { id: '2', x: 100, y: 0, label: '2' }]
+    ]);
+    const edges = [
+        { u: '1', v: '2', w: null, directed: false },
+        { u: '1', v: '2', w: null, directed: false }
+    ];
+
+    GraphRenderer.draw(ctx, nodes, edges, { nodeRadius: 10 });
+    const edgePaths = paths.filter(points => points.length === 2);
+    assert.equal(edgePaths.length, 2);
+    assert.notEqual(edgePaths[0][0][1], edgePaths[1][0][1]);
 });
 
 test('BST, AVL, and red-black builders reject values that cannot be ordered numerically', () => {

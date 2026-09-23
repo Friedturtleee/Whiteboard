@@ -19,11 +19,30 @@ export class GraphRenderer {
 
         // Build a set of directed pairs for bidirectional detection
         const edgeSet = new Set(edges.map(e => String(e.u) + '->' + String(e.v)));
+        const edgeGroups = new Map();
+        edges.forEach((edge, index) => {
+            const isDirected = edge.directed || directed;
+            const [u, v] = isDirected
+                ? [String(edge.u), String(edge.v)]
+                : [String(edge.u), String(edge.v)].sort();
+            const key = JSON.stringify([isDirected, u, v]);
+            if (!edgeGroups.has(key)) edgeGroups.set(key, []);
+            edgeGroups.get(key).push(index);
+        });
+        const edgeOffsets = new Array(edges.length).fill(0);
+        const edgeLaneIndices = new Array(edges.length).fill(0);
+        for (const indices of edgeGroups.values()) {
+            indices.forEach((edgeIndex, laneIndex) => {
+                edgeOffsets[edgeIndex] = (laneIndex - (indices.length - 1) / 2) * 8;
+                edgeLaneIndices[edgeIndex] = laneIndex;
+            });
+        }
 
         ctx.globalAlpha = opacity;
 
         // Draw edges
-        for (const e of edges) {
+        for (let edgeIndex = 0; edgeIndex < edges.length; edgeIndex++) {
+            const e = edges[edgeIndex];
             const u = nodes.get(e.u);
             const v = nodes.get(e.v);
             if (!u || !v) continue;
@@ -41,7 +60,7 @@ export class GraphRenderer {
             // ── Self-loop ────────────────────────────────────────────
             if (e.u === e.v) {
                 const nx = u.x + ox, ny = u.y + oy;
-                const loopR = r * 0.75;
+                const loopR = r * 0.75 + edgeLaneIndices[edgeIndex] * 8;
                 // Draw the loop as a circle sitting on top of the node
                 ctx.beginPath();
                 ctx.arc(nx, ny - r - loopR, loopR, 0, Math.PI * 2);
@@ -76,9 +95,9 @@ export class GraphRenderer {
                 // The perpendicular vector reverses with edge direction, so
                 // the same signed offset places reciprocal edges on opposite
                 // physical sides of the node pair.
-                const OFFSET = hasBidirectional ? 10 : 0;
-                const perpX = -Math.sin(angle) * OFFSET;
-                const perpY =  Math.cos(angle) * OFFSET;
+                const offset = (hasBidirectional ? 10 : 0) + edgeOffsets[edgeIndex];
+                const perpX = -Math.sin(angle) * offset;
+                const perpY =  Math.cos(angle) * offset;
 
                 const sx = x1 + r * Math.cos(angle) + perpX;
                 const sy = y1 + r * Math.sin(angle) + perpY;
@@ -101,11 +120,17 @@ export class GraphRenderer {
 
                 GraphRenderer._drawEdgeLabel(ctx, e, (sx + ex) / 2, (sy + ey) / 2, color, edgeAlpha);
             } else {
+                const length = Math.hypot(x2 - x1, y2 - y1);
+                const orientation = String(e.u) <= String(e.v) ? 1 : -1;
+                const offset = edgeOffsets[edgeIndex] * orientation;
+                const perpX = length ? -(y2 - y1) / length * offset : 0;
+                const perpY = length ? (x2 - x1) / length * offset : 0;
                 ctx.beginPath();
-                ctx.moveTo(x1, y1);
-                ctx.lineTo(x2, y2);
+                ctx.moveTo(x1 + perpX, y1 + perpY);
+                ctx.lineTo(x2 + perpX, y2 + perpY);
                 ctx.stroke();
-                GraphRenderer._drawEdgeLabel(ctx, e, (x1 + x2) / 2, (y1 + y2) / 2, color, edgeAlpha);
+                GraphRenderer._drawEdgeLabel(ctx, e, (x1 + x2) / 2 + perpX,
+                    (y1 + y2) / 2 + perpY, color, edgeAlpha);
             }
 
             ctx.globalAlpha = opacity;
