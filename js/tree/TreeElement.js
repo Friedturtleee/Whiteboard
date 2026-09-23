@@ -27,11 +27,17 @@ export class TreeElement extends Element {
      * @returns {string|null} error message if validation fails, null on success
      */
     buildFromText(text, mode = 'auto') {
-        this.inputText = text;
         let result;
 
         if (mode === 'auto') {
             result = TreeParser.autoDetectAndParse(text, this.treeType);
+        } else if (mode === 'rooted') {
+            const lines = String(text ?? '')
+                .replace(/\r/g, '')
+                .split('\n')
+                .map(line => line.trim())
+                .filter(Boolean);
+            result = TreeParser.parseRootedFormat(lines);
         } else if (mode === 'parent') {
             const lines = text.trim().split('\n').map(l => l.trim()).filter(l => l);
             result = TreeParser.parseParentFormat(lines);
@@ -50,17 +56,18 @@ export class TreeElement extends Element {
             }
         }
 
-        if (result && result.root) {
-            this.root = result.root;
-            this.hasWeights = result.hasWeights || false;
-            // Compute Euler tour timestamps for euler tree type
-            if (this.treeType === 'euler') {
-                TreeParser.computeEulerTour(this.root);
-            }
-            this._layoutTree();
-        }
+        if (result?.error) return result.error;
+        if (!result?.root) return String(text ?? '').trim() ? '無法建立樹，請檢查輸入格式。' : null;
 
-        return result?.error || null;
+        this.root = result.root;
+        this.inputText = text;
+        this.hasWeights = result.hasWeights || false;
+        // Compute Euler tour timestamps for euler tree type
+        if (this.treeType === 'euler') {
+            TreeParser.computeEulerTour(this.root);
+        }
+        this._layoutTree();
+        return null;
     }
 
     _layoutTree() {
@@ -178,11 +185,11 @@ export class TreeElement extends Element {
         if (!this.root) return super.getConnectionPorts();
         const ports = [];
         const { offsetX, offsetY } = this._getCurrentOffsets();
+        const visited = new Set();
         const walk = (node) => {
-            if (!node) return;
+            if (!node || node.value === null || visited.has(node)) return;
+            visited.add(node);
             ports.push({ id: `node_${node.value}`, x: offsetX + node.x, y: offsetY + node.y });
-            walk(node.left);
-            walk(node.right);
             if (node.children) node.children.forEach(walk);
         };
         walk(this.root);

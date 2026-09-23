@@ -18,7 +18,7 @@ export class GraphRenderer {
         const directed = opts.directed || false;
 
         // Build a set of directed pairs for bidirectional detection
-        const edgeSet = new Set(edges.map(e => `${e.u}->${e.v}`));
+        const edgeSet = new Set(edges.map(e => String(e.u) + '->' + String(e.v)));
 
         ctx.globalAlpha = opacity;
 
@@ -66,12 +66,16 @@ export class GraphRenderer {
             const x2 = v.x + ox, y2 = v.y + oy;
 
             // Check if there is also a reverse edge (bidirectional pair)
-            const hasBidirectional = isDirected && edgeSet.has(`${e.v}->${e.u}`);
+            const hasBidirectional = isDirected &&
+                edgeSet.has(String(e.v) + '->' + String(e.u));
 
             if (isDirected) {
                 const angle = Math.atan2(y2 - y1, x2 - x1);
 
                 // Offset perpendicular so bidirectional edges don't overlap
+                // The perpendicular vector reverses with edge direction, so
+                // the same signed offset places reciprocal edges on opposite
+                // physical sides of the node pair.
                 const OFFSET = hasBidirectional ? 10 : 0;
                 const perpX = -Math.sin(angle) * OFFSET;
                 const perpY =  Math.cos(angle) * OFFSET;
@@ -95,11 +99,13 @@ export class GraphRenderer {
                 ctx.lineTo(ex - headLen * Math.cos(angle + 0.35), ey - headLen * Math.sin(angle + 0.35));
                 ctx.stroke();
 
+                GraphRenderer._drawEdgeLabel(ctx, e, (sx + ex) / 2, (sy + ey) / 2, color, edgeAlpha);
             } else {
                 ctx.beginPath();
                 ctx.moveTo(x1, y1);
                 ctx.lineTo(x2, y2);
                 ctx.stroke();
+                GraphRenderer._drawEdgeLabel(ctx, e, (x1 + x2) / 2, (y1 + y2) / 2, color, edgeAlpha);
             }
 
             ctx.globalAlpha = opacity;
@@ -143,6 +149,26 @@ export class GraphRenderer {
         ctx.globalAlpha = 1;
     }
 
+    static _drawEdgeLabel(ctx, edge, x, y, color, alpha) {
+        if (edge.w == null || edge.w === '') return;
+        const label = String(edge.w);
+        ctx.save();
+        ctx.globalAlpha = alpha;
+        ctx.font = '10px Consolas, monospace';
+        const paddingX = 4;
+        const width = ctx.measureText(label).width + paddingX * 2;
+        ctx.fillStyle = 'rgba(30, 30, 30, 0.92)';
+        ctx.fillRect(x - width / 2, y - 9, width, 18);
+        ctx.strokeStyle = color;
+        ctx.lineWidth = 1;
+        ctx.strokeRect(x - width / 2, y - 9, width, 18);
+        ctx.fillStyle = color;
+        ctx.textAlign = 'center';
+        ctx.textBaseline = 'middle';
+        ctx.fillText(label, x, y);
+        ctx.restore();
+    }
+
     /**
      * Hit test graph nodes.
      * @returns {Object|null} The node hit at (wx, wy).
@@ -172,7 +198,7 @@ export class GraphRenderer {
         const directed = opts.directed || false;
 
         // Same edgeSet as draw() for bidirectional detection
-        const edgeSet = new Set(edges.map(e => `${e.u}->${e.v}`));
+        const edgeSet = new Set(edges.map(e => String(e.u) + '->' + String(e.v)));
 
         for (const e of edges) {
             const u = nodes.get(e.u);
@@ -193,7 +219,8 @@ export class GraphRenderer {
             const angle = Math.atan2(y2 - y1, x2 - x1);
 
             const isDirected = e.directed || directed;
-            const hasBidirectional = isDirected && edgeSet.has(`${e.v}->${e.u}`);
+            const hasBidirectional = isDirected &&
+                edgeSet.has(String(e.v) + '->' + String(e.u));
             const OFFSET = hasBidirectional ? 10 : 0;
             const perpX = -Math.sin(angle) * OFFSET;
             const perpY =  Math.cos(angle) * OFFSET;

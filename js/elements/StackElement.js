@@ -3,6 +3,11 @@
  */
 import { Element } from '../core/Element.js';
 
+const EMPTY_CELL = '\u3000';
+const EMPTY_TOKEN = '__WHITEBOARD_EMPTY__';
+const isEmptyCell = value => value == null || value === '' || value === EMPTY_CELL;
+const MAX_ITEMS = 10000;
+
 export class StackElement extends Element {
     constructor(x = 0, y = 0) {
         super('stack', x, y, 80, 200);
@@ -19,31 +24,44 @@ export class StackElement extends Element {
     }
 
     push(val) {
+        if (this.items.length >= MAX_ITEMS) return false;
         this.items.push(val);
         this._updateSize();
+        this.updateTextFromData();
+        return true;
     }
 
     updateTextFromData() {
-        this.inputText = this.items.map(v => v === '' ? '　' : v).join(' ');
+        this.inputText = this.items.map(v => isEmptyCell(v) ? EMPTY_CELL : v).join(' ');
     }
 
     pop() {
+        if (this.items.length === 0) return undefined;
+        const index = this.items.length - 1;
         const v = this.items.pop();
+        delete this.highlights[index];
+        this.selectedIndices.delete(index);
+        this._lastItemIdx = -1;
         this._updateSize();
+        this.updateTextFromData();
         return v;
     }
 
     setFromText(text) {
-        this.inputText = text;
-        let textProcessed = text.trim().replace(/　/g, '__EMPTY__');
-        const vals = textProcessed.split(/[\s,\n]+/).filter(v => v).map(v => {
-            if (v === '__EMPTY__') return '';
+        const rawText = String(text ?? '');
+        if (rawText.length > 1000000) return '最多輸入 10000 個元素。';
+        const textProcessed = rawText.replace(/\r\n?/g, '\n').replace(/\u3000/g, ' ' + EMPTY_TOKEN + ' ');
+        const vals = textProcessed.split(/[ \t,\n]+/).filter(Boolean).map(v => {
+            if (v === EMPTY_TOKEN) return '';
             return v;
         });
+        if (vals.length > MAX_ITEMS) return '最多輸入 10000 個元素。';
+        this.inputText = rawText;
         this.items = vals;
         this.selectedIndices.clear();
         this._lastItemIdx = -1;
         this._updateSize();
+        return null;
     }
 
     _updateSize() {
@@ -99,8 +117,9 @@ export class StackElement extends Element {
         ctx.textBaseline = 'middle';
         ctx.fillText('TOP ↑', x + w / 2, y + 14);
 
-        // Items drawn bottom-up
+        // Items drawn bottom-up; all selection/highlight indices refer to this.items.
         const displayItems = items.slice(-this.maxDisplay);
+        const firstItemIndex = items.length - displayItems.length;
         const baseY = y + this.height - 8;
 
         // Adaptive font size
@@ -119,8 +138,9 @@ export class StackElement extends Element {
             const cx = x + w / 2;
 
             // Highlight background (user-defined colour)
-            if (this.highlights[i]) {
-                ctx.fillStyle = this.highlights[i];
+            const itemIndex = firstItemIndex + i;
+            if (this.highlights[itemIndex]) {
+                ctx.fillStyle = this.highlights[itemIndex];
                 ctx.globalAlpha = this.opacity;
                 ctx.fillRect(x + 8, topY, w - 16, cellHeight);
             }
@@ -133,13 +153,13 @@ export class StackElement extends Element {
             ctx.globalAlpha = this.opacity;
 
             // Value (skip rendering the full-width space placeholder)
-            if (i < displayItems.length && displayItems[i] !== '　' && displayItems[i] !== '') {
+            if (i < displayItems.length && !isEmptyCell(displayItems[i])) {
                 ctx.fillStyle = this.getEffectiveColor(this.color);
                 ctx.fillText(String(displayItems[i]), cx, cy, w - 16);
             }
 
             // Cell selection highlight
-            if (this.selectedIndices.has(i)) {
+            if (this.selectedIndices.has(itemIndex)) {
                 ctx.strokeStyle = '#56b3e6';
                 ctx.lineWidth = 2.5;
                 ctx.globalAlpha = this.opacity;
@@ -164,7 +184,7 @@ export class StackElement extends Element {
     }
 
     /**
-     * Returns display index (0 = bottom) of item at (wx, wy), or -1.
+     * Returns the stable index in this.items of the visible item at (wx, wy), or -1.
      */
     hitTestItem(wx, wy) {
         const baseY = this.y + this.height - 8;
@@ -174,7 +194,7 @@ export class StackElement extends Element {
             const bottom = top + this.cellHeight;
             if (wx >= this.x + 8 && wx <= this.x + this.width - 8 &&
                 wy >= top && wy <= bottom) {
-                return i;
+                return this.items.length - slots + i;
             }
         }
         return -1;

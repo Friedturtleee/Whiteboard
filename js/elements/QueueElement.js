@@ -3,6 +3,11 @@
  */
 import { Element } from '../core/Element.js';
 
+const EMPTY_CELL = '\u3000';
+const EMPTY_TOKEN = '__WHITEBOARD_EMPTY__';
+const isEmptyCell = value => value == null || value === '' || value === EMPTY_CELL;
+const MAX_ITEMS = 10000;
+
 export class QueueElement extends Element {
     constructor(x = 0, y = 0) {
         super('queue', x, y, 300, 60);
@@ -19,31 +24,52 @@ export class QueueElement extends Element {
     }
 
     enqueue(val) {
+        if (this.items.length >= MAX_ITEMS) return false;
         this.items.push(val);
         this._updateSize();
+        this.updateTextFromData();
+        return true;
     }
 
     dequeue() {
+        if (this.items.length === 0) return undefined;
         const v = this.items.shift();
+        const nextHighlights = {};
+        for (const [key, color] of Object.entries(this.highlights)) {
+            const index = Number(key);
+            if (Number.isInteger(index) && index > 0 && index < this.items.length + 1) {
+                nextHighlights[index - 1] = color;
+            }
+        }
+        this.highlights = nextHighlights;
+        this.selectedIndices = new Set([...this.selectedIndices]
+            .filter(index => Number.isInteger(index) && index > 0)
+            .map(index => index - 1));
+        this._lastItemIdx = this._lastItemIdx > 0 ? this._lastItemIdx - 1 : -1;
         this._updateSize();
+        this.updateTextFromData();
         return v;
     }
 
     setFromText(text) {
-        this.inputText = text;
-        let textProcessed = text.trim().replace(/　/g, '__EMPTY__');
-        const vals = textProcessed.split(/[\s,\n]+/).filter(v => v).map(v => {
-            if (v === '__EMPTY__') return '';
+        const rawText = String(text ?? '');
+        if (rawText.length > 1000000) return '最多輸入 10000 個元素。';
+        const textProcessed = rawText.replace(/\r\n?/g, '\n').replace(/\u3000/g, ' ' + EMPTY_TOKEN + ' ');
+        const vals = textProcessed.split(/[ \t,\n]+/).filter(Boolean).map(v => {
+            if (v === EMPTY_TOKEN) return '';
             return v;
         });
+        if (vals.length > MAX_ITEMS) return '最多輸入 10000 個元素。';
+        this.inputText = rawText;
         this.items = vals;
         this.selectedIndices.clear();
         this._lastItemIdx = -1;
         this._updateSize();
+        return null;
     }
 
     updateTextFromData() {
-        this.inputText = this.items.map(v => v === '' ? '　' : v).join(' ');
+        this.inputText = this.items.map(v => isEmptyCell(v) ? EMPTY_CELL : v).join(' ');
     }
 
     _updateSize() {
@@ -128,7 +154,7 @@ export class QueueElement extends Element {
             ctx.globalAlpha = this.opacity;
 
             // Value (skip rendering the full-width space placeholder)
-            if (i < displayItems.length && displayItems[i] !== '　' && displayItems[i] !== '') {
+            if (i < displayItems.length && !isEmptyCell(displayItems[i])) {
                 ctx.fillStyle = this.getEffectiveColor(this.color);
                 ctx.fillText(String(displayItems[i]), cx, cy, cellInnerW);
             }

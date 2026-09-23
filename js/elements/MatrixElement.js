@@ -3,6 +3,45 @@
  */
 import { Element } from '../core/Element.js';
 
+const EMPTY_CELL = '\u3000';
+const EMPTY_TOKEN = '__WHITEBOARD_EMPTY__';
+const isEmptyCell = value => value == null || value === '' || value === EMPTY_CELL;
+const MAX_MATRIX_ROWS = 200;
+const MAX_MATRIX_COLS = 200;
+const MAX_MATRIX_CELLS = 10000;
+
+function remapGridKeys(keys, axis, at, action) {
+    const next = new Set();
+    for (const key of keys || []) {
+        let [row, col] = String(key).split(',').map(Number);
+        if (!Number.isInteger(row) || !Number.isInteger(col) || row < 0 || col < 0) continue;
+        const coordinate = axis === 'row' ? row : col;
+        if (action === 'delete' && coordinate === at) continue;
+        if (coordinate >= at) {
+            if (axis === 'row') row += action === 'insert' ? 1 : -1;
+            else col += action === 'insert' ? 1 : -1;
+        }
+        next.add(row + ',' + col);
+    }
+    return next;
+}
+
+function remapGridHighlights(highlights, axis, at, action) {
+    const next = {};
+    for (const [key, color] of Object.entries(highlights || {})) {
+        let [row, col] = key.split(',').map(Number);
+        if (!Number.isInteger(row) || !Number.isInteger(col) || row < 0 || col < 0) continue;
+        const coordinate = axis === 'row' ? row : col;
+        if (action === 'delete' && coordinate === at) continue;
+        if (coordinate >= at) {
+            if (axis === 'row') row += action === 'insert' ? 1 : -1;
+            else col += action === 'insert' ? 1 : -1;
+        }
+        next[row + ',' + col] = color;
+    }
+    return next;
+}
+
 export class MatrixElement extends Element {
     constructor(x = 0, y = 0) {
         super('matrix', x, y, 200, 160);
@@ -62,16 +101,24 @@ export class MatrixElement extends Element {
     // ── Row / Col insertion & deletion ──────────────────
 
     insertRow(afterRow) {
-        const at = (afterRow == null || afterRow < 0) ? this.rows : afterRow + 1;
-        const newRow = new Array(this.cols).fill('　'); // full-width space placeholder
+        if (this.rows < 1 || this.cols < 1 ||
+            this.rows >= MAX_MATRIX_ROWS || (this.rows + 1) * this.cols > MAX_MATRIX_CELLS) {
+            return false;
+        }
+        const index = Number.isInteger(afterRow) ? afterRow : -1;
+        const at = index < 0 ? this.rows : Math.min(this.rows, index + 1);
+        const newRow = new Array(this.cols).fill('');
         this.data.splice(at, 0, newRow);
         this.rows++;
+        this.selectedCells = remapGridKeys(this.selectedCells, 'row', at, 'insert');
+        this.highlights = remapGridHighlights(this.highlights, 'row', at, 'insert');
         this._updateSize();
         this.updateTextFromData();
+        return true;
     }
 
     deleteRow(row) {
-        if (this.rows <= 1) return;
+        if (!Number.isInteger(row) || row < 0 || row >= this.rows || this.rows <= 1) return;
         this.data.splice(row, 1);
         this.rows--;
         // Remap selected cells
@@ -82,20 +129,29 @@ export class MatrixElement extends Element {
             else if (r > row) next.add(`${r - 1},${c}`);
         }
         this.selectedCells = next;
+        this.highlights = remapGridHighlights(this.highlights, 'row', row, 'delete');
         this._updateSize();
         this.updateTextFromData();
     }
 
     insertCol(afterCol) {
-        const at = (afterCol == null || afterCol < 0) ? this.cols : afterCol + 1;
-        for (const row of this.data) row.splice(at, 0, '　'); // full-width space placeholder
+        if (this.rows < 1 || this.cols < 1 ||
+            this.cols >= MAX_MATRIX_COLS || this.rows * (this.cols + 1) > MAX_MATRIX_CELLS) {
+            return false;
+        }
+        const index = Number.isInteger(afterCol) ? afterCol : -1;
+        const at = index < 0 ? this.cols : Math.min(this.cols, index + 1);
+        for (const row of this.data) row.splice(at, 0, '');
         this.cols++;
+        this.selectedCells = remapGridKeys(this.selectedCells, 'col', at, 'insert');
+        this.highlights = remapGridHighlights(this.highlights, 'col', at, 'insert');
         this._updateSize();
         this.updateTextFromData();
+        return true;
     }
 
     deleteCol(col) {
-        if (this.cols <= 1) return;
+        if (!Number.isInteger(col) || col < 0 || col >= this.cols || this.cols <= 1) return;
         for (const row of this.data) row.splice(col, 1);
         this.cols--;
         const next = new Set();
@@ -105,69 +161,103 @@ export class MatrixElement extends Element {
             else if (c > col) next.add(`${r},${c - 1}`);
         }
         this.selectedCells = next;
+        this.highlights = remapGridHighlights(this.highlights, 'col', col, 'delete');
         this._updateSize();
         this.updateTextFromData();
     }
 
     setFromText(text) {
-        this.inputText = text;
-        this.selectedCells.clear();
-        this._lastCellKey = null;
-
+        const rawText = String(text ?? '');
         // Support dimension format: "3*5" or "3x5" or "3 * 5" → creates empty matrix
-        const dimMatch = text.trim().match(/^(\d+)\s*[*xX×]\s*(\d+)$/);
+        const dimMatch = rawText.trim().match(/^(\d+)\s*[*xX×]\s*(\d+)$/);
         if (dimMatch) {
-            this.rows = parseInt(dimMatch[1]);
-            this.cols = parseInt(dimMatch[2]);
-            this.data = [];
-            for (let r = 0; r < this.rows; r++) {
-                this.data[r] = [];
-                for (let c = 0; c < this.cols; c++) {
-                    this.data[r][c] = '';
-                }
+            const rows = Number(dimMatch[1]);
+            const cols = Number(dimMatch[2]);
+            if (!Number.isSafeInteger(rows) || !Number.isSafeInteger(cols) ||
+                rows < 1 || cols < 1 || rows > MAX_MATRIX_ROWS || cols > MAX_MATRIX_COLS ||
+                rows * cols > MAX_MATRIX_CELLS) {
+                return '矩陣尺寸上限為 200 × 200，且總格數不可超過 10000。';
             }
+            const data = Array.from({ length: rows }, () => new Array(cols).fill(''));
+            this.inputText = rawText;
+            this.selectedCells.clear();
+            this._lastCellKey = null;
+            this.highlights = {};
+            this.rows = rows;
+            this.cols = cols;
+            this.data = data;
             this._updateSize();
-            return;
+            return null;
         }
 
-        const lines = text.trim().split('\n').map(l => l.trim()).filter(l => l);
+        // Do not call trim() on each line: U+3000 is our intentional empty-cell
+        // marker, and trimming it would silently remove leading/trailing cells.
+        const lines = rawText
+            .replace(/\r/g, '')
+            .split('\n')
+            .filter(line => !/^[ \t]*$/.test(line));
 
         if (lines.length === 0) {
+            this.inputText = rawText;
+            this.selectedCells.clear();
+            this._lastCellKey = null;
+            this.highlights = {};
             this.rows = 0;
             this.cols = 0;
             this.data = [];
             this.width = 0;
             this.height = 0;
-            return;
+            return null;
         }
 
-        this.rows = lines.length;
-        this.cols = 0;
-        this.data = [];
+        if (lines.length > MAX_MATRIX_ROWS) {
+            return '矩陣最多支援 200 列。';
+        }
+        let cols = 0;
+        const data = [];
         for (let r = 0; r < lines.length; r++) {
             // Protect the placeholder before splitting
-            let line = lines[r].replace(/　/g, '__EMPTY__');
-            let vals = line.split(/[\s,]+/).filter(v => v).map(v => {
-                if (v === '__EMPTY__') return '';
+            const line = lines[r]
+                .replace(/\u3000/g, ' ' + EMPTY_TOKEN + ' ')
+                .replace(/^[ \t]+|[ \t]+$/g, '');
+            let vals = line.split(/[ \t,]+/).filter(Boolean).map(v => {
+                if (v === EMPTY_TOKEN) return '';
                 return v.trim();
             });
             // CP char grid detection (e.g. #.#.)
-            if (vals.length === 1 && vals[0].length > 1 && !/^\d+$/.test(vals[0])) {
+            if (vals.length === 1 && vals[0].length > 1 &&
+                !vals[0].includes(EMPTY_TOKEN) && !/^\d+$/.test(vals[0])) {
                 vals = vals[0].split('');
             }
-            this.data[r] = vals;
-            this.cols = Math.max(this.cols, vals.length);
+            if (vals.length > MAX_MATRIX_COLS) {
+                return '矩陣最多支援 200 欄。';
+            }
+            data[r] = vals;
+            cols = Math.max(cols, vals.length);
+            if ((r + 1) * cols > MAX_MATRIX_CELLS) {
+                return '矩陣總格數不可超過 10000。';
+            }
         }
         // Pad shorter rows
-        for (let r = 0; r < this.rows; r++) {
-            while (this.data[r].length < this.cols) this.data[r].push('');
+        for (let r = 0; r < data.length; r++) {
+            while (data[r].length < cols) data[r].push('');
         }
+        this.inputText = rawText;
+        this.selectedCells.clear();
+        this._lastCellKey = null;
+        this.highlights = {};
+        this.rows = data.length;
+        this.cols = cols;
+        this.data = data;
         this._updateSize();
+        return null;
     }
 
     updateTextFromData() {
         // Convert empty cells to the visual placeholder '　' when building the text representation
-        this.inputText = this.data.map(row => row.map(v => v === '' ? '　' : v).join(' ')).join('\n');
+        this.inputText = this.data
+            .map(row => row.map(v => isEmptyCell(v) ? EMPTY_CELL : v).join(' '))
+            .join('\n');
     }
 
     draw(ctx, camera) {
@@ -214,7 +304,7 @@ export class MatrixElement extends Element {
 
                 // Value (do not render placeholders)
                 const val = this.data[r]?.[c] ?? '';
-                if (val !== '　' && val !== '') {
+                if (!isEmptyCell(val)) {
                     ctx.fillStyle = this.getEffectiveColor(this.color);
                     ctx.fillText(String(val), cx + cellSize / 2, cy + cellSize / 2, cellSize - 4);
                 }

@@ -23,8 +23,11 @@ export class GraphLayout {
         for (let i = 0; i < nodesArr.length; i++) {
             const n = nodesArr[i];
             if (n.x === undefined || isNaN(n.x) || (n.x === 0 && n.y === 0)) {
-                n.x = cx + radius * Math.cos(i * angleStep) + (Math.random() - 0.5) * 10;
-                n.y = cy + radius * Math.sin(i * angleStep) + (Math.random() - 0.5) * 10;
+                // Keep the initial layout deterministic so live preview does
+                // not make every node jump to a new random position.
+                const jitter = 4;
+                n.x = cx + radius * Math.cos(i * angleStep) + Math.cos(i * 2.399) * jitter;
+                n.y = cy + radius * Math.sin(i * angleStep) + Math.sin(i * 1.713) * jitter;
             }
             n.vx = 0;
             n.vy = 0;

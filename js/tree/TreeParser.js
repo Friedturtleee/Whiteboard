@@ -25,7 +25,7 @@ export class TreeParser {
      * @returns {{ root, nodes, error, hasWeights, format }}
      */
     static autoDetectAndParse(text, treeType = 'tree') {
-        const lines = text.trim().split('\n').map(l => l.trim()).filter(l => l);
+        const lines = text.replace(/,/g, ' ').trim().split('\n').map(l => l.trim()).filter(l => l);
         if (lines.length === 0) return { root: null, nodes: new Map(), error: '輸入為空' };
 
         const tokenCounts = lines.map(l => l.split(/\s+/).length);
@@ -71,9 +71,23 @@ export class TreeParser {
      * @param {string[]} lines - pre-split, trimmed, non-empty lines
      */
     static parseRootedFormat(lines) {
-        const n = parseInt(lines[0]);
-        if (isNaN(n) || n <= 0) {
-            return { root: null, nodes: new Map(), error: '第一行應為節點數 n', hasWeights: false };
+        const invalid = (error) => ({
+            root: null, nodes: new Map(), error, hasWeights: false, format: 'rooted'
+        });
+        if (!Array.isArray(lines) || lines.length === 0) {
+            return invalid('請輸入樹的節點數與邊資料。');
+        }
+
+        const header = String(lines[0]).trim();
+        const n = Number(header);
+        if (!/^\d+$/.test(header) || !Number.isSafeInteger(n) || n <= 0) {
+            return invalid('第一行應為正整數節點數 n。');
+        }
+        if (n > 2000) {
+            return invalid('節點數不可超過 2000。');
+        }
+        if (lines.length !== n) {
+            return invalid('節點數為 ' + n + ' 時，後續必須恰好提供 ' + (n - 1) + ' 條邊。');
         }
 
         const nodes = new Map();
@@ -90,16 +104,33 @@ export class TreeParser {
         // Create all n nodes (1-based)
         for (let i = 1; i <= n; i++) getNode(i);
 
-        // Parse n-1 directed edges: parent → child [child_node_weight]
+        // Parse n-1 directed edges: parent → child [child_node_weight].
         for (let i = 1; i < lines.length; i++) {
             const parts = lines[i].split(/\s+/);
-            if (parts.length < 2) continue;
+            if (parts.length < 2 || parts.length > 3) {
+                return invalid('第 ' + (i + 1) + ' 行格式應為：父節點 子節點 [節點權重]。');
+            }
             const parentKey = parts[0];
             const childKey = parts[1];
             const weight = parts.length >= 3 ? parts[2] : null;
+            if (!/^\d+$/.test(parentKey) || !/^\d+$/.test(childKey)) {
+                return invalid('第 ' + (i + 1) + ' 行的節點編號必須是正整數。');
+            }
+            const parentId = Number(parentKey);
+            const childId = Number(childKey);
+            if (!Number.isSafeInteger(parentId) || !Number.isSafeInteger(childId) ||
+                parentId < 1 || parentId > n || childId < 1 || childId > n) {
+                return invalid('第 ' + (i + 1) + ' 行的節點編號必須介於 1 和 ' + n + '。');
+            }
+            if (parentId === childId) {
+                return invalid('第 ' + (i + 1) + ' 行不能讓節點成為自己的父節點。');
+            }
 
-            const parentNode = getNode(parentKey);
-            const childNode = getNode(childKey);
+            const parentNode = getNode(parentId);
+            const childNode = getNode(childId);
+            if (childNode.parent) {
+                return invalid('節點 ' + childId + ' 有多個父節點或重複邊。');
+            }
 
             if (weight !== null) {
                 childNode.meta.nodeWeight = weight;
@@ -110,15 +141,23 @@ export class TreeParser {
             parentNode.children.push(childNode);
         }
 
-        // Find root: first node with no parent
-        let root = null;
-        for (const [, node] of nodes) {
-            if (!node.parent) { root = node; break; }
+        const roots = [...nodes.values()].filter(node => !node.parent);
+        if (roots.length !== 1) {
+            return invalid('樹必須且只能有一個根節點，目前找到 ' + roots.length + ' 個。');
         }
-
-        if (!root) {
-            // Fallback: node '1'
-            root = nodes.get('1') || null;
+        const root = roots[0];
+        const visited = new Set();
+        const pending = [root];
+        while (pending.length) {
+            const node = pending.pop();
+            if (visited.has(node)) {
+                return invalid('輸入包含循環或重複連結，無法形成樹。');
+            }
+            visited.add(node);
+            for (const child of node.children) pending.push(child);
+        }
+        if (visited.size !== n) {
+            return invalid('有 ' + (n - visited.size) + ' 個節點無法從根節點到達。');
         }
 
         return { root, nodes, error: null, hasWeights, format: 'rooted' };
@@ -142,7 +181,32 @@ export class TreeParser {
      */
     static parseParentFormat(lines) {
         const n = lines.length;
-        const parents = lines.map(l => parseInt(l));
+        const invalid = error => ({
+            root: null, nodes: new Map(), error, format: 'parent', hasWeights: false
+        });
+        if (n === 0) return invalid('父節點陣列不可為空。');
+        const parents = lines.map(line => {
+            const token = String(line).trim();
+            if (!/^-?\d+$/.test(token)) return NaN;
+            const value = Number(token);
+            return Number.isSafeInteger(value) ? value : NaN;
+        });
+        if (parents.some(parent => !Number.isSafeInteger(parent))) {
+            return invalid('父節點編號必須是安全整數。');
+        }
+        let rootCount = 0;
+        for (let i = 0; i < n; i++) {
+            const nodeId = i + 1;
+            const parentId = parents[i];
+            const isRoot = parentId === 0 || parentId === -1 || parentId === nodeId;
+            if (isRoot) rootCount++;
+            else if (parentId < 1 || parentId > n) {
+                return invalid('節點 ' + nodeId + ' 的父節點編號超出範圍。');
+            }
+        }
+        if (rootCount !== 1) {
+            return invalid('父節點陣列必須且只能有一個根節點，目前找到 ' + rootCount + ' 個。');
+        }
         const nodes = new Map();
         const errors = [];
 
@@ -198,7 +262,8 @@ export class TreeParser {
             }
         }
 
-        return { root, nodes, error: errors.length ? errors.join('\n') : null, format: 'parent', hasWeights: false };
+        if (errors.length) return invalid(errors.join('\n'));
+        return { root, nodes, error: null, format: 'parent', hasWeights: false };
     }
 
     /**
@@ -207,8 +272,12 @@ export class TreeParser {
      * @param {string[]} lines - pre-split, trimmed, non-empty lines
      */
     static parseEdgeFormat(lines) {
+        const invalid = error => ({
+            root: null, nodes: new Map(), error, hasWeights: false, format: 'edge'
+        });
         const nodes = new Map();
         const edges = [];
+        const seenEdges = new Map();
         let hasWeights = false;
 
         const getNode = (val) => {
@@ -219,22 +288,41 @@ export class TreeParser {
             return nodes.get(key);
         };
 
-        for (const line of lines) {
+        for (let i = 0; i < lines.length; i++) {
+            const line = String(lines[i]).trim();
+            if (!line) continue;
             const parts = line.split(/\s+/);
-            if (parts.length < 2) continue;
+            if (parts.length < 2 || parts.length > 3) {
+                return invalid('第 ' + (i + 1) + ' 行格式應為：節點 u 節點 v [數值權重]。');
+            }
             const u = parts[0], v = parts[1];
             let w = null;
-            if (parts.length >= 3 && !isNaN(parseFloat(parts[2]))) {
+            if (parts.length === 3 && Number.isFinite(Number(parts[2]))) {
                 w = parts[2];
                 hasWeights = true;
+            } else if (parts.length === 3) {
+                return invalid('第 ' + (i + 1) + ' 行的邊權重必須是有限數值。');
             }
+            if (u === v) return invalid('第 ' + (i + 1) + ' 行不能是自我連結。');
+            const edgeKey = JSON.stringify([u, v].sort());
+            if (seenEdges.has(edgeKey)) {
+                const previousWeight = seenEdges.get(edgeKey);
+                const sameWeight = previousWeight === null
+                    ? w === null
+                    : w !== null && Number(previousWeight) === Number(w);
+                if (!sameWeight) {
+                    return invalid('重複邊的權重不一致，請保留一筆明確的邊資料。');
+                }
+                continue;
+            }
+            seenEdges.set(edgeKey, w);
             getNode(u);
             getNode(v);
             edges.push({ u, v, w });
         }
 
         if (edges.length === 0) {
-            return { root: null, nodes, error: '沒有有效的邊', hasWeights, format: 'edge' };
+            return invalid('至少需要一條有效的邊。');
         }
 
         // Build adjacency list
@@ -266,6 +354,9 @@ export class TreeParser {
         }
 
         const disconnected = nodes.size - visited.size;
+        if (disconnected > 0) {
+            return invalid('有 ' + disconnected + ' 個節點無法到達。');
+        }
         const error = disconnected > 0 ? `有 ${disconnected} 個節點無法到達` : null;
         return { root, nodes, error, hasWeights, format: 'edge' };
     }

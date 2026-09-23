@@ -8,6 +8,7 @@ import { StackElement } from '../elements/StackElement.js';
 import { QueueElement } from '../elements/QueueElement.js';
 import { PenElement } from '../elements/PenElement.js';
 import { MermaidElement } from '../elements/MermaidElement.js';
+import { MarkdownElement } from '../elements/MarkdownElement.js';
 import { TreeElement } from '../tree/TreeElement.js';
 import { GraphElement } from '../graph/GraphElement.js';
 import { Element } from './Element.js';
@@ -24,9 +25,9 @@ const TYPE_MAP = {
     queue: QueueElement,
     pen: PenElement,
     mermaid: MermaidElement,
+    markdown: MarkdownElement,
     tree: TreeElement,
     graph: GraphElement,
-    pen: PenElement,
 };
 
 export class Serializer {
@@ -81,12 +82,12 @@ export class Serializer {
     }
 
     static exportPNG(app) {
-        if (app.elements.length === 0) return;
+        const visibleElements = app.elements.filter(el => !el.hidden);
+        if (visibleElements.length === 0) return;
 
         // Calculate bounding box of all elements
         let minX = Infinity, minY = Infinity, maxX = -Infinity, maxY = -Infinity;
-        for (const el of app.elements) {
-            if (el.hidden) continue;
+        for (const el of visibleElements) {
             const b = el.getBounds();
             minX = Math.min(minX, b.x);
             minY = Math.min(minY, b.y);
@@ -111,9 +112,8 @@ export class Serializer {
         offCtx.translate(-minX + pad, -minY + pad);
 
         // Draw elements
-        const sorted = app.elements.slice().sort((a, b) => a.zIndex - b.zIndex);
+        const sorted = visibleElements.slice().sort((a, b) => a.zIndex - b.zIndex);
         for (const el of sorted) {
-            if (el.hidden) continue;
             offCtx.save();
             el.draw(offCtx, { zoom: 1 });
             offCtx.restore();

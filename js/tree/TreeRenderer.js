@@ -29,8 +29,9 @@ export class TreeRenderer {
         ctx.globalAlpha = 1;
     }
 
-    static _drawEdges(ctx, node, r, color, ox, oy, hasWeights) {
-        if (!node) return;
+    static _drawEdges(ctx, node, r, color, ox, oy, hasWeights, visited = new Set()) {
+        if (!node || node.value === null || visited.has(node)) return;
+        visited.add(node);
         const children = (node.children || []).filter(c => c != null);
         for (const child of children) {
             const x1 = node.x + ox, y1 = node.y + oy + r;
@@ -50,19 +51,30 @@ export class TreeRenderer {
             if (hasWeights && child.meta && child.meta.edgeWeight != null) {
                 const mx = (x1 + x2) / 2;
                 const my = (y1 + y2) / 2;
-                ctx.fillStyle = '#f0c040';
                 ctx.font = '11px Consolas, monospace';
+                const label = String(child.meta.edgeWeight);
+                const labelX = mx + 10;
+                const labelWidth = ctx.measureText(label).width + 8;
+                ctx.save();
+                ctx.fillStyle = 'rgba(30, 30, 30, 0.92)';
+                ctx.fillRect(labelX - labelWidth / 2, my - 9, labelWidth, 18);
+                ctx.strokeStyle = '#f0c040';
+                ctx.lineWidth = 1;
+                ctx.strokeRect(labelX - labelWidth / 2, my - 9, labelWidth, 18);
+                ctx.fillStyle = '#f0c040';
                 ctx.textAlign = 'center';
                 ctx.textBaseline = 'middle';
-                ctx.fillText(String(child.meta.edgeWeight), mx + 10, my);
+                ctx.fillText(label, labelX, my);
+                ctx.restore();
             }
 
-            TreeRenderer._drawEdges(ctx, child, r, color, ox, oy, hasWeights);
+            TreeRenderer._drawEdges(ctx, child, r, color, ox, oy, hasWeights, visited);
         }
     }
 
-    static _drawNodes(ctx, node, r, color, treeType, ox, oy) {
-        if (!node) return;
+    static _drawNodes(ctx, node, r, color, treeType, ox, oy, visited = new Set()) {
+        if (!node || node.value === null || visited.has(node)) return;
+        visited.add(node);
         const nx = node.x + ox;
         const ny = node.y + oy;
 
@@ -82,6 +94,18 @@ export class TreeRenderer {
 
         // Selected state highlight
         const isSelected = node.meta && node.meta.selected;
+
+        // A subtle halo makes the root easy to find in a dense tree.
+        if (!node.parent) {
+            ctx.save();
+            ctx.beginPath();
+            ctx.arc(nx, ny, r + 4, 0, Math.PI * 2);
+            ctx.strokeStyle = color;
+            ctx.lineWidth = 1;
+            ctx.globalAlpha = 0.35;
+            ctx.stroke();
+            ctx.restore();
+        }
 
         // Circle
         ctx.beginPath();
@@ -130,15 +154,16 @@ export class TreeRenderer {
         // Recurse
         const children = (node.children || []).filter(c => c != null);
         for (const child of children) {
-            TreeRenderer._drawNodes(ctx, child, r, color, treeType, ox, oy);
+            TreeRenderer._drawNodes(ctx, child, r, color, treeType, ox, oy, visited);
         }
     }
 
     /**
      * Hit test a tree: returns the node at (wx, wy) or null.
      */
-    static hitTestNode(root, wx, wy, opts = {}) {
-        if (!root) return null;
+    static hitTestNode(root, wx, wy, opts = {}, visited = new Set()) {
+        if (!root || root.value === null || visited.has(root)) return null;
+        visited.add(root);
         const r = opts.nodeRadius || 18;
         const ox = opts.offsetX || 0;
         const oy = opts.offsetY || 0;
@@ -150,7 +175,7 @@ export class TreeRenderer {
         // Check children
         const children = (root.children || []).filter(c => c != null);
         for (const child of children) {
-            const hit = TreeRenderer.hitTestNode(child, wx, wy, opts);
+            const hit = TreeRenderer.hitTestNode(child, wx, wy, opts, visited);
             if (hit) return hit;
         }
         return null;
@@ -159,8 +184,9 @@ export class TreeRenderer {
     /**
      * Hit test tree edges — returns true if (wx, wy) is near any edge.
      */
-    static hitTestEdge(root, wx, wy, opts = {}) {
-        if (!root) return false;
+    static hitTestEdge(root, wx, wy, opts = {}, visited = new Set()) {
+        if (!root || root.value === null || visited.has(root)) return false;
+        visited.add(root);
         const r = opts.nodeRadius || 18;
         const ox = opts.offsetX || 0;
         const oy = opts.offsetY || 0;
@@ -171,7 +197,7 @@ export class TreeRenderer {
             const x1 = root.x + ox, y1 = root.y + oy + r;
             const x2 = child.x + ox, y2 = child.y + oy - r;
             if (_treePtSegDist(wx, wy, x1, y1, x2, y2) < tol) return true;
-            if (TreeRenderer.hitTestEdge(child, wx, wy, opts)) return true;
+            if (TreeRenderer.hitTestEdge(child, wx, wy, opts, visited)) return true;
         }
         return false;
     }

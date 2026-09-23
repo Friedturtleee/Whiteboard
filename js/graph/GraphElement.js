@@ -26,15 +26,17 @@ export class GraphElement extends Element {
      * Build graph from text input.
      */
     buildFromText(text, directed = false, zeroBased = false, graphMode = 'edge-list') {
+        const result = GraphParser.parse(text, directed, zeroBased, graphMode);
+        if (!result) return null;
+        if (result.error) return result.error;
+
         this.inputText = text;
         this.directed = directed;
         this.zeroBased = zeroBased;
         this.graphMode = graphMode;
-        const result = GraphParser.parse(text, directed, zeroBased, graphMode);
-        if (!result) return;
-
         this.nodes = result.nodes;
         this.edges = result.edges;
+        this._syncNextNodeId();
 
         // Run force-directed layout
         GraphLayout.layout(this.nodes, this.edges, {
@@ -45,15 +47,27 @@ export class GraphElement extends Element {
 
         // Offset node positions so they are relative to element origin
         // (layout gives positions in 0..width-40 range)
+        return null;
     }
 
     /**
      * Add a new node at position (relative to element).
      */
     addNode(relX, relY) {
+        while (this.nodes.has(String(this._nextNodeId))) {
+            this._nextNodeId++;
+        }
         const id = String(this._nextNodeId++);
         this.nodes.set(id, { id, x: relX, y: relY, label: id });
         return id;
+    }
+
+    _syncNextNodeId() {
+        const numericIds = [...this.nodes.keys()]
+            .map(id => Number(id))
+            .filter(id => Number.isInteger(id) && id >= 0);
+        const nextFromNodes = numericIds.length ? Math.max(...numericIds) + 1 : 1;
+        this._nextNodeId = Math.max(Number(this._nextNodeId) || 1, nextFromNodes);
     }
 
     /**
@@ -233,6 +247,7 @@ export class GraphElement extends Element {
             }
         }
         this.edges = data.edges || [];
+        this._syncNextNodeId();
         return this;
     }
 

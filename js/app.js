@@ -16,7 +16,6 @@ import { Transform } from './core/Transform.js';
 import { History } from './core/History.js';
 import { Serializer } from './core/Serializer.js';
 import { Element } from './core/Element.js';
-import { Collaboration } from './network/Collaboration.js?v=3';
 
 // ── Elements ────────────────────────────────────────────
 import { ShapeElement } from './elements/ShapeElement.js';
@@ -66,10 +65,7 @@ class App {
         this.layerManager = new LayerManager(this);
         this.transform = new Transform(this);
         
-        // Initialize Collaboration (Multiplayer)
-        const clerkPubKey = 'pk_live_Y2xlcmsuY3B3LmZyaWVkdHVydGxlZWUubWUk'; // 請替換成你的 Clerk Publishable Key
-        const workerUrl = 'https://whiteboard-server.friedturtleee.workers.dev'; // 開發中可以先指回 localhost，未來改為 Cloudflare Worker 網址
-        this.collaboration = new Collaboration(this, workerUrl, clerkPubKey);
+        // Local-only mode: network collaboration is intentionally disabled.
         
         this.history = new History(this);
         this.renderer = new Renderer(this.canvas, this.ctx, this.camera, this.grid, this);
@@ -103,8 +99,6 @@ class App {
         this._bindResize();
         this._bindSettings();
 
-        // Start collaboration
-        this.collaboration.init().catch(err => console.error('Collaboration failed:', err));
 
         // ── Start Render Loop ───────────────────────────
         this.renderer.start();
@@ -113,9 +107,7 @@ class App {
         // ── Autosave ─────────────────────────────────────
         this._autosaveTimer = null;
         this._skipAutosave = false;
-        const urlParams = new URLSearchParams(window.location.search);
-        this.roomName = urlParams.get('room') || 'whiteboard';
-        this.autosaveKey = 'cp_whiteboard_autosave_' + this.roomName;
+        this.autosaveKey = 'cp_whiteboard_autosave_whiteboard';
         this._tryLoadAutosave();
 
         this._fetchGitHubVersion();
@@ -1011,18 +1003,29 @@ class App {
     }
 
     _deleteSelectedMatrixCells(el) {
-        const EMPTY = '　';
-        const isEmpty = v => v === '' || v === EMPTY || v == null;
+        const isEmpty = v => v == null || v === '' || v === '\u3000';
         if (!el.selectedCells || el.selectedCells.size === 0) return;
+        const selectedKeys = [...el.selectedCells].filter(key => {
+            const [row, col] = String(key).split(',').map(Number);
+            return Number.isInteger(row) && Number.isInteger(col) &&
+                row >= 0 && row < el.rows && col >= 0 && col < el.cols &&
+                Array.isArray(el.data[row]) && col < el.data[row].length;
+        });
+        if (selectedKeys.length === 0) {
+            el.selectedCells.clear();
+            return;
+        }
         
         const oldData = el.data.map(row => [...row]);
         const oldRows = el.rows;
         const oldCols = el.cols;
+        const oldHighlights = { ...el.highlights };
+        const oldElementIndex = this.elements.indexOf(el);
         
         // Step 1: clear values of selected cells
-        for (const key of el.selectedCells) {
+        for (const key of selectedKeys) {
             const [r, c] = key.split(',').map(Number);
-            if (el.data[r]) el.data[r][c] = EMPTY;
+            el.data[r][c] = '';
         }
         el.selectedCells.clear();
         el._lastCellKey = null;
@@ -1038,31 +1041,55 @@ class App {
                 el.deleteCol(c);
             }
         }
+        if (el.data.length > 0 && el.data.every(row => row.every(isEmpty))) {
+            el.data = [];
+            el.rows = 0;
+            el.cols = 0;
+            el.width = 0;
+            el.height = 0;
+            el.highlights = {};
+        }
         el.updateTextFromData();
         
         const newData = el.data.map(row => [...row]);
         const newRows = el.rows;
         const newCols = el.cols;
+        const newHighlights = { ...el.highlights };
+        const newPresent = newRows > 0 && newCols > 0;
+        const applyMatrixState = (data, rows, cols, highlights, present) => {
+            if (present && !this.elements.includes(el)) {
+                const index = Math.max(0, Math.min(oldElementIndex, this.elements.length));
+                this.elements.splice(index, 0, el);
+                this.layerManager._reindex();
+            }
+            el.data = data.map(row => [...row]);
+            el.rows = rows;
+            el.cols = cols;
+            el.highlights = { ...highlights };
+            el.selectedCells.clear();
+            el._lastCellKey = null;
+            if (present) el._updateSize();
+            else {
+                el.width = 0;
+                el.height = 0;
+            }
+            el.updateTextFromData();
+            if (!present) this._deleteElement(el);
+        };
         
         this.history.push({
             description: 'Delete matrix cells',
             undo: () => {
-                el.data = oldData.map(row => [...row]);
-                el.rows = oldRows;
-                el.cols = oldCols;
-                el.updateTextFromData();
+                applyMatrixState(oldData, oldRows, oldCols, oldHighlights, true);
                 this.renderer.markDirty();
             },
             redo: () => {
-                el.data = newData.map(row => [...row]);
-                el.rows = newRows;
-                el.cols = newCols;
-                el.updateTextFromData();
+                applyMatrixState(newData, newRows, newCols, newHighlights, newPresent);
                 this.renderer.markDirty();
             }
         });
         // Auto-delete element if completely empty
-        if (el.rows === 0 || el.cols === 0) {
+        if (!newPresent) {
             this._deleteElement(el);
             this.selectionManager.selectedElements = this.selectionManager.selectedElements.filter(e => e !== el);
         }
@@ -1074,37 +1101,72 @@ class App {
         
         const oldItems = [...el.items];
         const oldText = el.inputText;
+        const oldHighlights = { ...el.highlights };
+        const oldElementIndex = this.elements.indexOf(el);
 
         // Sort descending so splicing doesn't shift indices
-        const indices = [...el.selectedIndices].sort((a, b) => b - a);
+        const indices = [...el.selectedIndices]
+            .filter(idx => Number.isInteger(idx) && idx >= 0 && idx < el.items.length)
+            .sort((a, b) => b - a);
+        if (indices.length === 0) {
+            el.selectedIndices.clear();
+            el._lastItemIdx = -1;
+            return;
+        }
         for (const idx of indices) {
             el.items.splice(idx, 1);
         }
+        const removed = new Set(indices);
+        const nextHighlights = {};
+        for (const [key, color] of Object.entries(oldHighlights)) {
+            const index = Number(key);
+            if (!Number.isInteger(index) || index < 0 || removed.has(index)) continue;
+            const shift = indices.reduce((count, removedIndex) =>
+                count + (removedIndex < index ? 1 : 0), 0);
+            nextHighlights[index - shift] = color;
+        }
+        el.highlights = nextHighlights;
         el.selectedIndices.clear();
         el._lastItemIdx = -1;
         el._updateSize();
-        el.inputText = el.items.filter(v => v !== '　').join(' ');
+        if (typeof el.updateTextFromData === 'function') {
+            el.updateTextFromData();
+        } else {
+            el.inputText = el.items.join(' ');
+        }
         
         const newItems = [...el.items];
         const newText = el.inputText;
+        const newHighlights = { ...el.highlights };
+        const newPresent = newItems.length > 0;
+        const applyItemState = (items, text, highlights, present) => {
+            if (present && !this.elements.includes(el)) {
+                const index = Math.max(0, Math.min(oldElementIndex, this.elements.length));
+                this.elements.splice(index, 0, el);
+                this.layerManager._reindex();
+            }
+            el.items = [...items];
+            el.inputText = text;
+            el.highlights = { ...highlights };
+            el.selectedIndices.clear();
+            el._lastItemIdx = -1;
+            el._updateSize();
+            if (!present) this._deleteElement(el);
+        };
         
         this.history.push({
             description: 'Delete items',
             undo: () => {
-                el.items = [...oldItems];
-                el.inputText = oldText;
-                el._updateSize();
+                applyItemState(oldItems, oldText, oldHighlights, true);
                 this.renderer.markDirty();
             },
             redo: () => {
-                el.items = [...newItems];
-                el.inputText = newText;
-                el._updateSize();
+                applyItemState(newItems, newText, newHighlights, newPresent);
                 this.renderer.markDirty();
             }
         });
         // Auto-delete element if completely empty
-        if (el.items.length === 0) {
+        if (!newPresent) {
             this._deleteElement(el);
             this.selectionManager.selectedElements = this.selectionManager.selectedElements.filter(e => e !== el);
         }
@@ -1273,8 +1335,8 @@ class App {
             defaultText: oldText,
             onInput: (text) => {
                 if (!text.trim()) return;
-                el.setFromText(text);
-                this.renderer.markDirty();
+                const error = el.setFromText(text);
+                if (!error) this.renderer.markDirty();
             },
             onCancel: () => {
                 if (!oldText.trim()) {
@@ -1287,7 +1349,18 @@ class App {
                 this._refreshUI();
             },
             onConfirm: (text) => {
-                el.setFromText(text);
+                const error = el.setFromText(text);
+                if (error) {
+                    if (oldText.trim()) {
+                        el.setFromText(oldText);
+                    } else {
+                        this._deleteElement(el);
+                    }
+                    this._toast('⚠ ' + error, 4000);
+                    this.renderer.markDirty();
+                    this._refreshUI();
+                    return;
+                }
                 if (!text.trim() || (el.width === 0 && el.height === 0)) {
                     this._deleteElement(el);
                     this.renderer.markDirty();
@@ -1340,19 +1413,19 @@ class App {
             title: '編輯樹',
             placeholder: '邊列表格式（首行節點數，其後每行：父 子）\n或層序數值列表',
             defaultText: originalText,
-            showTypeSelect: true,
+            showTypeSelect: false,
             types: [
                 { value: 'binary', label: '二元樹', selected: el.treeType === 'binary' },
                 { value: 'bst', label: 'BST', selected: el.treeType === 'bst' },
                 { value: 'avl', label: 'AVL', selected: el.treeType === 'avl' },
                 { value: 'rb', label: '紅黑樹', selected: el.treeType === 'rb' }
             ],
-            showModeSelect: true,
+            showModeSelect: false,
             onInput: (text, type, mode) => {
                 if (!text.trim()) return;
                 const prevType = el.treeType;
                 if (type) el.treeType = type;
-                el.buildFromText(text, mode || 'values');
+                el.buildFromText(text, 'rooted');
                 if (!type) el.treeType = prevType;
                 this.renderer.markDirty();
             },
@@ -1361,7 +1434,7 @@ class App {
                     this._deleteElement(el);
                 } else {
                     el.treeType = originalType;
-                    el.buildFromText(originalText, el._detectMode(originalText));
+                    el.buildFromText(originalText, 'rooted');
                     this.selectionManager.clear();
                 }
                 this.renderer.markDirty();
@@ -1369,18 +1442,27 @@ class App {
             },
             onConfirm: (text, type, mode) => {
                 if (type) el.treeType = type;
-                const error = el.buildFromText(text, mode || 'values');
+                const error = el.buildFromText(text, 'rooted');
                 if (!text.trim() || (el.width === 0 && el.height === 0)) {
                     this._deleteElement(el);
                     this.renderer.markDirty();
                     this._refreshUI();
                     return;
                 }
-                this.toolbar.setTool('select');
                 if (error) {
+                    el.treeType = originalType;
+                    if (originalText.trim()) {
+                        el.buildFromText(originalText, 'rooted');
+                    } else {
+                        this._deleteElement(el);
+                    }
                     this._toast('⚠ ' + error, 4000);
+                    this.renderer.markDirty();
+                    this._refreshUI();
+                    return;
                 }
-                if (originalText !== text || originalType !== type) {
+                this.toolbar.setTool('select');
+                if (originalText !== text || originalType !== (type || originalType)) {
                     this.history.push({
                         description: 'Edit Tree',
                         undo: () => {
@@ -1389,7 +1471,7 @@ class App {
                                 this.layerManager._reindex();
                             }
                             el.treeType = originalType;
-                            if (originalText) el.buildFromText(originalText, el._detectMode(originalText));
+                            if (originalText) el.buildFromText(originalText, 'rooted');
                             else { el.root = null; el.inputText = ''; }
                         },
                         redo: () => {
@@ -1398,7 +1480,7 @@ class App {
                                 this.layerManager._reindex();
                             }
                             el.treeType = type || originalType;
-                            el.buildFromText(text, mode || 'values');
+                            el.buildFromText(text, 'rooted');
                         }
                     });
                 }
@@ -1424,30 +1506,36 @@ class App {
     _showGraphDialog(el) {
         const originalText = el.inputText || '';
         const originalDirected = el.directed;
+        const originalZeroBased = el.zeroBased;
+        const originalGraphMode = el.graphMode;
 
         this.textInputDialog.show({
             title: '編輯圖',
             placeholder: '第一行: N M (節點數 邊數)\n之後每行: u v [w]\n例：\n4 5\n1 2\n2 3 7\n3 4\n4 1\n1 3',
             defaultText: originalText,
             showDirectedCheckbox: true,
+            showZeroBasedCheckbox: true,
+            showGraphModeSelect: true,
             directed: originalDirected,
-            onInput: (text, _type, _mode, directed) => {
+            zeroBased: originalZeroBased,
+            graphMode: originalGraphMode,
+            onInput: (text, _type, _mode, directed, zeroBased, graphMode) => {
                 if (!text.trim()) return;
-                el.buildFromText(text, directed);
+                el.buildFromText(text, directed, zeroBased, graphMode);
                 this.renderer.markDirty();
             },
             onCancel: () => {
                 if (!originalText.trim()) {
                     this._deleteElement(el);
                 } else {
-                    el.buildFromText(originalText, originalDirected);
+                    el.buildFromText(originalText, originalDirected, originalZeroBased, originalGraphMode);
                     this.selectionManager.clear();
                 }
                 this.renderer.markDirty();
                 this._refreshUI();
             },
-            onConfirm: (text, _type, _mode, directed) => {
-                el.buildFromText(text, directed);
+            onConfirm: (text, _type, _mode, directed, zeroBased, graphMode) => {
+                const error = el.buildFromText(text, directed, zeroBased, graphMode);
                 
                 if (!text.trim() || (el.width === 0 && el.height === 0)) {
                     this._deleteElement(el);
@@ -1455,9 +1543,23 @@ class App {
                     this._refreshUI();
                     return;
                 }
+                if (error) {
+                    if (originalText.trim()) {
+                        el.buildFromText(originalText, originalDirected, originalZeroBased, originalGraphMode);
+                    } else {
+                        this._deleteElement(el);
+                    }
+                    this._toast('⚠ ' + error, 4000);
+                    this.renderer.markDirty();
+                    this._refreshUI();
+                    return;
+                }
                 this.toolbar.setTool('select');
                 
-                if (originalText !== text || originalDirected !== directed) {
+                if (originalText !== text ||
+                    originalDirected !== directed ||
+                    originalZeroBased !== zeroBased ||
+                    originalGraphMode !== graphMode) {
                     this.history.push({
                         description: 'Edit Graph',
                         undo: () => {
@@ -1465,15 +1567,23 @@ class App {
                                 this.elements.push(el);
                                 this.layerManager._reindex();
                             }
-                            if (originalText) el.buildFromText(originalText, originalDirected);
-                            else { el.nodes.clear(); el.edges = []; el.inputText = ''; el.directed = originalDirected; }
+                            if (originalText) {
+                                el.buildFromText(originalText, originalDirected, originalZeroBased, originalGraphMode);
+                            } else {
+                                el.nodes.clear();
+                                el.edges = [];
+                                el.inputText = '';
+                                el.directed = originalDirected;
+                                el.zeroBased = originalZeroBased;
+                                el.graphMode = originalGraphMode;
+                            }
                         },
                         redo: () => { 
                             if (!this.elements.includes(el)) {
                                 this.elements.push(el);
                                 this.layerManager._reindex();
                             }
-                            el.buildFromText(text, directed); 
+                            el.buildFromText(text, directed, zeroBased, graphMode);
                         }
                     });
                 }
@@ -1517,7 +1627,7 @@ class App {
         overlay.style.boxSizing = 'border-box';
         // Strip full-width space sentinel when entering edit mode
         const rawVal = String(matrixEl.data[row]?.[col] ?? '');
-        overlay.value = (rawVal === '　' || rawVal === '　 　') ? '' : rawVal;
+        overlay.value = (rawVal === '' || rawVal === '\u3000') ? '' : rawVal;
         overlay.focus();
         overlay.select();
 
@@ -2352,16 +2462,13 @@ class App {
                 text: TextElement, matrix: MatrixElement, stack: StackElement,
                 queue: QueueElement, mermaid: MermaidElement,
                 pen: PenElement,
+                tree: TreeElement, graph: GraphElement,
                 markdown: MarkdownElement
             };
             const Cls = TYPE_MAP[data.type];
             if (!Cls) continue;
             newEl = Cls.fromData ? Cls.fromData(data) : new Cls();
             newEl.deserialize(data);
-            // Assign new id
-            newEl.id = undefined; // will be set by constructor next time...
-            const nextEl = new Element('_tmp');
-            newEl.id = nextEl.id;
             // Remove the tmp from nothing
             this.elements.push(newEl);
             newEls.push(newEl);
@@ -2459,10 +2566,6 @@ class App {
         
         const newEl = MatrixElement.fromData(data);
         newEl.deserialize(data);
-        
-        // Assign fresh ID
-        const nextEl = new Element('_tmp');
-        newEl.id = nextEl.id;
         
         newEl._updateSize();
         
