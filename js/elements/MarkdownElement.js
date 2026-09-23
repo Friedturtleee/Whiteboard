@@ -158,12 +158,12 @@ export class MarkdownElement extends Element {
         return { text, katexOutputs };
     }
 
-    /** Post-process: highlight <code class="language-xxx"> blocks with hljs. */
+    /** Highlight fenced code blocks, using auto-detection when no language is tagged. */
     static _highlightCodeBlocks(html) {
         if (typeof hljs === 'undefined') return html;
 
         return html.replace(
-            /<code class="language-([\w+\-#]+)">([\s\S]*?)<\/code>/g,
+            /<pre><code(?: class="language-([\w+\-#]+)")?>([\s\S]*?)<\/code><\/pre>/g,
             (match, lang, code) => {
                 const decoded = code
                     .replace(/&amp;/g, '&').replace(/&lt;/g, '<')
@@ -175,13 +175,18 @@ export class MarkdownElement extends Element {
                     'sh': 'bash', 'shell': 'bash', 'yml': 'yaml', 'md': 'markdown',
                     'kt': 'kotlin', 'rs': 'rust', 'go': 'go', 'hs': 'haskell',
                 };
-                const resolved = langMap[lang.toLowerCase()] || lang.toLowerCase();
+                const normalizedLang = lang?.toLowerCase();
+                const resolved = normalizedLang
+                    ? (langMap[normalizedLang] || normalizedLang)
+                    : null;
 
                 try {
-                    const result = hljs.getLanguage(resolved)
+                    const result = resolved && hljs.getLanguage(resolved)
                         ? hljs.highlight(decoded, { language: resolved })
                         : hljs.highlightAuto(decoded);
-                    return `<code class="hljs language-${lang}">${result.value}</code>`;
+                    const detectedLanguage = resolved || result.language;
+                    if (!result.language && !resolved) return match;
+                    return `<pre><code class="hljs language-${detectedLanguage}">${result.value}</code></pre>`;
                 } catch (_) {
                     return match;
                 }
@@ -363,6 +368,15 @@ export class MarkdownElement extends Element {
             body { font-family:sans-serif; font-size:15px; line-height:1.5; color:#e0e0e0; }
             pre { margin:0.35em 0; overflow-x:auto; }
             code { font-family:monospace; font-size:0.88em; color:#f2a2c0; }
+            pre code { color:#cdd6f4; }
+            .hljs-keyword { color:#c792ea; }
+            .hljs-string { color:#c3e88d; }
+            .hljs-number { color:#f78c6c; }
+            .hljs-comment { color:#676e95; font-style:italic; }
+            .hljs-title, .hljs-function { color:#82aaff; }
+            .hljs-built_in, .hljs-type { color:#ffcb6b; }
+            .hljs-attr, .hljs-variable { color:#f07178; }
+            .hljs-meta, .hljs-operator, .hljs-punctuation { color:#89ddff; }
             a { color:#82aaff; } strong { color:#f0c987; } em { color:#8bd5ca; }
             p { margin:0 0 0.35em; } h1 { font-size:1.8em; margin:0 0 0.35em; color:#8ecbff; }`;
 

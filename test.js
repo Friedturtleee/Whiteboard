@@ -142,6 +142,45 @@ try {
         throw new Error('Markdown sanitization or safe formatting browser check failed: ' +
             JSON.stringify(markdownSecurity));
     }
+    const markdownCodeHighlight = await page.evaluate(async () => {
+        const { MarkdownElement } = await import('/js/elements/MarkdownElement.js');
+        const sample = '#include <iostream>\nint main() { return 0; }';
+        return ['```cpp\n' + sample + '\n```', '```\n' + sample + '\n```'].map(source => {
+            const probe = document.createElement('div');
+            probe.innerHTML = MarkdownElement.renderToHTML(source);
+            MarkdownElement._applyRenderStyles(probe);
+            const includeToken = [...probe.querySelectorAll('span')]
+                .find(token => token.textContent.includes('#include'));
+            return {
+                includeText: includeToken?.textContent ?? null,
+                includeColor: includeToken?.style.color ?? null,
+                tokenClass: includeToken?.className ?? null,
+                languageClass: probe.querySelector('pre code')?.className ?? null
+            };
+        });
+    });
+    if (markdownCodeHighlight.some(result => !result.includeText || !result.includeColor)) {
+        throw new Error('C++ include directive did not receive syntax highlighting: ' +
+            JSON.stringify(markdownCodeHighlight));
+    }
+    const markdownGfm = await page.evaluate(async () => {
+        const { MarkdownElement } = await import('/js/elements/MarkdownElement.js');
+        const preview = document.createElement('div');
+        preview.innerHTML = MarkdownElement.renderToHTML(
+            '| Item | Count |\n| --- | ---: |\n| apple | 2 |\n\n' +
+            '- [x] done\n- [ ] pending\n\n~~removed~~\n\nhttps://example.com'
+        );
+        return {
+            tableCell: preview.querySelector('table tbody td')?.textContent,
+            checkedTask: preview.querySelector('input[type="checkbox"]')?.checked,
+            deletedText: preview.querySelector('del')?.textContent,
+            autolink: preview.querySelector('a[href="https://example.com"]')?.textContent
+        };
+    });
+    if (markdownGfm.tableCell !== 'apple' || markdownGfm.checkedTask !== true ||
+        markdownGfm.deletedText !== 'removed' || markdownGfm.autolink !== 'https://example.com') {
+        throw new Error('GitHub-flavored Markdown coverage regressed: ' + JSON.stringify(markdownGfm));
+    }
     const markdownAppearance = await page.evaluate(async () => {
         const { MarkdownElement } = await import('/js/elements/MarkdownElement.js');
         const probe = document.createElement('div');

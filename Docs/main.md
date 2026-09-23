@@ -27,7 +27,7 @@ npm run test:browser
 - `css/`：`colors.css` 是設計 token；`main.css` 是整體基礎；`toolbar.css`、`panels.css` 是主要 UI；`markdown-dialog.css` 是 Markdown 編輯器。
 - `tests/regression.test.js`：Node 原生測試，放資料解析、模型、幾何與 undo/redo 回歸案例。
 - `test.js`：Puppeteer 瀏覽器 smoke/regression 測試。
-- `server/`：舊 Cloudflare Durable Object / Yjs / Clerk 協作後端，並非目前前端執行路徑；不要為了修一般白板功能而啟動或接回它。
+- `server/`：獨立 Cloudflare Worker（Durable Object / Yjs / Clerk 協作後端），不是前端靜態資產；目前前端 local-only，不會呼叫它。`server/wrangler.toml` 的 Worker 部署與根目錄前端部署是兩件事。
 
 ## 執行期資料流
 
@@ -58,6 +58,18 @@ index.html → App(js/app.js)
 - `core/Serializer.js`：JSON 匯入會先驗證並建立完整的新元素集合，成功後才取代目前畫布；成功匯入會清除舊歷史，避免 undo 操作到舊畫布。
 - `canvas/Camera.js`、`Grid.js`、`HitTest.js`：鏡頭座標、格線與共用命中測試。
 
+### 新增一種白板元素時
+
+通常需一起更新：
+
+1. 新增 `js/elements/<Name>Element.js`，繼承 `Element`，定義繪製、資料狀態、序列化；若尺寸會重排內部內容，定義 resize hook/state。
+2. 在 `js/app.js` import 類別，接上工具按鈕／建立流程、編輯入口及適當的 undo 命令。
+3. 在 `js/core/Serializer.js` 的 `TYPE_MAP` 加入 type 和 class，確保 JSON 匯入可重建該元素；處理特殊資料驗證。
+4. 視需求更新 `index.html`、`js/ui/Toolbar.js`、屬性面板、Canvas hit-test／Renderer 或 CSS。
+5. 在 `tests/regression.test.js` 加模型、解析與 undo/redo 測試；在 `test.js` 加瀏覽器繪製／互動 smoke test。
+
+不要只加 Toolbar 按鈕或只加 `TYPE_MAP`：互動建立、JSON round-trip、繪製和 undo 是不同路徑。
+
 ## 元素與資料結構
 
 白板主要狀態是 `app.elements`，每一個元素以 `type` 區分並實作 `draw()`、`serialize()`；特殊元素另外負責自己的解析、hit-test 與重建。
@@ -76,6 +88,14 @@ index.html → App(js/app.js)
 
 `core/DataTokens.js` 將全形／表意空格 `\u3000` 視為「明確空欄位」；一般 ASCII 空格、tab、逗號是分隔符，不代表空欄位。不要改成會把保留佔位符字串誤認成空值的 sentinel 比較。修改矩陣或 Stack/Queue 解析時，補上開頭、結尾、連續空欄及字面上類似 sentinel 的資料測試。
 
+### Markdown 能力與渲染路徑
+
+- `index.html` 載入 Marked 12、Highlight.js 11.9、KaTeX 與 html2canvas CDN；`MarkdownElement.renderToHTML()` 使用 `marked.parse(..., { gfm: true })`，不是自製 Markdown parser。
+- GFM 的常見表格、刪除線、任務清單與自動連結由 Marked 處理；KaTeX 數學式由自訂前處理器轉換，前處理會先保護 fenced/inline code。
+- fenced code 的語言可標成 `cpp`、`c++` 等；沒標語言時由 Highlight.js 自動偵測。要穩定指定語言仍建議加 fence info，例如 ```` ```cpp ````。token 顏色需同時檢查 Markdown preview 的 `css/markdown-dialog.css` 與 Canvas 的 `_applyRenderStyles()`。
+- Canvas 正常路徑是 Markdown → HTML → 隱藏 DOM → html2canvas；html2canvas 不可用時會走 SVG foreignObject fallback，新增文字／code token 樣式時要同步檢查兩條路徑。
+- 為安全起見，原始 HTML 會被 escape，連結／圖片 URL 僅允許安全 scheme；不要為了支援任意 HTML 而移除這些限制。Mermaid 目前是獨立 `MermaidElement`，不是 Markdown fenced `mermaid` code block 的功能。
+
 ## 修改慣例與高風險點
 
 1. 先讀相關元素類別、其 Renderer/Parser、`App` 的事件入口和回歸測試；不要只改畫圖而忽略 hit-test 或反向操作。
@@ -85,6 +105,13 @@ index.html → App(js/app.js)
 5. Canvas 繪製應使用 `save()/restore()` 隔離 context 狀態，並只在模型變更後標記 renderer dirty。
 6. 修改 CSS 時先確認對應 DOM selector；樣式設計 token 優先放 `css/colors.css`，避免把外觀邏輯塞進模型。
 7. 前端目前刻意維持 local-only。`js/network/Collaboration.js`、Clerk 字串或 `server/` 的存在不代表協作正在執行；若需求明確要變更此政策，再追蹤相關入口和測試。
+
+## 部署邊界
+
+- 前端靜態資產位於 repository 根目錄（`index.html`、`js/`、`css/`）；`CNAME` 記錄自訂網域。repository 內沒有 Pages build workflow/config，因此只看 Git push 不能證明靜態網站已部署；應在實際託管平台確認該 commit 的部署狀態，必要時比對線上資產。
+- Worker 設定位於 `server/wrangler.toml`，Worker 名稱為 `whiteboard-server`，入口 `server/src/index.js`。它提供 Clerk 驗證後的 WebSocket/Yjs 房間，不包含前端靜態 assets 設定。
+- Worker 若使用手動 Wrangler 部署，Git push 不會自動發布 Worker；只有 Cloudflare Workers Builds 已連接此 repository/branch 時，push 才會觸發 Worker build。部署 Worker 可能影響線上服務，沒有使用者明確要求時只檢查、不部署。
+- 協作 UI 已停用不等於 Worker 已刪除或停機。處理協作／資安需求時分別確認：前端是否發請求、Worker 是否仍可公開連線、Cloudflare 是否仍部署該 Worker。
 
 ## 驗證與接手流程
 
