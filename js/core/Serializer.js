@@ -94,6 +94,11 @@ export class Serializer {
                 if (!Array.isArray(ed.items) || ed.items.length > 10000) {
                     throw new TypeError('Array element has invalid or oversized item data.');
                 }
+            } else if (ed.type === 'pen') {
+                if (!Array.isArray(ed.points) || ed.points.some(point =>
+                    !point || !Number.isFinite(point.x) || !Number.isFinite(point.y))) {
+                    throw new TypeError('Pen element contains invalid point data.');
+                }
             } else if (ed.type === 'graph') {
                 if (!Array.isArray(ed.graphNodes) || ed.graphNodes.length > 500 ||
                     !Array.isArray(ed.edges) || ed.edges.length > 100000) {

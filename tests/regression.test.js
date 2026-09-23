@@ -4,6 +4,7 @@ import { QueueElement } from '../js/elements/QueueElement.js';
 import { StackElement } from '../js/elements/StackElement.js';
 import { MatrixElement } from '../js/elements/MatrixElement.js';
 import { TextElement } from '../js/elements/TextElement.js';
+import { PenElement } from '../js/elements/PenElement.js';
 import { Serializer } from '../js/core/Serializer.js';
 import { History } from '../js/core/History.js';
 import { GraphElement } from '../js/graph/GraphElement.js';
@@ -115,6 +116,26 @@ test('text hydration normalizes legacy fonts without mutating saved data', () =>
     assert.equal(element.fontFamily, "'Zen Maru Gothic', sans-serif");
     assert.equal(element.isBold, true);
     assert.equal(data.fontFamily, 'Segoe UI');
+});
+
+test('pen bounds handle large strokes without argument spreading or rescanning each point', () => {
+    const pen = new PenElement();
+    const recalculateBounds = pen._recalcBounds.bind(pen);
+    pen._recalcBounds = () => { throw new Error('addPoint should update bounds incrementally'); };
+    assert.equal(pen.addPoint(8, -3), true);
+    assert.equal(pen.addPoint(-2, 10), true);
+    assert.equal(pen.addPoint(4, 6), true);
+    pen._recalcBounds = recalculateBounds;
+    assert.deepEqual({ x: pen.x, y: pen.y, width: pen.width, height: pen.height },
+        { x: -2, y: -3, width: 10, height: 13 });
+    assert.equal(pen.addPoint(Infinity, 0), false);
+
+    pen.points = Array.from({ length: 150000 }, (_, index) => ({ x: index - 75000, y: 12 }));
+    assert.doesNotThrow(() => pen._recalcBounds());
+    assert.deepEqual({ x: pen.x, y: pen.y, width: pen.width, height: pen.height },
+        { x: -75000, y: 12, width: 149999, height: 0 });
+    pen.optimize(0.1);
+    assert.equal(pen.points.length, 2);
 });
 
 test('parallel undirected graph edges render on distinct lanes', () => {
@@ -278,6 +299,12 @@ test('failed JSON imports leave the current board and camera unchanged', () => {
     assert.throws(() => Serializer.loadJSONData(app, {
         elements: [{ type: '__proto__', x: 0, y: 0, width: 1, height: 1 }]
     }), /Unsupported whiteboard element type/);
+    assert.throws(() => Serializer.loadJSONData(app, {
+        elements: [{
+            type: 'pen', x: 0, y: 0, width: 1, height: 1,
+            points: [{ x: 'invalid', y: 0 }]
+        }]
+    }), /invalid point data/);
     assert.deepEqual(app.elements, [existing]);
 });
 

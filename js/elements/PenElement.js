@@ -15,18 +15,39 @@ export class PenElement extends Element {
 
     // ── Add a point and recompute bounding box ─────────────────────────────
     addPoint(wx, wy) {
+        if (!Number.isFinite(wx) || !Number.isFinite(wy)) return false;
+        if (this.points.length === 0) {
+            this.x = wx;
+            this.y = wy;
+            this.width = 0;
+            this.height = 0;
+        } else {
+            const right = this.x + this.width;
+            const bottom = this.y + this.height;
+            this.x = Math.min(this.x, wx);
+            this.y = Math.min(this.y, wy);
+            this.width = Math.max(right, wx) - this.x;
+            this.height = Math.max(bottom, wy) - this.y;
+        }
         this.points.push({ x: wx, y: wy });
-        this._recalcBounds();
+        return true;
     }
 
     _recalcBounds() {
         if (this.points.length === 0) return;
-        const xs = this.points.map(p => p.x);
-        const ys = this.points.map(p => p.y);
-        const minX = Math.min(...xs);
-        const minY = Math.min(...ys);
-        const maxX = Math.max(...xs);
-        const maxY = Math.max(...ys);
+        let minX = Infinity, minY = Infinity, maxX = -Infinity, maxY = -Infinity;
+        for (const point of this.points) {
+            if (!point || !Number.isFinite(point.x) || !Number.isFinite(point.y)) continue;
+            minX = Math.min(minX, point.x);
+            minY = Math.min(minY, point.y);
+            maxX = Math.max(maxX, point.x);
+            maxY = Math.max(maxY, point.y);
+        }
+        if (minX === Infinity) {
+            this.width = 0;
+            this.height = 0;
+            return;
+        }
         this.x      = minX;
         this.y      = minY;
         this.width  = maxX - minX;
@@ -107,7 +128,9 @@ export class PenElement extends Element {
 
     deserialize(data) {
         super.deserialize(data);
-        this.points      = (data.points || []).map(p => ({ x: p.x, y: p.y }));
+        this.points      = (Array.isArray(data.points) ? data.points : [])
+            .filter(point => point && Number.isFinite(point.x) && Number.isFinite(point.y))
+            .map(point => ({ x: point.x, y: point.y }));
         this.strokeWidth = data.strokeWidth ?? 2;
         this._recalcBounds();
         return this;
@@ -137,21 +160,27 @@ function _ptLinDist(p, p1, p2) {
 
 function _douglasPeucker(points, epsilon) {
     if (points.length <= 2) return points;
-    let dmax = 0;
-    let index = 0;
-    const end = points.length - 1;
-    for (let i = 1; i < end; i++) {
-        const d = _ptLinDist(points[i], points[0], points[end]);
-        if (d > dmax) {
-            index = i;
-            dmax = d;
+    const keep = new Uint8Array(points.length);
+    keep[0] = 1;
+    keep[points.length - 1] = 1;
+    const ranges = [[0, points.length - 1]];
+
+    while (ranges.length) {
+        const [start, end] = ranges.pop();
+        let maxDistance = epsilon;
+        let index = -1;
+        for (let i = start + 1; i < end; i++) {
+            const distance = _ptLinDist(points[i], points[start], points[end]);
+            if (distance > maxDistance) {
+                maxDistance = distance;
+                index = i;
+            }
+        }
+        if (index !== -1) {
+            keep[index] = 1;
+            ranges.push([start, index], [index, end]);
         }
     }
-    if (dmax > epsilon) {
-        const recResults1 = _douglasPeucker(points.slice(0, index + 1), epsilon);
-        const recResults2 = _douglasPeucker(points.slice(index), epsilon);
-        return recResults1.slice(0, -1).concat(recResults2);
-    } else {
-        return [points[0], points[end]];
-    }
+
+    return points.filter((_, index) => keep[index]);
 }
