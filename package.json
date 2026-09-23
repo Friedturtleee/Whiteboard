@@ -1,5 +1,10 @@
 {
-  "dependencies": {
+  "type": "module",
+  "scripts": {
+    "test": "node --test tests/*.test.js",
+    "test:browser": "node test.js"
+  },
+  "devDependencies": {
     "express": "^5.2.1",
     "puppeteer": "^25.1.0"
   }

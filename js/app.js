@@ -15,7 +15,6 @@ import { LayerManager } from './core/LayerManager.js';
 import { Transform } from './core/Transform.js';
 import { History } from './core/History.js';
 import { Serializer } from './core/Serializer.js';
-import { Element } from './core/Element.js';
 
 // ── Elements ────────────────────────────────────────────
 import { ShapeElement } from './elements/ShapeElement.js';
@@ -116,18 +115,6 @@ class App {
     // ═════════════════════════════════════════════════════
     // Helpers
     // ═════════════════════════════════════════════════════
-    getTypeMap() {
-        return {
-            rectangle: ShapeElement, circle: ShapeElement, ellipse: ShapeElement,
-            line: ShapeElement, arrow: ShapeElement,
-            text: TextElement, matrix: MatrixElement,
-            stack: StackElement, queue: QueueElement,
-            mermaid: MermaidElement,
-            pen: PenElement, tree: TreeElement, graph: GraphElement,
-            markdown: MarkdownElement
-        };
-    }
-
     // ═════════════════════════════════════════════════════
     // GitHub Version Tracking
     // ═════════════════════════════════════════════════════
@@ -2388,6 +2375,7 @@ class App {
             this.history.pushDelete(this, [el]);
             const idx = this.elements.indexOf(el);
             if (idx >= 0) this.elements.splice(idx, 1);
+            this.layerManager._reindex();
             this.selectionManager.clear();
             this._refreshUI();
         });
@@ -2697,32 +2685,17 @@ class App {
     }
 
     _restoreFromData(data) {
+        const previousSkipAutosave = this._skipAutosave;
+        this._skipAutosave = true;
         try {
-            const TYPE_MAP = this.getTypeMap();
-            this._skipAutosave = true;
-            this.elements = [];
-            let maxId = 0;
-            for (const ed of data.elements) {
-                const Cls = TYPE_MAP[ed.type];
-                if (!Cls) continue;
-                const el = Cls.fromData ? Cls.fromData(ed) : new Cls();
-                el.deserialize(ed);
-                if (el.id > maxId) maxId = el.id;
-                this.elements.push(el);
-            }
-            Element.resetIdCounter(maxId);
-            if (data.camera) {
-                this.camera.x = data.camera.x;
-                this.camera.y = data.camera.y;
-                this.camera.zoom = data.camera.zoom;
-            }
-            this._skipAutosave = false;
+            Serializer.loadJSONData(this, data);
             this._refreshUI();
             // (silent restore — no toast)
         } catch (e) {
-            this._skipAutosave = false;
             console.error('[Autosave restore ERROR]', e.stack || e);
             alert('載入自動存檔時發生錯誤: ' + e.message);
+        } finally {
+            this._skipAutosave = previousSkipAutosave;
         }
     }
 }

@@ -4,7 +4,7 @@
  * Can be created from text input or value list.
  */
 import { Element } from '../core/Element.js';
-import { TreeParser } from './TreeParser.js';
+import { MAX_TREE_INPUT_LENGTH, MAX_TREE_NODES, TreeParser } from './TreeParser.js';
 import { TreeLayout } from './TreeLayout.js';
 import { TreeRenderer } from './TreeRenderer.js';
 
@@ -27,26 +27,33 @@ export class TreeElement extends Element {
      * @returns {string|null} error message if validation fails, null on success
      */
     buildFromText(text, mode = 'auto') {
+        const input = String(text ?? '');
+        if (input.length > MAX_TREE_INPUT_LENGTH) {
+            return '樹資料不可超過 1 MB。';
+        }
         let result;
 
         if (mode === 'auto') {
-            result = TreeParser.autoDetectAndParse(text, this.treeType);
+            result = TreeParser.autoDetectAndParse(input, this.treeType);
         } else if (mode === 'rooted') {
-            const lines = String(text ?? '')
+            const lines = input
                 .replace(/\r/g, '')
                 .split('\n')
                 .map(line => line.trim())
                 .filter(Boolean);
             result = TreeParser.parseRootedFormat(lines);
         } else if (mode === 'parent') {
-            const lines = text.trim().split('\n').map(l => l.trim()).filter(l => l);
+            const lines = input.trim().split('\n').map(l => l.trim()).filter(l => l);
             result = TreeParser.parseParentFormat(lines);
         } else if (mode === 'edge') {
-            const lines = text.trim().split('\n').map(l => l.trim()).filter(l => l);
+            const lines = input.trim().split('\n').map(l => l.trim()).filter(l => l);
             result = TreeParser.parseEdgeFormat(lines);
         } else {
             // values mode
-            const values = text.trim().split(/[\s,\n]+/).filter(v => v);
+            const values = input.trim().split(/[\s,\n]+/).filter(v => v);
+            if (values.length > MAX_TREE_NODES) {
+                return '節點數不可超過 ' + MAX_TREE_NODES + '。';
+            }
             if (this.treeType === 'avl') {
                 result = TreeParser.buildAVL(values);
             } else if (this.treeType === 'rb') {
@@ -57,10 +64,10 @@ export class TreeElement extends Element {
         }
 
         if (result?.error) return result.error;
-        if (!result?.root) return String(text ?? '').trim() ? '無法建立樹，請檢查輸入格式。' : null;
+        if (!result?.root) return input.trim() ? '無法建立樹，請檢查輸入格式。' : null;
 
         this.root = result.root;
-        this.inputText = text;
+        this.inputText = input;
         this.hasWeights = result.hasWeights || false;
         // Compute Euler tour timestamps for euler tree type
         if (this.treeType === 'euler') {
@@ -145,17 +152,18 @@ export class TreeElement extends Element {
     }
 
     containsPoint(wx, wy, camera) {
+        const point = this.toLocalPoint(wx, wy);
         // First check node hit
         if (this.root) {
             const { offsetX, offsetY } = this._getCurrentOffsets();
-            const hitNode = TreeRenderer.hitTestNode(this.root, wx, wy, {
+            const hitNode = TreeRenderer.hitTestNode(this.root, point.x, point.y, {
                 nodeRadius: this.nodeRadius,
                 offsetX, offsetY
             });
             if (hitNode) return true;
 
             // Check edge hit with wide tolerance
-            const hitEdge = TreeRenderer.hitTestEdge(this.root, wx, wy, {
+            const hitEdge = TreeRenderer.hitTestEdge(this.root, point.x, point.y, {
                 nodeRadius: this.nodeRadius,
                 offsetX, offsetY,
                 tolerance: 12
@@ -171,8 +179,9 @@ export class TreeElement extends Element {
      */
     hitTestNode(wx, wy) {
         if (!this.root) return null;
+        const point = this.toLocalPoint(wx, wy);
         const { offsetX, offsetY } = this._getCurrentOffsets();
-        return TreeRenderer.hitTestNode(this.root, wx, wy, {
+        return TreeRenderer.hitTestNode(this.root, point.x, point.y, {
             nodeRadius: this.nodeRadius,
             offsetX, offsetY
         });
@@ -189,7 +198,8 @@ export class TreeElement extends Element {
         const walk = (node) => {
             if (!node || node.value === null || visited.has(node)) return;
             visited.add(node);
-            ports.push({ id: `node_${node.value}`, x: offsetX + node.x, y: offsetY + node.y });
+            const point = this.toWorldPoint(offsetX + node.x, offsetY + node.y);
+            ports.push({ id: `node_${node.value}`, x: point.x, y: point.y });
             if (node.children) node.children.forEach(walk);
         };
         walk(this.root);
@@ -246,7 +256,12 @@ export class TreeElement extends Element {
         this._relOffsetY = data._relOffsetY;
         // Rebuild tree from saved text
         if (this.inputText) {
-            this.buildFromText(this.inputText, 'auto');
+            let error = this.buildFromText(this.inputText, 'auto');
+            // New editor entries use explicit rooted input regardless of the
+            // display subtype; older auto-detection only recognized this form
+            // for the generic tree type.
+            if (error) error = this.buildFromText(this.inputText, 'rooted');
+            if (error) throw new TypeError('Saved tree data is invalid: ' + error);
             // Restore relative offsets
             if (data._relOffsetX !== undefined) {
                 this._relOffsetX = data._relOffsetX;

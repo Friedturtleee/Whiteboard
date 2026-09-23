@@ -2,9 +2,9 @@
  * StackElement — LIFO stack visualization.
  */
 import { Element } from '../core/Element.js';
+import { splitDataTokens } from '../core/DataTokens.js';
 
 const EMPTY_CELL = '\u3000';
-const EMPTY_TOKEN = '__WHITEBOARD_EMPTY__';
 const isEmptyCell = value => value == null || value === '' || value === EMPTY_CELL;
 const MAX_ITEMS = 10000;
 
@@ -50,11 +50,7 @@ export class StackElement extends Element {
     setFromText(text) {
         const rawText = String(text ?? '');
         if (rawText.length > 1000000) return '最多輸入 10000 個元素。';
-        const textProcessed = rawText.replace(/\r\n?/g, '\n').replace(/\u3000/g, ' ' + EMPTY_TOKEN + ' ');
-        const vals = textProcessed.split(/[ \t,\n]+/).filter(Boolean).map(v => {
-            if (v === EMPTY_TOKEN) return '';
-            return v;
-        });
+        const vals = splitDataTokens(rawText, { multiline: true });
         if (vals.length > MAX_ITEMS) return '最多輸入 10000 個元素。';
         this.inputText = rawText;
         this.items = vals;
@@ -187,13 +183,14 @@ export class StackElement extends Element {
      * Returns the stable index in this.items of the visible item at (wx, wy), or -1.
      */
     hitTestItem(wx, wy) {
+        const point = this.toLocalPoint(wx, wy);
         const baseY = this.y + this.height - 8;
         const slots = Math.max(1, Math.min(this.items.length, this.maxDisplay));
         for (let i = 0; i < slots; i++) {
             const top = baseY - (i + 1) * this.cellHeight;
             const bottom = top + this.cellHeight;
-            if (wx >= this.x + 8 && wx <= this.x + this.width - 8 &&
-                wy >= top && wy <= bottom) {
+            if (point.x >= this.x + 8 && point.x <= this.x + this.width - 8 &&
+                point.y >= top && point.y <= bottom) {
                 return this.items.length - slots + i;
             }
         }

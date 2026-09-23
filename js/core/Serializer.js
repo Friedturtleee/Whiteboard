@@ -11,7 +11,6 @@ import { MermaidElement } from '../elements/MermaidElement.js';
 import { MarkdownElement } from '../elements/MarkdownElement.js';
 import { TreeElement } from '../tree/TreeElement.js';
 import { GraphElement } from '../graph/GraphElement.js';
-import { Element } from './Element.js';
 
 const TYPE_MAP = {
     rectangle: ShapeElement,
@@ -53,24 +52,7 @@ export class Serializer {
             reader.onload = () => {
                 try {
                     const data = JSON.parse(reader.result);
-                    app.elements = [];
-                    let maxId = 0;
-                    for (const ed of data.elements) {
-                        const Cls = TYPE_MAP[ed.type];
-                        if (!Cls) continue;
-                        const el = Cls.fromData ? Cls.fromData(ed) : new Cls();
-                        el.deserialize(ed);
-                        if (el.id > maxId) maxId = el.id;
-                        app.elements.push(el);
-                    }
-                    Element.resetIdCounter(maxId);
-                    if (data.camera) {
-                        app.camera.x = data.camera.x;
-                        app.camera.y = data.camera.y;
-                        app.camera.zoom = data.camera.zoom;
-                    }
-                    app.selectionManager.clear();
-                    app.renderer.markDirty();
+                    Serializer.loadJSONData(app, data);
                     resolve();
                 } catch (e) {
                     reject(e);
@@ -81,6 +63,83 @@ export class Serializer {
         });
     }
 
+    /** Validate and build an import off-canvas before replacing the current board. */
+    static loadJSONData(app, data) {
+        if (!data || typeof data !== 'object' || !Array.isArray(data.elements)) {
+            throw new TypeError('Whiteboard file must contain an elements array.');
+        }
+
+        const importedElements = [];
+        for (const ed of data.elements) {
+            if (!ed || typeof ed !== 'object' || Array.isArray(ed) || typeof ed.type !== 'string') {
+                throw new TypeError('Whiteboard file contains an invalid element record.');
+            }
+            if (!Object.prototype.hasOwnProperty.call(TYPE_MAP, ed.type)) {
+                throw new TypeError('Unsupported whiteboard element type: ' + ed.type);
+            }
+            if (![ed.x, ed.y, ed.width, ed.height].every(Number.isFinite)) {
+                throw new TypeError('Whiteboard element has invalid bounds.');
+            }
+
+            if (ed.type === 'matrix') {
+                const { rows, cols, data: cells } = ed;
+                if (!Number.isSafeInteger(rows) || !Number.isSafeInteger(cols) ||
+                    rows < 0 || cols < 0 || rows > 200 || cols > 200 || rows * cols > 10000 ||
+                    ((rows === 0) !== (cols === 0)) ||
+                    !Array.isArray(cells) || cells.length !== rows ||
+                    cells.some(row => !Array.isArray(row) || row.length !== cols)) {
+                    throw new TypeError('Matrix element has invalid dimensions or cell data.');
+                }
+            } else if (ed.type === 'queue' || ed.type === 'stack') {
+                if (!Array.isArray(ed.items) || ed.items.length > 10000) {
+                    throw new TypeError('Array element has invalid or oversized item data.');
+                }
+            } else if (ed.type === 'graph') {
+                if (!Array.isArray(ed.graphNodes) || ed.graphNodes.length > 500 ||
+                    !Array.isArray(ed.edges) || ed.edges.length > 100000) {
+                    throw new TypeError('Graph element has invalid or oversized node/edge data.');
+                }
+                const nodeIds = new Set();
+                for (const node of ed.graphNodes) {
+                    if (!node || (typeof node.id !== 'string' && typeof node.id !== 'number') ||
+                        !Number.isFinite(node.x) || !Number.isFinite(node.y) || nodeIds.has(String(node.id))) {
+                        throw new TypeError('Graph element contains an invalid node.');
+                    }
+                    nodeIds.add(String(node.id));
+                }
+                for (const edge of ed.edges) {
+                    if (!edge || !nodeIds.has(String(edge.u)) || !nodeIds.has(String(edge.v))) {
+                        throw new TypeError('Graph element contains an edge with an unknown endpoint.');
+                    }
+                }
+            } else if (ed.type === 'tree' &&
+                (typeof ed.inputText !== 'string' || ed.inputText.length > 1000000)) {
+                throw new TypeError('Tree element has invalid or oversized source data.');
+            }
+
+            const Cls = TYPE_MAP[ed.type];
+            const el = Cls.fromData ? Cls.fromData(ed) : new Cls();
+            el.deserialize(ed);
+            importedElements.push(el);
+        }
+
+        const camera = data.camera;
+        if (camera != null && (typeof camera !== 'object' ||
+            ![camera.x, camera.y, camera.zoom].every(Number.isFinite) || camera.zoom <= 0)) {
+            throw new TypeError('Whiteboard file contains invalid camera settings.');
+        }
+
+        app.elements = importedElements;
+        if (camera) {
+            app.camera.x = camera.x;
+            app.camera.y = camera.y;
+            app.camera.zoom = camera.zoom;
+        }
+        app.history?.clear();
+        app.selectionManager.clear();
+        app.renderer.markDirty();
+    }
+
     static exportPNG(app) {
         const visibleElements = app.elements.filter(el => !el.hidden);
         if (visibleElements.length === 0) return;
@@ -88,7 +147,7 @@ export class Serializer {
         // Calculate bounding box of all elements
         let minX = Infinity, minY = Infinity, maxX = -Infinity, maxY = -Infinity;
         for (const el of visibleElements) {
-            const b = el.getBounds();
+            const b = el.getRotatedBounds ? el.getRotatedBounds() : el.getBounds();
             minX = Math.min(minX, b.x);
             minY = Math.min(minY, b.y);
             maxX = Math.max(maxX, b.x + b.w);

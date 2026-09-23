@@ -16,6 +16,11 @@ export class History {
         this.redoStack = [];
     }
 
+    clear() {
+        this.undoStack.length = 0;
+        this.redoStack.length = 0;
+    }
+
     undo() {
         if (this.undoStack.length === 0) return;
         const cmd = this.undoStack.pop();
@@ -77,19 +82,24 @@ export class History {
 
     /** Helper: create a delete command */
     pushDelete(app, elements) {
-        const copies = elements.map(el => ({ el, idx: app.elements.indexOf(el) }));
+        const copies = elements
+            .map(el => ({ el, idx: app.elements.indexOf(el) }))
+            .filter(copy => copy.idx >= 0)
+            .sort((a, b) => a.idx - b.idx);
         this.push({
             description: 'Delete',
             undo() {
                 for (const c of copies) {
                     app.elements.splice(c.idx, 0, c.el);
                 }
+                app.layerManager._reindex();
             },
             redo() {
                 for (const c of copies) {
                     const idx = app.elements.indexOf(c.el);
                     if (idx >= 0) app.elements.splice(idx, 1);
                 }
+                app.layerManager._reindex();
             }
         });
     }

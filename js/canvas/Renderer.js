@@ -161,8 +161,7 @@ export class Renderer {
         // Bounding box
         ctx.save();
         if (el.rotation) {
-            const cx = bounds.x + bounds.w / 2;
-            const cy = bounds.y + bounds.h / 2;
+            const { x: cx, y: cy } = el.getRotationCenter();
             ctx.translate(cx, cy);
             ctx.rotate(el.rotation);
             ctx.translate(-cx, -cy);

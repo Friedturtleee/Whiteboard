@@ -70,7 +70,7 @@ export class SelectionManager {
         if (!additive) this.selectedElements = [];
         for (const el of this.app.elements) {
             if (el.hidden || el.locked) continue;
-            const b = el.getBounds();
+            const b = el.getRotatedBounds ? el.getRotatedBounds() : el.getBounds();
             if (HitTest.rectsIntersect(rb, b)) {
                 if (!this.selectedElements.includes(el)) {
                     this.selectedElements.push(el);
@@ -86,7 +86,7 @@ export class SelectionManager {
         if (this.selectedElements.length === 0) return null;
         let minX = Infinity, minY = Infinity, maxX = -Infinity, maxY = -Infinity;
         for (const el of this.selectedElements) {
-            const b = el.getBounds();
+            const b = el.getRotatedBounds ? el.getRotatedBounds() : el.getBounds();
             minX = Math.min(minX, b.x);
             minY = Math.min(minY, b.y);
             maxX = Math.max(maxX, b.x + b.w);
@@ -118,6 +118,7 @@ export class SelectionManager {
             }
         }
         this.selectedElements = [];
+        this.app.layerManager._reindex();
         this.app.renderer.markDirty();
         return removed;
     }

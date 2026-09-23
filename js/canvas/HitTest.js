@@ -36,17 +36,8 @@ export class HitTest {
         if (!bounds) return null;
         const tol = 6 / camera.zoom;
 
-        // Transform point into element local space if rotated
-        let lx = wx, ly = wy;
-        if (el.rotation) {
-            const cx = bounds.x + bounds.w / 2;
-            const cy = bounds.y + bounds.h / 2;
-            const cos = Math.cos(-el.rotation);
-            const sin = Math.sin(-el.rotation);
-            const dx = wx - cx, dy = wy - cy;
-            lx = cx + dx * cos - dy * sin;
-            ly = cy + dx * sin + dy * cos;
-        }
+        const point = el.toLocalPoint(wx, wy);
+        const lx = point.x, ly = point.y;
 
         // Rotation handle
         const rcx = bounds.x + bounds.w / 2;

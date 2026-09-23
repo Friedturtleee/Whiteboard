@@ -2,13 +2,14 @@
  * MatrixElement — 2D matrix visualization for competitive programming.
  */
 import { Element } from '../core/Element.js';
+import { splitDataTokens } from '../core/DataTokens.js';
 
 const EMPTY_CELL = '\u3000';
-const EMPTY_TOKEN = '__WHITEBOARD_EMPTY__';
 const isEmptyCell = value => value == null || value === '' || value === EMPTY_CELL;
 const MAX_MATRIX_ROWS = 200;
 const MAX_MATRIX_COLS = 200;
 const MAX_MATRIX_CELLS = 10000;
+const MAX_MATRIX_INPUT_LENGTH = 1000000;
 
 function remapGridKeys(keys, axis, at, action) {
     const next = new Set();
@@ -168,6 +169,9 @@ export class MatrixElement extends Element {
 
     setFromText(text) {
         const rawText = String(text ?? '');
+        if (rawText.length > MAX_MATRIX_INPUT_LENGTH) {
+            return '矩陣輸入不可超過 1 MB。';
+        }
         // Support dimension format: "3*5" or "3x5" or "3 * 5" → creates empty matrix
         const dimMatch = rawText.trim().match(/^(\d+)\s*[*xX×]\s*(\d+)$/);
         if (dimMatch) {
@@ -216,17 +220,10 @@ export class MatrixElement extends Element {
         let cols = 0;
         const data = [];
         for (let r = 0; r < lines.length; r++) {
-            // Protect the placeholder before splitting
-            const line = lines[r]
-                .replace(/\u3000/g, ' ' + EMPTY_TOKEN + ' ')
-                .replace(/^[ \t]+|[ \t]+$/g, '');
-            let vals = line.split(/[ \t,]+/).filter(Boolean).map(v => {
-                if (v === EMPTY_TOKEN) return '';
-                return v.trim();
-            });
+            let vals = splitDataTokens(lines[r]);
             // CP char grid detection (e.g. #.#.)
             if (vals.length === 1 && vals[0].length > 1 &&
-                !vals[0].includes(EMPTY_TOKEN) && !/^\d+$/.test(vals[0])) {
+                !/^\d+$/.test(vals[0])) {
                 vals = vals[0].split('');
             }
             if (vals.length > MAX_MATRIX_COLS) {
@@ -342,9 +339,10 @@ export class MatrixElement extends Element {
      * Hit test: returns { row, col } if (wx, wy) is inside a cell, or null.
      */
     hitTestCell(wx, wy) {
+        const point = this.toLocalPoint(wx, wy);
         const pad = 10;
-        const localX = wx - this.x - pad;
-        const localY = wy - this.y - pad;
+        const localX = point.x - this.x - pad;
+        const localY = point.y - this.y - pad;
         if (localX < 0 || localY < 0) return null;
         const col = Math.floor(localX / this.cellSize);
         const row = Math.floor(localY / this.cellSize);

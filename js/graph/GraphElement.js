@@ -123,16 +123,17 @@ export class GraphElement extends Element {
     }
 
     containsPoint(wx, wy, camera) {
+        const point = this.toLocalPoint(wx, wy);
         // Check node hit first
         if (this.nodes.size > 0) {
-            const hitNode = GraphRenderer.hitTestNode(this.nodes, wx, wy, {
+            const hitNode = GraphRenderer.hitTestNode(this.nodes, point.x, point.y, {
                 nodeRadius: this.nodeRadius,
                 offsetX: this.x + 20,
                 offsetY: this.y + 20
             });
             if (hitNode) return true;
 
-            const hitEdge = GraphRenderer.hitTestEdge(this.nodes, this.edges, wx, wy, {
+            const hitEdge = GraphRenderer.hitTestEdge(this.nodes, this.edges, point.x, point.y, {
                 nodeRadius: this.nodeRadius,
                 directed: this.directed,
                 offsetX: this.x + 20,
@@ -145,7 +146,8 @@ export class GraphElement extends Element {
     }
 
     hitTestNode(wx, wy) {
-        return GraphRenderer.hitTestNode(this.nodes, wx, wy, {
+        const point = this.toLocalPoint(wx, wy);
+        return GraphRenderer.hitTestNode(this.nodes, point.x, point.y, {
             nodeRadius: this.nodeRadius,
             offsetX: this.x + 20,
             offsetY: this.y + 20
@@ -153,7 +155,8 @@ export class GraphElement extends Element {
     }
 
     hitTestEdge(wx, wy) {
-        return GraphRenderer.hitTestEdge(this.nodes, this.edges, wx, wy, {
+        const point = this.toLocalPoint(wx, wy);
+        return GraphRenderer.hitTestEdge(this.nodes, this.edges, point.x, point.y, {
             nodeRadius: this.nodeRadius,
             directed: this.directed,
             offsetX: this.x + 20,
@@ -169,10 +172,11 @@ export class GraphElement extends Element {
         if (this.nodes.size === 0) return super.getConnectionPorts();
         const ports = [];
         for (const [id, node] of this.nodes) {
+            const point = this.toWorldPoint(this.x + 20 + node.x, this.y + 20 + node.y);
             ports.push({
                 id: `node_${id}`,
-                x: this.x + 20 + node.x,
-                y: this.y + 20 + node.y
+                x: point.x,
+                y: point.y
             });
         }
         return ports;

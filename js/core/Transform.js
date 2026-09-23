@@ -49,8 +49,7 @@ export class Transform {
 
     startRotate(wx, wy, el) {
         this.mode = 'rotate';
-        const b = el.getBounds();
-        this.rotCenter = { x: b.x + b.w / 2, y: b.y + b.h / 2 };
+        this.rotCenter = el.getRotationCenter();
         this.startRotation = el.rotation;
         this.startAngle = Math.atan2(wy - this.rotCenter.y, wx - this.rotCenter.x);
         this.targetElement = el;

@@ -29,6 +29,42 @@ export class Element {
         return { x: this.x, y: this.y, w: this.width, h: this.height };
     }
 
+    getRotationCenter() {
+        return { x: this.x + this.width / 2, y: this.y + this.height / 2 };
+    }
+
+    toLocalPoint(wx, wy) {
+        if (!this.rotation) return { x: wx, y: wy };
+        const { x: cx, y: cy } = this.getRotationCenter();
+        const cos = Math.cos(-this.rotation), sin = Math.sin(-this.rotation);
+        const dx = wx - cx, dy = wy - cy;
+        return { x: cx + dx * cos - dy * sin, y: cy + dx * sin + dy * cos };
+    }
+
+    toWorldPoint(lx, ly) {
+        if (!this.rotation) return { x: lx, y: ly };
+        const { x: cx, y: cy } = this.getRotationCenter();
+        const cos = Math.cos(this.rotation), sin = Math.sin(this.rotation);
+        const dx = lx - cx, dy = ly - cy;
+        return { x: cx + dx * cos - dy * sin, y: cy + dx * sin + dy * cos };
+    }
+
+    getRotatedBounds() {
+        const bounds = this.getBounds();
+        if (!this.rotation) return bounds;
+        const corners = [
+            [bounds.x, bounds.y],
+            [bounds.x + bounds.w, bounds.y],
+            [bounds.x, bounds.y + bounds.h],
+            [bounds.x + bounds.w, bounds.y + bounds.h]
+        ].map(([x, y]) => this.toWorldPoint(x, y));
+        const xs = corners.map(point => point.x);
+        const ys = corners.map(point => point.y);
+        const minX = Math.min(...xs), maxX = Math.max(...xs);
+        const minY = Math.min(...ys), maxY = Math.max(...ys);
+        return { x: minX, y: minY, w: maxX - minX, h: maxY - minY };
+    }
+
     /**
      * Returns connection port positions in world coords, for line/arrow snapping.
      * Each port: { id, x, y }
@@ -43,24 +79,15 @@ export class Element {
             { id: 'right',  x: b.x + b.w,  y: cy          },
             { id: 'bottom', x: cx,          y: b.y + b.h   },
             { id: 'left',   x: b.x,         y: cy          },
-        ];
+        ].map(port => ({ ...port, ...this.toWorldPoint(port.x, port.y) }));
     }
 
     /** Point-in-element test (world coords). Override for non-rect shapes. */
     containsPoint(wx, wy, camera) {
         const b = this.getBounds();
-        // Transform point into local space if rotated
-        let lx = wx, ly = wy;
-        if (this.rotation) {
-            const cx = b.x + b.w / 2;
-            const cy = b.y + b.h / 2;
-            const cos = Math.cos(-this.rotation);
-            const sin = Math.sin(-this.rotation);
-            const dx = wx - cx, dy = wy - cy;
-            lx = cx + dx * cos - dy * sin;
-            ly = cy + dx * sin + dy * cos;
-        }
-        return lx >= b.x && lx <= b.x + b.w && ly >= b.y && ly <= b.y + b.h;
+        const point = this.toLocalPoint(wx, wy);
+        return point.x >= b.x && point.x <= b.x + b.w &&
+            point.y >= b.y && point.y <= b.y + b.h;
     }
 
     /** Compute the effective color with saturation applied */

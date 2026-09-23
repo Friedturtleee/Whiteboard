@@ -17,6 +17,10 @@
  * Format C (value list → auto-build BST/AVL/RBTree):
  *   val1 val2 val3 ...
  */
+export const MAX_TREE_NODES = 2000;
+export const MAX_TREE_INPUT_LENGTH = 1000000;
+const MAX_TREE_EDGE_ROWS = MAX_TREE_NODES * 2;
+
 export class TreeParser {
     /**
      * Auto-detect input format and parse accordingly.
@@ -25,6 +29,12 @@ export class TreeParser {
      * @returns {{ root, nodes, error, hasWeights, format }}
      */
     static autoDetectAndParse(text, treeType = 'tree') {
+        if (typeof text !== 'string') {
+            return { root: null, nodes: new Map(), error: '樹資料必須是文字。' };
+        }
+        if (text.length > MAX_TREE_INPUT_LENGTH) {
+            return { root: null, nodes: new Map(), error: '樹資料不可超過 1 MB。' };
+        }
         const lines = text.replace(/,/g, ' ').trim().split('\n').map(l => l.trim()).filter(l => l);
         if (lines.length === 0) return { root: null, nodes: new Map(), error: '輸入為空' };
 
@@ -83,8 +93,8 @@ export class TreeParser {
         if (!/^\d+$/.test(header) || !Number.isSafeInteger(n) || n <= 0) {
             return invalid('第一行應為正整數節點數 n。');
         }
-        if (n > 2000) {
-            return invalid('節點數不可超過 2000。');
+        if (n > MAX_TREE_NODES) {
+            return invalid('節點數不可超過 ' + MAX_TREE_NODES + '。');
         }
         if (lines.length !== n) {
             return invalid('節點數為 ' + n + ' 時，後續必須恰好提供 ' + (n - 1) + ' 條邊。');
@@ -185,6 +195,9 @@ export class TreeParser {
             root: null, nodes: new Map(), error, format: 'parent', hasWeights: false
         });
         if (n === 0) return invalid('父節點陣列不可為空。');
+        if (n > MAX_TREE_NODES) {
+            return invalid('節點數不可超過 ' + MAX_TREE_NODES + '。');
+        }
         const parents = lines.map(line => {
             const token = String(line).trim();
             if (!/^-?\d+$/.test(token)) return NaN;
@@ -279,10 +292,17 @@ export class TreeParser {
         const edges = [];
         const seenEdges = new Map();
         let hasWeights = false;
+        if (!Array.isArray(lines) || lines.length === 0) {
+            return invalid('至少需要一條有效的邊。');
+        }
+        if (lines.length > MAX_TREE_EDGE_ROWS) {
+            return invalid('樹的邊資料不可超過 ' + MAX_TREE_EDGE_ROWS + ' 行。');
+        }
 
         const getNode = (val) => {
             const key = String(val);
             if (!nodes.has(key)) {
+                if (nodes.size >= MAX_TREE_NODES) return null;
                 nodes.set(key, { value: key, children: [], parent: null, x: 0, y: 0, meta: {} });
             }
             return nodes.get(key);
@@ -315,9 +335,14 @@ export class TreeParser {
                 }
                 continue;
             }
+            const newNodeCount = Number(!nodes.has(u)) + Number(!nodes.has(v));
+            if (nodes.size + newNodeCount > MAX_TREE_NODES) {
+                return invalid('樹的節點不可超過 ' + MAX_TREE_NODES + ' 個。');
+            }
             seenEdges.set(edgeKey, w);
-            getNode(u);
-            getNode(v);
+            if (!getNode(u) || !getNode(v)) {
+                return invalid('樹的節點不可超過 ' + MAX_TREE_NODES + ' 個。');
+            }
             edges.push({ u, v, w });
         }
 
@@ -339,8 +364,9 @@ export class TreeParser {
         const visited = new Set([rootVal]);
         const queue = [rootVal];
 
-        while (queue.length > 0) {
-            const cur = queue.shift();
+        let queueIndex = 0;
+        while (queueIndex < queue.length) {
+            const cur = queue[queueIndex++];
             const curNode = nodes.get(cur);
             for (const { to, weight } of adj.get(cur)) {
                 if (visited.has(to)) continue;
@@ -357,8 +383,10 @@ export class TreeParser {
         if (disconnected > 0) {
             return invalid('有 ' + disconnected + ' 個節點無法到達。');
         }
-        const error = disconnected > 0 ? `有 ${disconnected} 個節點無法到達` : null;
-        return { root, nodes, error, hasWeights, format: 'edge' };
+        if (edges.length !== nodes.size - 1) {
+            return invalid('邊列表包含循環，無法形成樹。');
+        }
+        return { root, nodes, error: null, hasWeights, format: 'edge' };
     }
 
     /**

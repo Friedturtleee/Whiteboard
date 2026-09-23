@@ -2,9 +2,9 @@
  * QueueElement — FIFO queue visualization.
  */
 import { Element } from '../core/Element.js';
+import { splitDataTokens } from '../core/DataTokens.js';
 
 const EMPTY_CELL = '\u3000';
-const EMPTY_TOKEN = '__WHITEBOARD_EMPTY__';
 const isEmptyCell = value => value == null || value === '' || value === EMPTY_CELL;
 const MAX_ITEMS = 10000;
 
@@ -54,11 +54,7 @@ export class QueueElement extends Element {
     setFromText(text) {
         const rawText = String(text ?? '');
         if (rawText.length > 1000000) return '最多輸入 10000 個元素。';
-        const textProcessed = rawText.replace(/\r\n?/g, '\n').replace(/\u3000/g, ' ' + EMPTY_TOKEN + ' ');
-        const vals = textProcessed.split(/[ \t,\n]+/).filter(Boolean).map(v => {
-            if (v === EMPTY_TOKEN) return '';
-            return v;
-        });
+        const vals = splitDataTokens(rawText, { multiline: true });
         if (vals.length > MAX_ITEMS) return '最多輸入 10000 個元素。';
         this.inputText = rawText;
         this.items = vals;
@@ -197,11 +193,12 @@ export class QueueElement extends Element {
     }
 
     hitTestItem(wx, wy) {
+        const point = this.toLocalPoint(wx, wy);
         const slots = Math.max(1, Math.min(this.items.length, this.maxDisplay));
         for (let i = 0; i < slots; i++) {
-            if (wx >= this.x + 8 + i * this.cellWidth &&
-                wx <= this.x + 8 + (i + 1) * this.cellWidth &&
-                wy >= this.y + 8 && wy <= this.y + this.height - 8) {
+            if (point.x >= this.x + 8 + i * this.cellWidth &&
+                point.x <= this.x + 8 + (i + 1) * this.cellWidth &&
+                point.y >= this.y + 8 && point.y <= this.y + this.height - 8) {
                 return i;
             }
         }
