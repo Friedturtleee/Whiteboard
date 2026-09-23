@@ -89,6 +89,9 @@ export class MatrixElement extends Element {
      * Called when element is resized via handle. Recalculates cellSize from new dimensions.
      */
     onResize(newW, newH) {
+        // An empty matrix has no cell grid to scale. Keep its cell size stable
+        // while allowing the outer placeholder bounds to be resized.
+        if (this.rows <= 0 || this.cols <= 0) return;
         const newCellW = Math.floor((newW - 20) / this.cols);
         const newCellH = Math.floor((newH - 20) / this.rows);
         this.cellSize = Math.max(16, Math.min(newCellW, newCellH));
@@ -339,6 +342,9 @@ export class MatrixElement extends Element {
      * Hit test: returns { row, col } if (wx, wy) is inside a cell, or null.
      */
     hitTestCell(wx, wy) {
+        if (this.rows <= 0 || this.cols <= 0 || !Number.isFinite(this.cellSize) || this.cellSize <= 0) {
+            return null;
+        }
         const point = this.toLocalPoint(wx, wy);
         const pad = 10;
         const localX = point.x - this.x - pad;

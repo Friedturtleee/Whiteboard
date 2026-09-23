@@ -515,18 +515,16 @@ export class TreeParser {
             }
             updateHeight(node);
             const bf = node.meta.bf;
-            // Left Left
-            if (bf > 1 && Number(val) < Number(node.children[0].value)) return rotateRight(node);
-            // Right Right
-            if (bf < -1 && Number(val) > Number(node.children[1].value)) return rotateLeft(node);
-            // Left Right
-            if (bf > 1 && Number(val) > Number(node.children[0].value)) {
-                node.children[0] = rotateLeft(node.children[0]);
+            if (bf > 1) {
+                const left = node.children[0];
+                if (height(left.children[0]) >= height(left.children[1])) return rotateRight(node);
+                node.children[0] = rotateLeft(left);
                 return rotateRight(node);
             }
-            // Right Left
-            if (bf < -1 && Number(val) < Number(node.children[1].value)) {
-                node.children[1] = rotateRight(node.children[1]);
+            if (bf < -1) {
+                const right = node.children[1];
+                if (height(right.children[1]) >= height(right.children[0])) return rotateLeft(node);
+                node.children[1] = rotateRight(right);
                 return rotateLeft(node);
             }
             return node;

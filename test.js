@@ -119,8 +119,10 @@ try {
         const { MarkdownElement } = await import('/js/elements/MarkdownElement.js');
         const preview = document.createElement('div');
         preview.innerHTML = MarkdownElement.renderToHTML(
-            '<img src=x onerror="window.__whiteboardXss = true"><script>window.__whiteboardXss = true</script>\n\n' +
-            '[unsafe](javascript:alert(1)) ![unsafe image](javascript:alert(1)) ' +
+            '<img src=x onerror="window.__whiteboardXss = true"><script>window.__whiteboardXss = true</script>' +
+            '<a href="javascript:alert(1)">raw link</a>\n\n' +
+            '[unsafe](javascript:alert(1)) [entity](javascript&#58;alert(1)) ' +
+            '![unsafe image](javascript:alert(1)) ' +
             '[safe](https://example.com) **bold** $x$'
         );
         return {

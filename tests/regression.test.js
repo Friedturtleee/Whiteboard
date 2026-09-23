@@ -3,6 +3,7 @@ import assert from 'node:assert/strict';
 import { QueueElement } from '../js/elements/QueueElement.js';
 import { StackElement } from '../js/elements/StackElement.js';
 import { MatrixElement } from '../js/elements/MatrixElement.js';
+import { TextElement } from '../js/elements/TextElement.js';
 import { Serializer } from '../js/core/Serializer.js';
 import { History } from '../js/core/History.js';
 import { GraphElement } from '../js/graph/GraphElement.js';
@@ -102,6 +103,20 @@ test('tree edge parser rejects cycles and accepts a connected acyclic tree', () 
     assert.equal(valid.nodes.size, 4);
 });
 
+test('text hydration normalizes legacy fonts without mutating saved data', () => {
+    const data = {
+        type: 'text', x: 10, y: 20, width: 100, height: 24,
+        text: 'legacy text', fontFamily: 'Segoe UI', isBold: true
+    };
+    const element = TextElement.fromData(data);
+    assert.equal(element.text, 'Text');
+    element.deserialize(data);
+    assert.equal(element.text, 'legacy text');
+    assert.equal(element.fontFamily, "'Zen Maru Gothic', sans-serif");
+    assert.equal(element.isBold, true);
+    assert.equal(data.fontFamily, 'Segoe UI');
+});
+
 test('parallel undirected graph edges render on distinct lanes', () => {
     const paths = [];
     let path = null;
@@ -138,8 +153,14 @@ test('AVL and red-black builders maintain ordering and balancing invariants', ()
     const sequences = [
         Array.from({ length: 80 }, (_, i) => i),
         Array.from({ length: 80 }, (_, i) => 79 - i),
-        Array.from({ length: 80 }, (_, i) => (i * 37) % 80)
+        Array.from({ length: 80 }, (_, i) => (i * 37) % 80),
+        [5, 5, 5, 5, 5, 4, 6, 4, 6]
     ];
+    let seed = 0x51A7;
+    sequences.push(Array.from({ length: 160 }, () => {
+        seed = (seed * 1664525 + 1013904223) >>> 0;
+        return seed % 41 - 20;
+    }));
 
     for (const sequence of sequences) {
         const values = sequence.map(String);
@@ -221,6 +242,18 @@ test('matrix dimensions reject invalid sizes without mutating existing cells', (
     assert.deepEqual(matrix.data, previous);
     assert.match(matrix.setFromText('x'.repeat(1000001)), /1 MB/);
     assert.deepEqual(matrix.data, previous);
+});
+
+test('resizing an empty matrix keeps finite cell geometry', () => {
+    const matrix = new MatrixElement();
+    assert.equal(matrix.setFromText(''), null);
+    matrix.width = 120;
+    matrix.height = 90;
+    matrix.onResize(120, 90);
+    assert.equal(matrix.cellSize, 42);
+    assert.equal(matrix.width, 120);
+    assert.equal(matrix.height, 90);
+    assert.equal(matrix.hitTestCell(30, 30), null);
 });
 
 test('failed JSON imports leave the current board and camera unchanged', () => {
