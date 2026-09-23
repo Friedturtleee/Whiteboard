@@ -113,16 +113,13 @@ export class TextElement extends Element {
     }
 
     static fromData(data) {
-        const el = new TextElement(data.x, data.y);
-        if (data.fontFamily && data.fontFamily.includes('Segoe UI')) {
-            data.fontFamily = "'Zen Maru Gothic', sans-serif";
-        }
-        el.deserialize(data);
-        el.isBold = !!data.isBold;
-        el.isItalic = !!data.isItalic;
-        el.isUnderline = !!data.isUnderline;
-        el._baseWidth = data.baseWidth;
-        el._baseHeight = data.baseHeight;
-        return el;
+        return new TextElement(data.x, data.y);
+    }
+
+    deserialize(data) {
+        const normalized = data.fontFamily?.includes('Segoe UI')
+            ? { ...data, fontFamily: "'Zen Maru Gothic', sans-serif" }
+            : data;
+        return super.deserialize(normalized);
     }
 }

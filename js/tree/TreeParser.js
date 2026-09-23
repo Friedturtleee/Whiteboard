@@ -21,6 +21,13 @@ export const MAX_TREE_NODES = 2000;
 export const MAX_TREE_INPUT_LENGTH = 1000000;
 const MAX_TREE_EDGE_ROWS = MAX_TREE_NODES * 2;
 
+function hasOnlyFiniteNumericValues(values) {
+    return Array.isArray(values) && values.every(value =>
+        (typeof value === 'number' || typeof value === 'string') &&
+        String(value).trim() !== '' && Number.isFinite(Number(value))
+    );
+}
+
 export class TreeParser {
     /**
      * Auto-detect input format and parse accordingly.
@@ -416,6 +423,9 @@ export class TreeParser {
      */
     static buildBST(values) {
         if (values.length === 0) return null;
+        if (!hasOnlyFiniteNumericValues(values)) {
+            return { error: 'Tree values must be finite numbers.' };
+        }
 
         const createNode = (val) => ({ value: val, children: [], parent: null, x: 0, y: 0, meta: {} });
         const root = createNode(values[0]);
@@ -424,8 +434,8 @@ export class TreeParser {
             const node = createNode(val);
             let cur = root;
             while (true) {
-                const numVal = parseFloat(val);
-                const numCur = parseFloat(cur.value);
+                const numVal = Number(val);
+                const numCur = Number(cur.value);
                 const goLeft = numVal < numCur;
                 const idx = goLeft ? 0 : 1;
                 // Ensure children array has slots
@@ -453,6 +463,9 @@ export class TreeParser {
      */
     static buildAVL(values) {
         if (values.length === 0) return null;
+        if (!hasOnlyFiniteNumericValues(values)) {
+            return { error: 'Tree values must be finite numbers.' };
+        }
 
         const createNode = (val) => ({
             value: val, children: [null, null], parent: null,
@@ -491,8 +504,8 @@ export class TreeParser {
 
         const insert = (node, val) => {
             if (!node) return createNode(val);
-            const numVal = parseFloat(val);
-            const numNode = parseFloat(node.value);
+            const numVal = Number(val);
+            const numNode = Number(node.value);
             if (numVal < numNode) {
                 node.children[0] = insert(node.children[0], val);
                 node.children[0].parent = node;
@@ -503,16 +516,16 @@ export class TreeParser {
             updateHeight(node);
             const bf = node.meta.bf;
             // Left Left
-            if (bf > 1 && parseFloat(val) < parseFloat(node.children[0].value)) return rotateRight(node);
+            if (bf > 1 && Number(val) < Number(node.children[0].value)) return rotateRight(node);
             // Right Right
-            if (bf < -1 && parseFloat(val) > parseFloat(node.children[1].value)) return rotateLeft(node);
+            if (bf < -1 && Number(val) > Number(node.children[1].value)) return rotateLeft(node);
             // Left Right
-            if (bf > 1 && parseFloat(val) > parseFloat(node.children[0].value)) {
+            if (bf > 1 && Number(val) > Number(node.children[0].value)) {
                 node.children[0] = rotateLeft(node.children[0]);
                 return rotateRight(node);
             }
             // Right Left
-            if (bf < -1 && parseFloat(val) < parseFloat(node.children[1].value)) {
+            if (bf < -1 && Number(val) < Number(node.children[1].value)) {
                 node.children[1] = rotateRight(node.children[1]);
                 return rotateLeft(node);
             }
@@ -533,6 +546,9 @@ export class TreeParser {
      */
     static buildRBTree(values) {
         if (values.length === 0) return null;
+        if (!hasOnlyFiniteNumericValues(values)) {
+            return { error: 'Tree values must be finite numbers.' };
+        }
 
         const RED = 'red', BLACK = 'black';
         const NIL = { value: null, children: [null, null], parent: null, meta: { color: BLACK } };
@@ -616,11 +632,11 @@ export class TreeParser {
             let y = null, x = root;
             while (x !== NIL && x !== null) {
                 y = x;
-                x = parseFloat(val) < parseFloat(x.value) ? x.children[0] : x.children[1];
+                x = Number(val) < Number(x.value) ? x.children[0] : x.children[1];
             }
             z.parent = y;
             if (!y) root = z;
-            else if (parseFloat(val) < parseFloat(y.value)) y.children[0] = z;
+            else if (Number(val) < Number(y.value)) y.children[0] = z;
             else y.children[1] = z;
             z.children[0] = NIL;
             z.children[1] = NIL;

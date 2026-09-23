@@ -114,9 +114,7 @@ export class PenElement extends Element {
     }
 
     static fromData(data) {
-        const el = new PenElement(data.x ?? 0, data.y ?? 0);
-        el.deserialize(data);
-        return el;
+        return new PenElement(data.x ?? 0, data.y ?? 0);
     }
 }
 

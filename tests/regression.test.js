@@ -101,6 +101,68 @@ test('tree edge parser rejects cycles and accepts a connected acyclic tree', () 
     assert.equal(valid.nodes.size, 4);
 });
 
+test('BST, AVL, and red-black builders reject values that cannot be ordered numerically', () => {
+    for (const build of [TreeParser.buildBST, TreeParser.buildAVL, TreeParser.buildRBTree]) {
+        assert.match(build(['1', 'not-a-number']).error, /finite numbers/);
+        assert.match(build(['1', 'Infinity']).error, /finite numbers/);
+    }
+});
+
+test('AVL and red-black builders maintain ordering and balancing invariants', () => {
+    const sequences = [
+        Array.from({ length: 80 }, (_, i) => i),
+        Array.from({ length: 80 }, (_, i) => 79 - i),
+        Array.from({ length: 80 }, (_, i) => (i * 37) % 80)
+    ];
+
+    for (const sequence of sequences) {
+        const values = sequence.map(String);
+        for (const build of [TreeParser.buildAVL, TreeParser.buildRBTree]) {
+            const { root } = build(values);
+            assert.ok(root);
+            assert.equal(root.parent, null);
+            const inOrder = [];
+            const visitOrder = node => {
+                if (!node) return;
+                visitOrder(node.children[0]);
+                inOrder.push(Number(node.value));
+                visitOrder(node.children[1]);
+            };
+            visitOrder(root);
+            assert.deepEqual(inOrder, [...sequence].sort((a, b) => a - b));
+        }
+
+        const { root: avlRoot } = TreeParser.buildAVL(values);
+        const checkAvl = node => {
+            if (!node) return 0;
+            const leftHeight = checkAvl(node.children[0]);
+            const rightHeight = checkAvl(node.children[1]);
+            assert.ok(Math.abs(leftHeight - rightHeight) <= 1);
+            assert.equal(node.meta.height, 1 + Math.max(leftHeight, rightHeight));
+            return node.meta.height;
+        };
+        checkAvl(avlRoot);
+
+        const { root: rbRoot } = TreeParser.buildRBTree(values);
+        assert.equal(rbRoot.meta.color, 'black');
+        const checkRedBlack = node => {
+            if (!node) return 1;
+            if (node.meta.color === 'red') {
+                assert.notEqual(node.children[0]?.meta.color, 'red');
+                assert.notEqual(node.children[1]?.meta.color, 'red');
+            }
+            for (const child of node.children) {
+                if (child) assert.equal(child.parent, node);
+            }
+            const leftBlackHeight = checkRedBlack(node.children[0]);
+            const rightBlackHeight = checkRedBlack(node.children[1]);
+            assert.equal(leftBlackHeight, rightBlackHeight);
+            return leftBlackHeight + Number(node.meta.color === 'black');
+        };
+        checkRedBlack(rbRoot);
+    }
+});
+
 test('tree parsing limits input size and preserves the previous tree on invalid edits', () => {
     const tree = new TreeElement();
     assert.equal(tree.buildFromText('3\n1 2\n1 3', 'rooted'), null);

@@ -115,6 +115,58 @@ try {
         return elements.map(element => element.type);
     });
     if (rendered.length !== 10) throw new Error('Not all representative element types rendered.');
+    const markdownSecurity = await page.evaluate(async () => {
+        const { MarkdownElement } = await import('/js/elements/MarkdownElement.js');
+        const preview = document.createElement('div');
+        preview.innerHTML = MarkdownElement.renderToHTML(
+            '<img src=x onerror="window.__whiteboardXss = true"><script>window.__whiteboardXss = true</script>\n\n' +
+            '[unsafe](javascript:alert(1)) ![unsafe image](javascript:alert(1)) ' +
+            '[safe](https://example.com) **bold** $x$'
+        );
+        return {
+            imageCount: preview.querySelectorAll('img').length,
+            scriptCount: preview.querySelectorAll('script').length,
+            unsafeLinks: preview.querySelectorAll('a[href^="javascript:"]').length,
+            scriptExecuted: window.__whiteboardXss === true,
+            safeLink: preview.querySelector('a[href="https://example.com"]') !== null,
+            boldText: preview.querySelector('strong')?.textContent === 'bold',
+            formula: preview.querySelector('.katex') !== null
+        };
+    });
+    if (markdownSecurity.imageCount || markdownSecurity.scriptCount || markdownSecurity.unsafeLinks ||
+        markdownSecurity.scriptExecuted ||
+        !markdownSecurity.safeLink || !markdownSecurity.boldText || !markdownSecurity.formula) {
+        throw new Error('Markdown sanitization or safe formatting browser check failed: ' +
+            JSON.stringify(markdownSecurity));
+    }
+    const mermaidLoadCount = await page.evaluate(async () => {
+        const { Serializer } = await import('/js/core/Serializer.js');
+        const app = {
+            elements: [],
+            camera: { x: 0, y: 0, zoom: 1 },
+            history: { clear() {} },
+            selectionManager: { clear() {} },
+            renderer: { markDirty() {} }
+        };
+        const originalCreateObjectURL = URL.createObjectURL;
+        let loadCount = 0;
+        URL.createObjectURL = function (...args) {
+            loadCount++;
+            return originalCreateObjectURL.apply(this, args);
+        };
+        try {
+            Serializer.loadJSONData(app, {
+                elements: [{
+                    type: 'mermaid', x: 0, y: 0, width: 200, height: 200,
+                    svgString: '<svg xmlns="http://www.w3.org/2000/svg" width="20" height="20"></svg>'
+                }]
+            });
+            return loadCount;
+        } finally {
+            URL.createObjectURL = originalCreateObjectURL;
+        }
+    });
+    if (mermaidLoadCount !== 1) throw new Error('Imported Mermaid content was loaded more than once.');
     const historyRoundTrip = await page.evaluate(async () => {
         const [{ MatrixElement }, { QueueElement }] = await Promise.all([
             import('/js/elements/MatrixElement.js'),

@@ -66,6 +66,6 @@ export class MermaidElement extends Element {
     }
 
     static fromData(data) {
-        return new MermaidElement(data.x, data.y, '').deserialize(data);
+        return new MermaidElement(data.x, data.y);
     }
 }

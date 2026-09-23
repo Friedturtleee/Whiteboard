@@ -11,6 +11,22 @@
  */
 import { Element } from '../core/Element.js';
 
+function escapeHTML(value) {
+    return String(value).replace(/[&<>"']/g, char => ({
+        '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;'
+    })[char]);
+}
+
+function safeMarkdownURL(rawURL) {
+    if (rawURL == null) return null;
+    const url = String(rawURL ?? '').trim();
+    if (!url) return null;
+    const normalized = url.replace(/[\u0000-\u0020\u007f]/g, '');
+    const scheme = normalized.match(/^([a-z][a-z\d+.-]*):/i)?.[1]?.toLowerCase();
+    if (scheme && !['http', 'https', 'mailto', 'tel'].includes(scheme)) return null;
+    return url;
+}
+
 export class MarkdownElement extends Element {
     constructor(x = 0, y = 0, markdownText = '') {
         super('markdown', x, y, 320, 200);
@@ -46,9 +62,31 @@ export class MarkdownElement extends Element {
         // 3. Parse with marked
         let html;
         if (typeof marked !== 'undefined') {
-            html = marked.parse(processed, { breaks: true, gfm: true });
+            const renderer = new marked.Renderer();
+            renderer.html = token => escapeHTML(token.text ?? '');
+            renderer.link = function (token, titleArg, textArg) {
+                const { href, title, text, tokens } = typeof token === 'string'
+                    ? { href: token, title: titleArg, text: textArg }
+                    : (token || {});
+                const safeURL = safeMarkdownURL(href);
+                const label = Array.isArray(tokens) ? this.parser.parseInline(tokens) : String(text ?? '');
+                if (safeURL === null) return label;
+                const titleAttr = title ? ` title="${escapeHTML(title)}"` : '';
+                return `<a href="${escapeHTML(safeURL)}"${titleAttr}>${label}</a>`;
+            };
+            renderer.image = function (token, titleArg, textArg) {
+                const { href, title, text, tokens } = typeof token === 'string'
+                    ? { href: token, title: titleArg, text: textArg }
+                    : (token || {});
+                const safeURL = safeMarkdownURL(href);
+                const alt = text ?? (Array.isArray(tokens) ? this.parser.parseInline(tokens) : '');
+                if (safeURL === null) return escapeHTML(alt);
+                const titleAttr = title ? ` title="${escapeHTML(title)}"` : '';
+                return `<img src="${escapeHTML(safeURL)}" alt="${escapeHTML(alt)}"${titleAttr}>`;
+            };
+            html = marked.parse(processed, { breaks: true, gfm: true, renderer });
         } else {
-            html = `<pre style="white-space:pre-wrap">${processed.replace(/</g, '&lt;')}</pre>`;
+            html = `<pre style="white-space:pre-wrap">${escapeHTML(processed)}</pre>`;
         }
 
         // 4. Highlight code blocks
@@ -56,7 +94,7 @@ export class MarkdownElement extends Element {
 
         // 5. Restore KaTeX placeholders
         for (let i = 0; i < katexOutputs.length; i++) {
-            html = html.replace(`<span data-katex-ph="${i}"></span>`, katexOutputs[i]);
+            html = html.split(`\uE000KATEX_${i}\uE001`).join(katexOutputs[i]);
         }
 
         return html;
@@ -96,9 +134,9 @@ export class MarkdownElement extends Element {
             try {
                 const html = katex.renderToString(tex.trim(), opts(true));
                 katexOutputs.push(`<div class="md-katex-display">${html}</div>`);
-                return `<span data-katex-ph="${katexOutputs.length - 1}"></span>`;
+                return `\uE000KATEX_${katexOutputs.length - 1}\uE001`;
             } catch (e) {
-                return `<span class="katex-error">$$${tex}$$</span>`;
+                return `$$${tex}$$`;
             }
         });
 
@@ -107,9 +145,9 @@ export class MarkdownElement extends Element {
             try {
                 const html = katex.renderToString(tex.trim(), opts(false));
                 katexOutputs.push(html);
-                return `<span data-katex-ph="${katexOutputs.length - 1}"></span>`;
+                return `\uE000KATEX_${katexOutputs.length - 1}\uE001`;
             } catch (e) {
-                return `<span class="katex-error">$${tex}$</span>`;
+                return `$${tex}$`;
             }
         });
 
@@ -413,6 +451,6 @@ export class MarkdownElement extends Element {
     }
 
     static fromData(data) {
-        return new MarkdownElement(data.x, data.y, '').deserialize(data);
+        return new MarkdownElement(data.x, data.y);
     }
 }
