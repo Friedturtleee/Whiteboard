@@ -207,8 +207,15 @@ export class GraphElement extends Element {
         const origH = this._origResizeH;
         if (!origW || !origH || !this._origNodePos) return;
         // Interior area = element minus 20px padding on each side
-        const sx = Math.max(0.1, (newW - 40) / (origW - 40));
-        const sy = Math.max(0.1, (newH - 40) / (origH - 40));
+        const scaleAxis = (nextSize, originalSize) => {
+            if (!Number.isFinite(nextSize) || !Number.isFinite(originalSize) || originalSize <= 0) return 1;
+            const ratio = originalSize > 40
+                ? (nextSize - 40) / (originalSize - 40)
+                : nextSize / originalSize;
+            return Number.isFinite(ratio) ? Math.max(0.1, ratio) : 1;
+        };
+        const sx = scaleAxis(newW, origW);
+        const sy = scaleAxis(newH, origH);
         for (const [id, node] of this.nodes) {
             const orig = this._origNodePos.get(id);
             if (orig) {

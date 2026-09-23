@@ -369,3 +369,16 @@ test('rotated graph/tree node hit tests and connection ports use rendered positi
     const treePort = tree.getConnectionPorts().find(port => port.id === `node_${tree.root.value}`);
     assert.ok(Math.hypot(treePort.x - treeNode.x, treePort.y - treeNode.y) < 1e-8);
 });
+
+test('resizing a graph with minimal bounds keeps node coordinates finite', () => {
+    const graph = new GraphElement();
+    assert.equal(graph.buildFromText('2 1\n1 2'), null);
+    graph.width = 40;
+    graph.height = 40;
+    graph.onResizeStart();
+    graph.onResize(40, 40);
+    for (const node of graph.nodes.values()) {
+        assert.ok(Number.isFinite(node.x));
+        assert.ok(Number.isFinite(node.y));
+    }
+});
