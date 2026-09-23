@@ -67,7 +67,8 @@ try {
     const rendered = await page.evaluate(async () => {
         const [
             { ShapeElement }, { TextElement }, { MatrixElement }, { QueueElement },
-            { StackElement }, { TreeElement }, { GraphElement }
+            { StackElement }, { TreeElement }, { GraphElement }, { PenElement },
+            { MermaidElement }, { MarkdownElement }
         ] = await Promise.all([
             import('/js/elements/ShapeElement.js'),
             import('/js/elements/TextElement.js'),
@@ -75,7 +76,10 @@ try {
             import('/js/elements/QueueElement.js'),
             import('/js/elements/StackElement.js'),
             import('/js/tree/TreeElement.js'),
-            import('/js/graph/GraphElement.js')
+            import('/js/graph/GraphElement.js'),
+            import('/js/elements/PenElement.js'),
+            import('/js/elements/MermaidElement.js'),
+            import('/js/elements/MarkdownElement.js')
         ]);
         const shape = new ShapeElement('rectangle', 10, 10);
         shape.width = 80;
@@ -93,19 +97,24 @@ try {
         const graph = new GraphElement(600, 30);
         const graphError = graph.buildFromText('3 2\n1 2\n2 3');
         if (treeError || graphError) throw new Error(treeError || graphError);
+        const pen = new PenElement();
+        pen.addPoint(20, 340);
+        pen.addPoint(90, 370);
+        const mermaid = new MermaidElement(130, 330);
+        const markdown = new MarkdownElement(360, 330);
 
         const canvas = document.createElement('canvas');
         canvas.width = 1000;
         canvas.height = 600;
         const ctx = canvas.getContext('2d');
-        const elements = [shape, text, matrix, queue, stack, tree, graph];
+        const elements = [shape, text, matrix, queue, stack, tree, graph, pen, mermaid, markdown];
         for (const element of elements) {
             element.rotation = Math.PI / 18;
             element.draw(ctx, { zoom: 1 });
         }
         return elements.map(element => element.type);
     });
-    if (rendered.length !== 7) throw new Error('Not all representative element types rendered.');
+    if (rendered.length !== 10) throw new Error('Not all representative element types rendered.');
     const historyRoundTrip = await page.evaluate(async () => {
         const [{ MatrixElement }, { QueueElement }] = await Promise.all([
             import('/js/elements/MatrixElement.js'),
