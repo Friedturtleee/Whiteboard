@@ -7,6 +7,7 @@ import { TextElement } from '../js/elements/TextElement.js';
 import { PenElement } from '../js/elements/PenElement.js';
 import { Serializer } from '../js/core/Serializer.js';
 import { History } from '../js/core/History.js';
+import { SelectionManager } from '../js/core/SelectionManager.js';
 import { GraphElement } from '../js/graph/GraphElement.js';
 import { GraphParser } from '../js/graph/GraphParser.js';
 import { GraphLayout } from '../js/graph/GraphLayout.js';
@@ -32,6 +33,34 @@ test('matrix placeholders preserve boundary cells and sentinel-like values', () 
     const matrix = new MatrixElement();
     assert.equal(matrix.setFromText('\u3000__WHITEBOARD_EMPTY__\u3000'), null);
     assert.deepEqual(matrix.data, [['', '__WHITEBOARD_EMPTY__', '']]);
+});
+
+test('matrix text snaps to the nearest horizontal or vertical reading direction', () => {
+    const renderedAngle = rotation => {
+        const matrix = new MatrixElement();
+        matrix.rows = 1;
+        matrix.cols = 1;
+        matrix.data = [['A']];
+        matrix.rotation = rotation;
+        matrix._updateSize();
+        let angle = 0;
+        let textAngle = null;
+        const angleStack = [];
+        const ctx = {
+            globalAlpha: 1,
+            save() { angleStack.push(angle); },
+            restore() { angle = angleStack.pop(); },
+            translate() {},
+            rotate(value) { angle += value; },
+            fillRect() {}, strokeRect() {}, beginPath() {}, moveTo() {}, lineTo() {}, stroke() {},
+            fillText() { textAngle = angle; }
+        };
+        matrix.draw(ctx, { zoom: 1 });
+        return textAngle;
+    };
+
+    assert.ok(Math.abs(renderedAngle(Math.PI / 6)) < 1e-10);
+    assert.ok(Math.abs(renderedAngle(Math.PI / 3) - Math.PI / 2) < 1e-10);
 });
 
 test('invalid oversized sequence input does not replace existing data', () => {
@@ -113,15 +142,18 @@ test('rooted tree weights are rendered on edges and reject non-numeric weights',
     assert.equal(child.meta.nodeWeight, undefined);
 
     const labels = [];
-    const weightRects = [];
+    const labelPositions = [];
+    const weightFrames = [];
     const ctx = {
         globalAlpha: 1,
         save() {}, restore() {}, beginPath() {}, moveTo() {}, lineTo() {}, stroke() {},
         fill() {},
-        fillRect: (x, y, width, height) => weightRects.push({ x, y, width, height }),
-        strokeRect() {}, arc() {},
-        measureText: text => ({ width: String(text).length * 6 }),
-        fillText: text => labels.push(String(text))
+        fillRect: () => weightFrames.push('fill'),
+        strokeRect: () => weightFrames.push('stroke'), arc() {},
+        fillText: (text, x, y) => {
+            labels.push(String(text));
+            labelPositions.push({ label: String(text), x, y });
+        }
     };
     TreeRenderer.draw(ctx, tree.root, {
         nodeRadius: tree.nodeRadius,
@@ -132,20 +164,58 @@ test('rooted tree weights are rendered on edges and reject non-numeric weights',
     });
     assert.ok(labels.includes('7'));
     assert.ok(!labels.includes('w:7'));
-    const weightRect = weightRects[0];
-    assert.ok(weightRect);
-    assert.equal(weightRect.x + weightRect.width / 2,
-        (tree.root.x + child.x) / 2);
-    assert.equal(weightRect.y + weightRect.height / 2,
-        (tree.root.y + child.y) / 2);
+    assert.equal(weightFrames.length, 0);
+    const weightLabel = labelPositions.find(({ label }) => label === '7');
+    assert.equal(weightLabel.x, (tree.root.x + child.x) / 2);
+    assert.equal(weightLabel.y, (tree.root.y + child.y) / 2);
+    const { offsetX, offsetY } = tree._getCurrentOffsets();
+    assert.equal(tree.hitTestEdgeNode(
+        (tree.root.x + child.x) / 2 + offsetX,
+        (tree.root.y + child.y) / 2 + offsetY
+    ), child);
     assert.match(TreeParser.parseRootedFormat(['2', '1 2 nope']).error, /有限數值/);
+
+    assert.equal(tree.setEdgeWeight(child, '2.5'), true);
+    assert.equal(tree.setEdgeWeight(child, 'not a number'), false);
 
     assert.equal(tree.setNodeValue(child, 'updated'), true);
     const saved = tree.serialize();
     const restored = TreeElement.fromData(saved);
     restored.deserialize(saved);
     assert.equal(restored.root.children[0].value, 'updated');
-    assert.equal(restored.root.children[0].meta.edgeWeight, '7');
+    assert.equal(restored.root.children[0].meta.edgeWeight, '2.5');
+    assert.equal(restored.setEdgeWeight(restored.root.children[0], ''), true);
+    assert.equal(restored.root.children[0].meta.edgeWeight, undefined);
+    const clearedWeightSave = restored.serialize();
+    const restoredClearedWeight = TreeElement.fromData(clearedWeightSave);
+    restoredClearedWeight.deserialize(clearedWeightSave);
+    assert.equal(restoredClearedWeight.root.children[0].meta.edgeWeight, undefined);
+    assert.equal(restoredClearedWeight.hasWeights, true);
+});
+
+test('weighted trees show a frame-free placeholder for empty edge weights', () => {
+    const tree = new TreeElement();
+    assert.equal(tree.buildFromText('2\n1 2', 'rooted'), null);
+    tree.hasWeights = true;
+    const labels = [];
+    let frameCount = 0;
+    const ctx = {
+        globalAlpha: 1,
+        save() {}, restore() {}, beginPath() {}, moveTo() {}, lineTo() {}, stroke() {},
+        fill() {}, fillRect() { frameCount++; }, strokeRect() { frameCount++; }, arc() {},
+        fillText: (label, x, y) => labels.push({ label: String(label), x, y })
+    };
+    TreeRenderer.draw(ctx, tree.root, {
+        nodeRadius: tree.nodeRadius,
+        hasWeights: tree.hasWeights,
+        offsetX: 0,
+        offsetY: 0
+    });
+    const placeholder = labels.find(({ label }) => label === '?');
+    assert.ok(placeholder);
+    assert.equal(frameCount, 0);
+    assert.equal(placeholder.x, (tree.root.x + tree.root.children[0].x) / 2);
+    assert.equal(placeholder.y, (tree.root.y + tree.root.children[0].y) / 2);
 });
 
 test('text hydration normalizes legacy fonts without mutating saved data', () => {
@@ -375,17 +445,139 @@ test('multi-select delete undo restores original stacking order', () => {
     const app = {
         elements: [a, b, c, d],
         layerManager: { _reindex() {} },
-        selectionManager: { remove() {} },
         renderer: { markDirty() {} }
     };
+    app.selectionManager = new SelectionManager(app);
+    app.selectionManager.select(a);
+    app.selectionManager.addToSelection(c);
     const history = new History(app);
     history.pushDelete(app, [c, a]);
     app.elements = app.elements.filter(element => element !== a && element !== c);
+    app.selectionManager.clear();
 
     history.undo();
     assert.deepEqual(app.elements, [a, b, c, d]);
+    assert.deepEqual(app.selectionManager.selectedElements, [a, c]);
     history.redo();
     assert.deepEqual(app.elements, [b, d]);
+    assert.deepEqual(app.selectionManager.selectedElements, []);
+});
+
+test('undoing an add uses the current selection API and redo does not duplicate it', () => {
+    const added = { type: 'rectangle' };
+    const app = {
+        elements: [added],
+        layerManager: { _reindex() {} },
+        renderer: { markDirty() {} }
+    };
+    app.selectionManager = new SelectionManager(app);
+    app.selectionManager.select(added);
+    const history = new History(app);
+    history.pushAdd(app, added);
+
+    assert.doesNotThrow(() => history.undo());
+    assert.deepEqual(app.elements, []);
+    assert.deepEqual(app.selectionManager.selectedElements, []);
+    history.redo();
+    history.redo();
+    assert.deepEqual(app.elements, [added]);
+});
+
+test('failed history commands remain available for retry', () => {
+    const history = new History({ renderer: { markDirty() {} } });
+    const error = new Error('temporary undo failure');
+    history.push({ undo() { throw error; }, redo() {} });
+
+    assert.throws(() => history.undo(), error);
+    assert.equal(history.undoStack.length, 1);
+    assert.equal(history.redoStack.length, 0);
+
+    history.undoStack[0].undo = () => {};
+    history.undo();
+    assert.equal(history.undoStack.length, 0);
+    assert.equal(history.redoStack.length, 1);
+
+    history.redoStack[0].redo = () => { throw error; };
+    assert.throws(() => history.redo(), error);
+    assert.equal(history.redoStack.length, 1);
+    assert.equal(history.undoStack.length, 0);
+});
+
+test('resizing undo restores internal matrix, tree, and graph geometry', () => {
+    const history = new History({ renderer: { markDirty() {} } });
+
+    const matrix = new MatrixElement();
+    const originalMatrixBounds = { x: matrix.x, y: matrix.y, w: matrix.width, h: matrix.height };
+    const originalCellSize = matrix.cellSize;
+    matrix.onResizeStart();
+    const originalMatrixResizeState = matrix.captureResizeState();
+    matrix.onResize(300, 240);
+    const resizedMatrixBounds = { x: matrix.x, y: matrix.y, w: matrix.width, h: matrix.height };
+    const resizedCellSize = matrix.cellSize;
+    const resizedMatrixState = matrix.captureResizeState();
+    history.pushResize(matrix, originalMatrixBounds, resizedMatrixBounds, null, null, null,
+        originalMatrixResizeState, resizedMatrixState);
+    history.undo();
+    assert.equal(matrix.cellSize, originalCellSize);
+    assert.equal(matrix.width, originalMatrixBounds.w);
+    history.redo();
+    assert.equal(matrix.cellSize, resizedCellSize);
+    assert.equal(matrix.width, resizedMatrixBounds.w);
+
+    for (const sequence of [new QueueElement(), new StackElement()]) {
+        sequence.setFromText('a b c');
+        const initialBounds = { x: sequence.x, y: sequence.y, w: sequence.width, h: sequence.height };
+        const initialState = sequence.captureResizeState();
+        sequence.onResizeStart();
+        const initialResizeState = sequence.captureResizeState();
+        sequence.width *= 1.7;
+        sequence.height *= 1.7;
+        sequence.onResize(sequence.width, sequence.height);
+        const resizedBounds = { x: sequence.x, y: sequence.y, w: sequence.width, h: sequence.height };
+        const resizedState = sequence.captureResizeState();
+        history.pushResize(sequence, initialBounds, resizedBounds, null, null, null,
+            initialResizeState, resizedState);
+        history.undo();
+        assert.deepEqual(sequence.captureResizeState(), initialState);
+        history.redo();
+        assert.deepEqual(sequence.captureResizeState(), resizedState);
+    }
+
+    const tree = new TreeElement();
+    assert.equal(tree.buildFromText('3\n1 2\n1 3', 'rooted'), null);
+    const originalTreeBounds = { x: tree.x, y: tree.y, w: tree.width, h: tree.height };
+    const originalRadius = tree.nodeRadius;
+    tree.onResizeStart();
+    const originalTreeResizeState = tree.captureResizeState();
+    tree.onResize(tree.width * 2, tree.height * 2);
+    const resizedTreeBounds = { x: tree.x, y: tree.y, w: tree.width, h: tree.height };
+    const resizedRadius = tree.nodeRadius;
+    const resizedTreeState = tree.captureResizeState();
+    history.pushResize(tree, originalTreeBounds, resizedTreeBounds, null, null, null,
+        originalTreeResizeState, resizedTreeState);
+    history.undo();
+    assert.equal(tree.nodeRadius, originalRadius);
+    history.redo();
+    assert.equal(tree.nodeRadius, resizedRadius);
+
+    const graph = new GraphElement();
+    assert.equal(graph.buildFromText('2 1\n1 2'), null);
+    const originalGraphBounds = { x: graph.x, y: graph.y, w: graph.width, h: graph.height };
+    const originalNodePositions = [...graph.nodes.values()].map(({ x, y }) => ({ x, y }));
+    graph.onResizeStart();
+    const originalGraphResizeState = graph.captureResizeState();
+    graph.width = 520;
+    graph.height = 430;
+    graph.onResize(520, 430);
+    const resizedGraphBounds = { x: graph.x, y: graph.y, w: 520, h: 430 };
+    const resizedNodePositions = [...graph.nodes.values()].map(({ x, y }) => ({ x, y }));
+    const resizedGraphState = graph.captureResizeState();
+    history.pushResize(graph, originalGraphBounds, resizedGraphBounds, null, null, null,
+        originalGraphResizeState, resizedGraphState);
+    history.undo();
+    assert.deepEqual([...graph.nodes.values()].map(({ x, y }) => ({ x, y })), originalNodePositions);
+    history.redo();
+    assert.deepEqual([...graph.nodes.values()].map(({ x, y }) => ({ x, y })), resizedNodePositions);
 });
 
 test('successful board import clears stale undo and redo commands', () => {
@@ -412,6 +604,28 @@ test('tree JSON restore can read rooted input for a non-generic display type', (
     });
     assert.equal(tree.root.value, '1');
     assert.equal(tree.root.children.length, 2);
+});
+
+test('tree edit history can re-find nodes after deserialization rebuilds the tree', () => {
+    const tree = new TreeElement();
+    assert.equal(tree.buildFromText('3\n1 2\n1 3', 'rooted'), null);
+    const originalNode = tree.root.children[1];
+    const path = tree.getNodePath(originalNode);
+    assert.equal(path, 'r.1');
+    assert.equal(tree.setNodeValue(originalNode, 'renamed'), true);
+    assert.equal(tree.setEdgeWeight(originalNode, '8'), true);
+
+    const snapshot = JSON.parse(JSON.stringify(tree.serialize()));
+    tree.deserialize(snapshot);
+    const restoredNode = tree.getNodeAtPath(path);
+    assert.ok(restoredNode);
+    assert.notEqual(restoredNode, originalNode);
+    assert.equal(restoredNode.value, 'renamed');
+    assert.equal(restoredNode.meta.edgeWeight, '8');
+
+    assert.equal(tree.setNodeValue(tree.getNodeAtPath(path), '2'), true);
+    assert.equal(tree.setEdgeWeight(tree.getNodeAtPath(path), '7'), true);
+    assert.equal(tree.getNodeAtPath('r.99'), null);
 });
 
 test('rotated matrix cells and sequence items remain correctly hittable', () => {

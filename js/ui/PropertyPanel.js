@@ -87,11 +87,15 @@ export class PropertyPanel {
             const el = document.getElementById(id);
             if (!el) return;
             let oldVals = null;
+            const geometryProp = ['x', 'y', 'width', 'height', 'rotation'].includes(prop);
 
             const startEdit = () => {
                 if (oldVals) return;
                 const sel = this.app.selectionManager;
                 oldVals = sel.selectedElements.map(e => ({ el: e, old: e[prop] }));
+                if (prop === 'width' || prop === 'height') {
+                    for (const item of oldVals) item.el.onResizeStart?.();
+                }
             };
 
             el.addEventListener('pointerdown', startEdit);
@@ -99,20 +103,51 @@ export class PropertyPanel {
 
             el.addEventListener('input', () => {
                 const val = transform(el.value);
-                this.app.selectionManager.setProperty(prop, val);
+                const selected = this.app.selectionManager.selectedElements;
+                for (const item of selected) {
+                    item[prop] = val;
+                    if ((prop === 'width' || prop === 'height') && item.onResize) {
+                        item.onResize(item.width, item.height);
+                    }
+                }
+                if (geometryProp) this.app._updateConnectedLines(selected.map(item => item.id));
+                this.app.renderer.markDirty();
             });
 
             el.addEventListener('change', () => {
                 const val = transform(el.value);
-                if (oldVals && oldVals.length > 0) {
+                if (oldVals?.length) {
                     const localOlds = [...oldVals];
+                    const applyValue = value => {
+                        for (const item of localOlds) {
+                            item.el[prop] = value;
+                            if ((prop === 'width' || prop === 'height') && item.el.onResize) {
+                                item.el.onResize(item.el.width, item.el.height);
+                            }
+                        }
+                        if (geometryProp) {
+                            this.app._updateConnectedLines(localOlds.map(item => item.el.id));
+                        }
+                        this.app.renderer.markDirty();
+                    };
                     this.app.history.push({
                         description: `Change ${prop}`,
-                        undo: () => { localOlds.forEach(c => c.el[prop] = c.old); this.app.renderer.markDirty(); },
-                        redo: () => { localOlds.forEach(c => c.el[prop] = val); this.app.renderer.markDirty(); }
+                        undo: () => {
+                            for (const item of localOlds) {
+                                item.el[prop] = item.old;
+                                if ((prop === 'width' || prop === 'height') && item.el.onResize) {
+                                    item.el.onResize(item.el.width, item.el.height);
+                                }
+                            }
+                            if (geometryProp) {
+                                this.app._updateConnectedLines(localOlds.map(item => item.el.id));
+                            }
+                            this.app.renderer.markDirty();
+                        },
+                        redo: () => applyValue(val)
                     });
-                    oldVals = null;
                 }
+                oldVals = null;
             });
         };
 
@@ -151,7 +186,9 @@ export class PropertyPanel {
             const startCellSizeEdit = () => {
                 if (oldCellSizeVals) return;
                 const sel = this.app.selectionManager;
-                oldCellSizeVals = sel.selectedElements.map(e => ({ el: e, old: e.cellSize }));
+                oldCellSizeVals = sel.selectedElements
+                    .filter(e => e.cellSize !== undefined)
+                    .map(e => ({ el: e, old: e.cellSize }));
             };
             cellSizeInput.addEventListener('pointerdown', startCellSizeEdit);
             cellSizeInput.addEventListener('focus', startCellSizeEdit);
@@ -166,6 +203,7 @@ export class PropertyPanel {
                         el._updateSize();
                     }
                 }
+                this.app._updateConnectedLines(sel.selectedElements.map(el => el.id));
                 this.app.renderer.markDirty();
             });
 
@@ -173,19 +211,22 @@ export class PropertyPanel {
                 const val = Number(cellSizeInput.value);
                 if (oldCellSizeVals && oldCellSizeVals.length > 0) {
                     const localOlds = [...oldCellSizeVals];
+                    const applyCellSize = value => {
+                        localOlds.forEach(c => { c.el.cellSize = value; c.el._updateSize(); });
+                        this.app._updateConnectedLines(localOlds.map(c => c.el.id));
+                        this.app.renderer.markDirty();
+                    };
                     this.app.history.push({
                         description: 'Change cell size',
-                        undo: () => { 
+                        undo: () => {
                             localOlds.forEach(c => { c.el.cellSize = c.old; c.el._updateSize(); });
-                            this.app.renderer.markDirty(); 
+                            this.app._updateConnectedLines(localOlds.map(c => c.el.id));
+                            this.app.renderer.markDirty();
                         },
-                        redo: () => { 
-                            localOlds.forEach(c => { c.el.cellSize = val; c.el._updateSize(); });
-                            this.app.renderer.markDirty(); 
-                        }
+                        redo: () => applyCellSize(val)
                     });
-                    oldCellSizeVals = null;
                 }
+                oldCellSizeVals = null;
             });
         }
 
@@ -197,7 +238,9 @@ export class PropertyPanel {
             const startFontSizeEdit = () => {
                 if (oldFontSizeVals) return;
                 const sel = this.app.selectionManager;
-                oldFontSizeVals = sel.selectedElements.map(e => ({ el: e, old: e.fontSize }));
+                oldFontSizeVals = sel.selectedElements
+                    .filter(e => e.fontSize !== undefined)
+                    .map(e => ({ el: e, old: e.fontSize }));
             };
             fontSizeInput.addEventListener('pointerdown', startFontSizeEdit);
             fontSizeInput.addEventListener('focus', startFontSizeEdit);
@@ -213,6 +256,7 @@ export class PropertyPanel {
                         if (el.type === 'markdown') el._render();
                     }
                 }
+                this.app._updateConnectedLines(sel.selectedElements.map(el => el.id));
                 this.app.renderer.markDirty();
             });
 
@@ -220,27 +264,30 @@ export class PropertyPanel {
                 const val = Number(fontSizeInput.value);
                 if (oldFontSizeVals && oldFontSizeVals.length > 0) {
                     const localOlds = [...oldFontSizeVals];
+                    const applyFontSize = value => {
+                        localOlds.forEach(c => {
+                            c.el.fontSize = value;
+                            if (c.el.type === 'text') c.el.autoSize(this.app.renderer.ctx);
+                            if (c.el.type === 'markdown') c.el._render();
+                        });
+                        this.app._updateConnectedLines(localOlds.map(c => c.el.id));
+                        this.app.renderer.markDirty();
+                    };
                     this.app.history.push({
                         description: 'Change font size',
-                        undo: () => { 
-                            localOlds.forEach(c => { 
-                                c.el.fontSize = c.old; 
-                                if (c.el.type === 'text') c.el.autoSize(this.app.renderer.ctx); 
+                        undo: () => {
+                            localOlds.forEach(c => {
+                                c.el.fontSize = c.old;
+                                if (c.el.type === 'text') c.el.autoSize(this.app.renderer.ctx);
                                 if (c.el.type === 'markdown') c.el._render();
                             });
-                            this.app.renderer.markDirty(); 
+                            this.app._updateConnectedLines(localOlds.map(c => c.el.id));
+                            this.app.renderer.markDirty();
                         },
-                        redo: () => { 
-                            localOlds.forEach(c => { 
-                                c.el.fontSize = val; 
-                                if (c.el.type === 'text') c.el.autoSize(this.app.renderer.ctx); 
-                                if (c.el.type === 'markdown') c.el._render();
-                            });
-                            this.app.renderer.markDirty(); 
-                        }
+                        redo: () => applyFontSize(val)
                     });
-                    oldFontSizeVals = null;
                 }
+                oldFontSizeVals = null;
             });
         }
 
@@ -262,14 +309,36 @@ export class PropertyPanel {
             fontSelect.addEventListener('change', () => {
                 const val = fontSelect.value;
                 const sel = this.app.selectionManager;
+                const changes = [];
                 for (const el of sel.selectedElements) {
-                    if (el.fontFamily !== undefined) {
-                        const old = el.fontFamily;
-                        el.fontFamily = val;
-                        if (el.type === 'text') el.autoSize(this.app.renderer.ctx);
-                        this.app.history.pushPropertyChange(el, 'fontFamily', old, val);
-                    }
+                    if (el.fontFamily === undefined || el.fontFamily === val) continue;
+                    changes.push({ el, old: el.fontFamily });
+                    el.fontFamily = val;
+                    if (el.type === 'text') el.autoSize(this.app.renderer.ctx);
                 }
+                if (changes.length) {
+                    const applyFontFamily = value => {
+                        changes.forEach(({ el }) => {
+                            el.fontFamily = value;
+                            if (el.type === 'text') el.autoSize(this.app.renderer.ctx);
+                        });
+                        this.app._updateConnectedLines(changes.map(({ el }) => el.id));
+                        this.app.renderer.markDirty();
+                    };
+                    this.app.history.push({
+                        description: 'Change font family',
+                        undo: () => {
+                            changes.forEach(({ el, old }) => {
+                                el.fontFamily = old;
+                                if (el.type === 'text') el.autoSize(this.app.renderer.ctx);
+                            });
+                            this.app._updateConnectedLines(changes.map(({ el }) => el.id));
+                            this.app.renderer.markDirty();
+                        },
+                        redo: () => applyFontFamily(val)
+                    });
+                }
+                this.app._updateConnectedLines(changes.map(({ el }) => el.id));
                 this.app.renderer.markDirty();
             });
         }
@@ -286,15 +355,36 @@ export class PropertyPanel {
                     newState = !sel.selectedElements[0][propName];
                 }
                 btn.classList.toggle('active', newState);
-                
+                const changes = [];
                 for (const el of sel.selectedElements) {
-                    if (el[propName] !== undefined) {
-                        const old = el[propName];
-                        el[propName] = newState;
-                        if (el.type === 'text') el.autoSize(this.app.renderer.ctx);
-                        this.app.history.pushPropertyChange(el, propName, old, newState);
-                    }
+                    if (el[propName] === undefined || el[propName] === newState) continue;
+                    changes.push({ el, old: el[propName] });
+                    el[propName] = newState;
+                    if (el.type === 'text') el.autoSize(this.app.renderer.ctx);
                 }
+                if (changes.length) {
+                    const applyTextStyle = value => {
+                        changes.forEach(({ el }) => {
+                            el[propName] = value;
+                            if (el.type === 'text') el.autoSize(this.app.renderer.ctx);
+                        });
+                        this.app._updateConnectedLines(changes.map(({ el }) => el.id));
+                        this.app.renderer.markDirty();
+                    };
+                    this.app.history.push({
+                        description: `Change ${propName}`,
+                        undo: () => {
+                            changes.forEach(({ el, old }) => {
+                                el[propName] = old;
+                                if (el.type === 'text') el.autoSize(this.app.renderer.ctx);
+                            });
+                            this.app._updateConnectedLines(changes.map(({ el }) => el.id));
+                            this.app.renderer.markDirty();
+                        },
+                        redo: () => applyTextStyle(newState)
+                    });
+                }
+                this.app._updateConnectedLines(changes.map(({ el }) => el.id));
                 this.app.renderer.markDirty();
             });
         };

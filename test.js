@@ -142,6 +142,49 @@ try {
         throw new Error('Markdown sanitization or safe formatting browser check failed: ' +
             JSON.stringify(markdownSecurity));
     }
+    const markdownAppearance = await page.evaluate(async () => {
+        const { MarkdownElement } = await import('/js/elements/MarkdownElement.js');
+        const probe = document.createElement('div');
+        probe.innerHTML = MarkdownElement.renderToHTML('# Heading\n\n**Bold** and `code`');
+        MarkdownElement._applyRenderStyles(probe);
+
+        const emptyMarkdown = new MarkdownElement();
+        const emptyDrawOps = [];
+        emptyMarkdown.draw({
+            save() {}, restore() {}, translate() {}, rotate() {},
+            drawImage() { emptyDrawOps.push('image'); },
+            fillText() { emptyDrawOps.push('text'); },
+            fill() { emptyDrawOps.push('fill'); },
+            stroke() { emptyDrawOps.push('stroke'); }
+        }, { zoom: 1 });
+
+        const markdown = new MarkdownElement(0, 0, '# Transparent\n\n**colored** text');
+        const deadline = Date.now() + 6000;
+        while (markdown._rendering && Date.now() < deadline) {
+            await new Promise(resolve => setTimeout(resolve, 25));
+        }
+        if (!markdown.img) return { ready: false };
+        const canvas = document.createElement('canvas');
+        canvas.width = Math.ceil(markdown.width);
+        canvas.height = Math.ceil(markdown.height);
+        markdown.draw(canvas.getContext('2d'), { zoom: 1 });
+        const edgePixel = canvas.getContext('2d').getImageData(
+            canvas.width - 1, Math.floor(canvas.height / 2), 1, 1
+        ).data;
+        return {
+            ready: true,
+            headingHasNoRule: !probe.querySelector('h1').style.borderBottom,
+            inlineCodeHasNoFill: probe.querySelector('code').style.backgroundColor === 'transparent',
+            emptyElementHasNoDecoration: emptyDrawOps.length === 0,
+            rightEdgeIsTransparent: edgePixel[3] === 0
+        };
+    });
+    if (!markdownAppearance.ready || !markdownAppearance.headingHasNoRule ||
+        !markdownAppearance.inlineCodeHasNoFill || !markdownAppearance.emptyElementHasNoDecoration ||
+        !markdownAppearance.rightEdgeIsTransparent) {
+        throw new Error('Markdown transparent text-style browser check failed: ' +
+            JSON.stringify(markdownAppearance));
+    }
     const mermaidLoadCount = await page.evaluate(async () => {
         const { Serializer } = await import('/js/core/Serializer.js');
         const app = {
@@ -248,6 +291,56 @@ try {
         restoredTree.deserialize(savedTree);
         const nodeSaveSynced = restoredTree.root.children[0].value === '9';
         app.elements.splice(app.elements.indexOf(tree), 1);
+        app.selectionManager.clear();
+
+        const edgeTree = new TreeElement(40, 40);
+        edgeTree.buildFromText('2\n1 2 7', 'rooted');
+        const edgeNode = edgeTree.root.children[0];
+        app.elements.push(edgeTree);
+        app.layerManager._reindex();
+        app.selectionManager.select(edgeTree);
+        app.history.clear();
+        const { offsetX, offsetY } = edgeTree._getCurrentOffsets();
+        const midpoint = edgeTree.toWorldPoint(
+            (edgeTree.root.x + edgeNode.x) / 2 + offsetX,
+            (edgeTree.root.y + edgeNode.y) / 2 + offsetY
+        );
+        const edgeScreenPos = app.camera.worldToScreen(midpoint.x, midpoint.y);
+        const canvasRect = app.canvas.getBoundingClientRect();
+        app.toolbar.setTool('select');
+        app._onDoubleClick({
+            clientX: canvasRect.left + edgeScreenPos.x,
+            clientY: canvasRect.top + edgeScreenPos.y
+        });
+        const edgeEditorHasNoFrame = getComputedStyle(overlay).borderTopWidth === '0px' &&
+            getComputedStyle(overlay).backgroundColor === 'rgba(0, 0, 0, 0)';
+        const edgeEditorCentered = Math.abs(
+            parseFloat(overlay.style.left) + parseFloat(overlay.style.width) / 2 -
+            canvasRect.left - edgeScreenPos.x
+        ) < 0.5;
+        let edgeHandleDrawCount = 0;
+        const originalEdgeHandleDraw = app.renderer._drawElementHandles;
+        app.renderer._drawElementHandles = () => { edgeHandleDrawCount++; };
+        app.renderer._drawSelectionOverlay(selectionCtx, 1);
+        const edgeSelectionFrameHidden = edgeHandleDrawCount === 0;
+        overlay.value = '9';
+        overlay.dispatchEvent(new Event('input', { bubbles: true }));
+        const edgePreviewSynced = edgeNode.meta.edgeWeight === '9';
+        overlay.blur();
+        app.renderer._drawSelectionOverlay(selectionCtx, 1);
+        const edgeSelectionFrameRestored = edgeHandleDrawCount === 1;
+        app.renderer._drawElementHandles = originalEdgeHandleDraw;
+        const edgeCommitSynced = edgeNode.meta.edgeWeight === '9';
+        app.history.undo();
+        const edgeUndoSynced = edgeNode.meta.edgeWeight === '7';
+        app.history.redo();
+        const edgeRedoSynced = edgeNode.meta.edgeWeight === '9';
+        const savedEdgeTree = edgeTree.serialize();
+        const restoredEdgeTree = TreeElement.fromData(savedEdgeTree);
+        restoredEdgeTree.deserialize(savedEdgeTree);
+        const edgeSaveSynced = restoredEdgeTree.root.children[0].meta.edgeWeight === '9';
+        app.elements.splice(app.elements.indexOf(edgeTree), 1);
+        app.selectionManager.clear();
 
         const text = new TextElement(80, 80);
         text.text = 'before';
@@ -278,7 +371,10 @@ try {
         return {
             nodeHasNoEditorFrame, selectionFrameHidden, selectionFrameRestored,
             nodePreviewSynced, nodeCommitSynced,
-            nodeUndoSynced, nodeRedoSynced, nodeSaveSynced, textPreviewSynced,
+            nodeUndoSynced, nodeRedoSynced, nodeSaveSynced,
+            edgeEditorHasNoFrame, edgeEditorCentered, edgeSelectionFrameHidden, edgeSelectionFrameRestored,
+            edgePreviewSynced, edgeCommitSynced, edgeUndoSynced, edgeRedoSynced,
+            edgeSaveSynced, textPreviewSynced,
             textUndoSynced, textRedoSynced
         };
     });

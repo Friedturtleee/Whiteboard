@@ -84,6 +84,16 @@ export class QueueElement extends Element {
         this._origResizeH = this.height;
     }
 
+    captureResizeState() {
+        return { cellWidth: this.cellWidth, fontSize: this.fontSize };
+    }
+
+    restoreResizeState(state) {
+        if (!state) return;
+        this.cellWidth = state.cellWidth;
+        this.fontSize = state.fontSize;
+    }
+
     /**
      * Called when element is resized via handle. Adjusts cell proportions.
      */

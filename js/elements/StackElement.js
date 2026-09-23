@@ -76,6 +76,16 @@ export class StackElement extends Element {
         this._origResizeH = this.height;
     }
 
+    captureResizeState() {
+        return { cellHeight: this.cellHeight, fontSize: this.fontSize };
+    }
+
+    restoreResizeState(state) {
+        if (!state) return;
+        this.cellHeight = state.cellHeight;
+        this.fontSize = state.fontSize;
+    }
+
     /**
      * Called when element is resized via handle. Adjusts cell proportions.
      */

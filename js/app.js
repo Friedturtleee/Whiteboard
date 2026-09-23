@@ -516,6 +516,9 @@ class App {
                 if (info.mode === 'endpoint') {
                     const el = info.element;
                     const snap = this._snapPreview;
+                    const originalEndpoint = info.epIndex === 0
+                        ? { x: info._ep.p1x, y: info._ep.p1y }
+                        : { x: info._ep.p2x, y: info._ep.p2y };
                     if (snap) {
                         // Snap endpoint to connection port
                         const ep = info._ep;
@@ -530,8 +533,57 @@ class App {
                             el.height = snap.y - ep.p1y;
                             el.connections.p2 = { elementId: snap.elementId, portId: snap.portId };
                         }
+                    } else {
+                        const currentEndpoint = info.epIndex === 0
+                            ? { x: el.x, y: el.y }
+                            : { x: el.x + el.width, y: el.y + el.height };
+                        if (currentEndpoint.x === originalEndpoint.x && currentEndpoint.y === originalEndpoint.y) {
+                            el.connections.p1 = info._connections.p1 ? { ...info._connections.p1 } : null;
+                            el.connections.p2 = info._connections.p2 ? { ...info._connections.p2 } : null;
+                        }
+                    }
+
+                    const fromState = {
+                        x: info._ep.p1x,
+                        y: info._ep.p1y,
+                        width: info._ep.p2x - info._ep.p1x,
+                        height: info._ep.p2y - info._ep.p1y,
+                        connections: info._connections
+                    };
+                    const toState = {
+                        x: el.x,
+                        y: el.y,
+                        width: el.width,
+                        height: el.height,
+                        connections: {
+                            p1: el.connections.p1 ? { ...el.connections.p1 } : null,
+                            p2: el.connections.p2 ? { ...el.connections.p2 } : null
+                        }
+                    };
+                    const sameConnection = (a, b) => a === b || Boolean(a && b &&
+                        a.elementId === b.elementId && a.portId === b.portId);
+                    const changed = fromState.x !== toState.x || fromState.y !== toState.y ||
+                        fromState.width !== toState.width || fromState.height !== toState.height ||
+                        !sameConnection(fromState.connections.p1, toState.connections.p1) ||
+                        !sameConnection(fromState.connections.p2, toState.connections.p2);
+                    const applyEndpoint = state => {
+                        el.x = state.x;
+                        el.y = state.y;
+                        el.width = state.width;
+                        el.height = state.height;
+                        el.connections.p1 = state.connections.p1 ? { ...state.connections.p1 } : null;
+                        el.connections.p2 = state.connections.p2 ? { ...state.connections.p2 } : null;
+                        this._updateConnectedLines([el.id]);
+                    };
+                    if (changed) {
+                        this.history.push({
+                            description: 'Move line endpoint',
+                            undo: () => applyEndpoint(fromState),
+                            redo: () => applyEndpoint(toState)
+                        });
                     }
                     this._snapPreview = null;
+                    this._updateConnectedLines([el.id]);
                     this.renderer.markDirty();
                 }
                 if (info.mode === 'drag') {
@@ -539,17 +591,32 @@ class App {
                         m.fromX !== m.toX || m.fromY !== m.toY
                     );
                     if (moves.length) {
-                        this.history.pushMove(moves);
+                        const movedIds = moves.map(move => move.el.id);
+                        this.history.pushMove(moves, () => this._updateConnectedLines(movedIds));
                         // Update any lines connected to moved elements
-                        this._updateConnectedLines(moves.map(m => m.el.id));
+                        this._updateConnectedLines(movedIds);
                     }
                 }
                 if (info.mode === 'resize') {
-                    this.history.pushResize(info.element, info.fromBounds, info.toBounds);
+                    this.history.pushResize(
+                        info.element,
+                        info.fromBounds,
+                        info.toBounds,
+                        info.fromPoints,
+                        info.toPoints,
+                        () => this._updateConnectedLines([info.element.id]),
+                        info.fromResizeState,
+                        info.toResizeState
+                    );
                     this._updateConnectedLines([info.element.id]);
                 }
                 if (info.mode === 'rotate') {
-                    this.history.pushRotate(info.element, info.fromRotation, info.toRotation);
+                    this.history.pushRotate(
+                        info.element,
+                        info.fromRotation,
+                        info.toRotation,
+                        () => this._updateConnectedLines([info.element.id])
+                    );
                     this._updateConnectedLines([info.element.id]);
                 }
             }
@@ -633,6 +700,11 @@ class App {
                     this._editTreeNodeValue(hit, treeNode, wx, wy);
                     return;
                 }
+                const edgeNode = hit.hitTestEdgeNode(wx, wy);
+                if (edgeNode) {
+                    this._editTreeEdgeWeight(hit, edgeNode);
+                    return;
+                }
             }
             this._showTreeDialog(hit);
             return;
@@ -663,10 +735,10 @@ class App {
             const handle = HitTest.hitTestHandles(el, wx, wy, this.camera);
             if (handle) {
                 if (handle.type === 'endpoint') {
-                    // Disconnect old connection on this endpoint before dragging
+                    this.transform.startEndpoint(wx, wy, handle.index, el);
+                    // Disconnect this endpoint while it is being moved.
                     if (handle.index === 0) el.connections.p1 = null;
                     else                    el.connections.p2 = null;
-                    this.transform.startEndpoint(wx, wy, handle.index, el);
                     this.canvas.style.cursor = 'crosshair';
                     return;
                 }
@@ -975,6 +1047,15 @@ class App {
         this.layerManager._reindex();
     }
 
+    _restoreElementSnapshot(el, snapshot, index) {
+        if (!this.elements.includes(el)) {
+            this.elements.splice(Math.max(0, Math.min(index, this.elements.length)), 0, el);
+        }
+        el.deserialize(JSON.parse(JSON.stringify(snapshot)));
+        this.layerManager._reindex();
+        this.renderer.markDirty();
+    }
+
     // ═════════════════════════════════════════════════════
     // Data Structure Cell Selection Helpers
     // ═════════════════════════════════════════════════════
@@ -1265,6 +1346,7 @@ class App {
         const el = this._textEditing;
         const newText = overlay.value;
         const oldText = this._textEditOld;
+        const deletesExistingText = el.type === 'text' && !newText.trim() && oldText !== newText;
 
         if (cancel) {
             el.text = oldText;
@@ -1274,11 +1356,30 @@ class App {
                 el.text = value;
                 el.autoSize(this.ctx);
             };
-            this.history.push({
-                description: 'Edit text',
-                undo: () => applyText(oldText),
-                redo: () => applyText(newText)
-            });
+            if (deletesExistingText) {
+                const oldIndex = this.elements.indexOf(el);
+                this.history.push({
+                    description: 'Delete text',
+                    undo: () => {
+                        if (!this.elements.includes(el)) {
+                            this.elements.splice(Math.max(0, Math.min(oldIndex, this.elements.length)), 0, el);
+                            this.layerManager._reindex();
+                        }
+                        applyText(oldText);
+                        this.selectionManager.select(el);
+                    },
+                    redo: () => {
+                        applyText('');
+                        this._deleteElement(el);
+                    }
+                });
+            } else {
+                this.history.push({
+                    description: 'Edit text',
+                    undo: () => applyText(oldText),
+                    redo: () => applyText(newText)
+                });
+            }
         }
 
         overlay.style.display = 'none';
@@ -1327,6 +1428,9 @@ class App {
             ? '輸入矩陣，每行一列，數值以空格分隔\n例：\n1 2 3\n4 5 6\n\n或輸入維度建立空矩陣，例：3*5'
             : '輸入數值，以空格或換行分隔\n例：1 2 3 4 5';
         const oldText = el.inputText || '';
+        const originalState = JSON.parse(JSON.stringify(el.serialize()));
+        const originalIndex = this.elements.indexOf(el);
+        const restoreOriginal = () => this._restoreElementSnapshot(el, originalState, originalIndex);
         this.textInputDialog.show({
             title: `編輯${typeLabel}`,
             placeholder,
@@ -1340,7 +1444,7 @@ class App {
                 if (!oldText.trim()) {
                     this._deleteElement(el);
                 } else {
-                    el.setFromText(oldText);
+                    restoreOriginal();
                     this.selectionManager.clear();
                 }
                 this.renderer.markDirty();
@@ -1350,7 +1454,7 @@ class App {
                 const error = el.setFromText(text);
                 if (error) {
                     if (oldText.trim()) {
-                        el.setFromText(oldText);
+                        restoreOriginal();
                     } else {
                         this._deleteElement(el);
                     }
@@ -1360,6 +1464,13 @@ class App {
                     return;
                 }
                 if (!text.trim() || (el.width === 0 && el.height === 0)) {
+                    if (oldText.trim()) {
+                        this.history.push({
+                            description: `Delete ${el.type}`,
+                            undo: restoreOriginal,
+                            redo: () => this._deleteElement(el)
+                        });
+                    }
                     this._deleteElement(el);
                     this.renderer.markDirty();
                     this._refreshUI();
@@ -1367,22 +1478,11 @@ class App {
                 }
                 this.toolbar.setTool('select');
                 if (oldText !== text) {
+                    const newState = JSON.parse(JSON.stringify(el.serialize()));
                     this.history.push({
                         description: `Edit ${el.type}`,
-                        undo: () => { 
-                            if (!this.elements.includes(el)) {
-                                this.elements.push(el);
-                                this.layerManager._reindex();
-                            }
-                            el.setFromText(oldText); 
-                        },
-                        redo: () => { 
-                            if (!this.elements.includes(el)) {
-                                this.elements.push(el);
-                                this.layerManager._reindex();
-                            }
-                            el.setFromText(text); 
-                        }
+                        undo: restoreOriginal,
+                        redo: () => this._restoreElementSnapshot(el, newState, originalIndex)
                     });
                 }
                 this.renderer.markDirty();
@@ -1407,6 +1507,9 @@ class App {
     _showTreeDialog(el) {
         const originalText = el.inputText || '';
         const originalType = el.treeType;
+        const originalState = JSON.parse(JSON.stringify(el.serialize()));
+        const originalIndex = this.elements.indexOf(el);
+        const restoreOriginal = () => this._restoreElementSnapshot(el, originalState, originalIndex);
         this.textInputDialog.show({
             title: '編輯樹',
             placeholder: '邊列表格式（首行節點數，其後每行：父 子）\n或層序數值列表',
@@ -1431,8 +1534,7 @@ class App {
                 if (!originalText.trim()) {
                     this._deleteElement(el);
                 } else {
-                    el.treeType = originalType;
-                    el.buildFromText(originalText, 'rooted');
+                    restoreOriginal();
                     this.selectionManager.clear();
                 }
                 this.renderer.markDirty();
@@ -1442,15 +1544,21 @@ class App {
                 if (type) el.treeType = type;
                 const error = el.buildFromText(text, 'rooted');
                 if (!text.trim() || (el.width === 0 && el.height === 0)) {
+                    if (originalText.trim()) {
+                        this.history.push({
+                            description: 'Delete Tree',
+                            undo: restoreOriginal,
+                            redo: () => this._deleteElement(el)
+                        });
+                    }
                     this._deleteElement(el);
                     this.renderer.markDirty();
                     this._refreshUI();
                     return;
                 }
                 if (error) {
-                    el.treeType = originalType;
                     if (originalText.trim()) {
-                        el.buildFromText(originalText, 'rooted');
+                        restoreOriginal();
                     } else {
                         this._deleteElement(el);
                     }
@@ -1460,26 +1568,12 @@ class App {
                     return;
                 }
                 this.toolbar.setTool('select');
-                if (originalText !== text || originalType !== (type || originalType)) {
+                if (originalText !== text || originalType !== el.treeType) {
+                    const newState = JSON.parse(JSON.stringify(el.serialize()));
                     this.history.push({
                         description: 'Edit Tree',
-                        undo: () => {
-                            if (!this.elements.includes(el)) {
-                                this.elements.push(el);
-                                this.layerManager._reindex();
-                            }
-                            el.treeType = originalType;
-                            if (originalText) el.buildFromText(originalText, 'rooted');
-                            else { el.root = null; el.inputText = ''; }
-                        },
-                        redo: () => {
-                            if (!this.elements.includes(el)) {
-                                this.elements.push(el);
-                                this.layerManager._reindex();
-                            }
-                            el.treeType = type || originalType;
-                            el.buildFromText(text, 'rooted');
-                        }
+                        undo: restoreOriginal,
+                        redo: () => this._restoreElementSnapshot(el, newState, originalIndex)
                     });
                 }
                 this.renderer.markDirty();
@@ -1506,6 +1600,9 @@ class App {
         const originalDirected = el.directed;
         const originalZeroBased = el.zeroBased;
         const originalGraphMode = el.graphMode;
+        const originalState = JSON.parse(JSON.stringify(el.serialize()));
+        const originalIndex = this.elements.indexOf(el);
+        const restoreOriginal = () => this._restoreElementSnapshot(el, originalState, originalIndex);
 
         this.textInputDialog.show({
             title: '編輯圖',
@@ -1526,7 +1623,7 @@ class App {
                 if (!originalText.trim()) {
                     this._deleteElement(el);
                 } else {
-                    el.buildFromText(originalText, originalDirected, originalZeroBased, originalGraphMode);
+                    restoreOriginal();
                     this.selectionManager.clear();
                 }
                 this.renderer.markDirty();
@@ -1536,6 +1633,13 @@ class App {
                 const error = el.buildFromText(text, directed, zeroBased, graphMode);
                 
                 if (!text.trim() || (el.width === 0 && el.height === 0)) {
+                    if (originalText.trim()) {
+                        this.history.push({
+                            description: 'Delete Graph',
+                            undo: restoreOriginal,
+                            redo: () => this._deleteElement(el)
+                        });
+                    }
                     this._deleteElement(el);
                     this.renderer.markDirty();
                     this._refreshUI();
@@ -1543,7 +1647,7 @@ class App {
                 }
                 if (error) {
                     if (originalText.trim()) {
-                        el.buildFromText(originalText, originalDirected, originalZeroBased, originalGraphMode);
+                        restoreOriginal();
                     } else {
                         this._deleteElement(el);
                     }
@@ -1558,31 +1662,11 @@ class App {
                     originalDirected !== directed ||
                     originalZeroBased !== zeroBased ||
                     originalGraphMode !== graphMode) {
+                    const newState = JSON.parse(JSON.stringify(el.serialize()));
                     this.history.push({
                         description: 'Edit Graph',
-                        undo: () => {
-                            if (!this.elements.includes(el)) {
-                                this.elements.push(el);
-                                this.layerManager._reindex();
-                            }
-                            if (originalText) {
-                                el.buildFromText(originalText, originalDirected, originalZeroBased, originalGraphMode);
-                            } else {
-                                el.nodes.clear();
-                                el.edges = [];
-                                el.inputText = '';
-                                el.directed = originalDirected;
-                                el.zeroBased = originalZeroBased;
-                                el.graphMode = originalGraphMode;
-                            }
-                        },
-                        redo: () => { 
-                            if (!this.elements.includes(el)) {
-                                this.elements.push(el);
-                                this.layerManager._reindex();
-                            }
-                            el.buildFromText(text, directed, zeroBased, graphMode);
-                        }
+                        undo: restoreOriginal,
+                        redo: () => this._restoreElementSnapshot(el, newState, originalIndex)
                     });
                 }
                 this.renderer.markDirty();
@@ -1653,22 +1737,16 @@ class App {
             overlay.onblur = null;
             overlay.onkeydown = null;
             if (oldValue !== newValue) {
+                const applyValue = value => {
+                    if (!matrixEl.data[row]) return;
+                    matrixEl.data[row][col] = value;
+                    matrixEl.updateTextFromData();
+                    matrixEl._updateSize();
+                };
                 this.history.push({
                     description: 'Edit Matrix Cell',
-                    undo: () => { 
-                        if (matrixEl.data[row]) {
-                            matrixEl.data[row][col] = oldValue; 
-                            matrixEl._updateSize();
-                        }
-                        this.renderer.markDirty();
-                    },
-                    redo: () => { 
-                        if (matrixEl.data[row]) {
-                            matrixEl.data[row][col] = newValue; 
-                            matrixEl._updateSize();
-                        }
-                        this.renderer.markDirty();
-                    }
+                    undo: () => { applyValue(oldValue); this.renderer.markDirty(); },
+                    redo: () => { applyValue(newValue); this.renderer.markDirty(); }
                 });
             }
             this.renderer.markDirty();
@@ -1697,6 +1775,8 @@ class App {
     // Tree Node Inline Value Edit
     // ═════════════════════════════════════════════════════
     _editTreeNodeValue(treeEl, treeNode, wx, wy) {
+        const nodePath = treeEl.getNodePath(treeNode);
+        if (!nodePath) return;
         const { offsetX, offsetY } = treeEl._getCurrentOffsets();
         const nodeWorldPos = treeEl.toWorldPoint(
             treeNode.x + offsetX,
@@ -1739,14 +1819,18 @@ class App {
 
         const oldValue = treeNode.value;
         let cancelled = false;
+        const applyNodeValue = value => {
+            const currentNode = treeEl.getNodeAtPath(nodePath);
+            if (currentNode) treeEl.setNodeValue(currentNode, value);
+        };
         const updatePreview = () => {
-            treeEl.setNodeValue(treeNode, overlay.value);
+            applyNodeValue(overlay.value);
             this.renderer.markDirty();
         };
 
         const finishEdit = () => {
             const newValue = cancelled ? oldValue : (overlay.value.trim() || oldValue);
-            treeEl.setNodeValue(treeNode, newValue);
+            applyNodeValue(newValue);
             treeEl.isEditingNode = false;
             overlay.style.display = 'none';
             overlay.onblur = null;
@@ -1755,8 +1839,8 @@ class App {
             if (oldValue !== newValue) {
                 this.history.push({
                     description: 'Edit Tree Node',
-                    undo: () => { treeEl.setNodeValue(treeNode, oldValue); this.renderer.markDirty(); },
-                    redo: () => { treeEl.setNodeValue(treeNode, newValue); this.renderer.markDirty(); }
+                    undo: () => { applyNodeValue(oldValue); this.renderer.markDirty(); },
+                    redo: () => { applyNodeValue(newValue); this.renderer.markDirty(); }
                 });
                 this._autosave();
             }
@@ -1776,6 +1860,138 @@ class App {
         };
     }
 
+    _editTreeEdgeWeight(treeEl, edgeNode) {
+        const parentNode = edgeNode?.parent;
+        if (!parentNode) return;
+        const nodePath = treeEl.getNodePath(edgeNode);
+        if (!nodePath || nodePath === 'r') return;
+
+        const { offsetX, offsetY } = treeEl._getCurrentOffsets();
+        const edgeMidpoint = treeEl.toWorldPoint(
+            (parentNode.x + edgeNode.x) / 2 + offsetX,
+            (parentNode.y + edgeNode.y) / 2 + offsetY
+        );
+        const screenPos = this.camera.worldToScreen(edgeMidpoint.x, edgeMidpoint.y);
+        const canvasRect = this.canvas.getBoundingClientRect();
+        const zoom = this.camera.zoom;
+        const fontSize = 11 * zoom;
+        const oldWeight = edgeNode.meta?.edgeWeight == null
+            ? null
+            : String(edgeNode.meta.edgeWeight);
+        const oldHasWeights = treeEl.hasWeights;
+        const oldWeightOverrides = { ...treeEl._edgeWeightOverrides };
+        const applyEdgeWeight = value => {
+            const currentNode = treeEl.getNodeAtPath(nodePath);
+            if (currentNode) treeEl.setEdgeWeight(currentNode, value ?? '');
+        };
+        const overlay = document.getElementById('text-edit-overlay');
+        if (!overlay) return;
+
+        treeEl.isEditingEdge = true;
+        treeEl.hasWeights = true;
+        const getEditorWidth = value => Math.max(fontSize * 0.7, (value.length || 1) * fontSize * 0.7);
+        const sizeEditor = value => {
+            const width = getEditorWidth(value);
+            overlay.style.left = `${canvasRect.left + screenPos.x - width / 2}px`;
+            overlay.style.width = `${width}px`;
+        };
+        overlay.style.cssText = '';
+        overlay.className = 'transparent-selection';
+        overlay.style.display = 'block';
+        overlay.style.top = `${canvasRect.top + screenPos.y - fontSize * 0.68}px`;
+        overlay.style.height = `${fontSize * 1.36}px`;
+        overlay.style.boxSizing = 'border-box';
+        overlay.style.padding = '0';
+        overlay.style.fontFamily = 'Consolas, monospace';
+        overlay.style.fontSize = `${fontSize}px`;
+        overlay.style.lineHeight = '1.3';
+        overlay.style.textAlign = 'center';
+        overlay.style.background = 'transparent';
+        overlay.style.color = 'transparent';
+        overlay.style.caretColor = 'var(--text-primary, #fff)';
+        overlay.style.border = 'none';
+        overlay.style.outline = 'none';
+        overlay.style.transformOrigin = 'center center';
+        overlay.style.transform = treeEl.rotation ? `rotate(${treeEl.rotation}rad)` : 'none';
+        overlay.maxLength = 64;
+        overlay.value = oldWeight ?? '';
+        sizeEditor(overlay.value);
+
+        let cancelled = false;
+        let finished = false;
+        const updatePreview = () => {
+            const value = overlay.value.trim();
+            const valid = value === '' || Number.isFinite(Number(value));
+            sizeEditor(overlay.value);
+            overlay.style.color = valid ? 'transparent' : 'var(--text-primary, #fff)';
+            if (valid) applyEdgeWeight(value);
+            this.renderer.markDirty();
+        };
+
+        const finishEdit = () => {
+            if (finished) return;
+            finished = true;
+            const value = overlay.value.trim();
+            const valid = cancelled || value === '' || Number.isFinite(Number(value));
+            const newWeight = cancelled ? oldWeight : (value === '' ? null : value);
+            if (cancelled || !valid || oldWeight === newWeight) {
+                edgeNode.meta ||= {};
+                if (oldWeight === null) delete edgeNode.meta.edgeWeight;
+                else edgeNode.meta.edgeWeight = oldWeight;
+                treeEl._edgeWeightOverrides = { ...oldWeightOverrides };
+                treeEl.hasWeights = oldHasWeights;
+            } else {
+                applyEdgeWeight(newWeight);
+                treeEl.hasWeights = true;
+            }
+            const newWeightOverrides = { ...treeEl._edgeWeightOverrides };
+            treeEl.isEditingEdge = false;
+            overlay.style.display = 'none';
+            overlay.onblur = null;
+            overlay.oninput = null;
+            overlay.onkeydown = null;
+
+            if (!cancelled && !valid) this._toast('邊權重必須是有限數值。');
+            if (oldWeight !== newWeight && valid) {
+                this.history.push({
+                    description: 'Edit Tree Edge Weight',
+                    undo: () => {
+                        applyEdgeWeight(oldWeight);
+                        treeEl._edgeWeightOverrides = { ...oldWeightOverrides };
+                        treeEl.hasWeights = oldHasWeights;
+                        this.renderer.markDirty();
+                    },
+                    redo: () => {
+                        applyEdgeWeight(newWeight);
+                        treeEl._edgeWeightOverrides = { ...newWeightOverrides };
+                        treeEl.hasWeights = true;
+                        this.renderer.markDirty();
+                    }
+                });
+                this._autosave();
+            }
+            this.renderer.markDirty();
+        };
+
+        overlay.oninput = updatePreview;
+        overlay.onblur = finishEdit;
+        overlay.onkeydown = event => {
+            if (event.key === 'Enter') {
+                event.preventDefault();
+                overlay.blur();
+            } else if (event.key === 'Escape') {
+                event.preventDefault();
+                cancelled = true;
+                overlay.value = oldWeight ?? '';
+                overlay.blur();
+            }
+        };
+
+        this.renderer.markDirty();
+        overlay.focus();
+        if (oldWeight !== null) overlay.select();
+    }
+
     // ═════════════════════════════════════════════════════
     // Markdown Element
     // ═════════════════════════════════════════════════════
@@ -1791,6 +2007,9 @@ class App {
      */
     _showMarkdownDialog(el, isNew = false) {
         const oldText = el.markdownText;
+        const originalState = JSON.parse(JSON.stringify(el.serialize()));
+        const originalIndex = this.elements.indexOf(el);
+        const restoreOriginal = () => this._restoreElementSnapshot(el, originalState, originalIndex);
 
         // ── Build overlay ───────────────────────────
         const overlay = document.createElement('div');
@@ -1905,6 +2124,13 @@ class App {
             if (!text) {
                 // Empty text: if new, don't create; if existing, delete
                 if (!isNew) {
+                    if (oldText.trim()) {
+                        this.history.push({
+                            description: 'Delete Markdown',
+                            undo: restoreOriginal,
+                            redo: () => this._deleteElement(el)
+                        });
+                    }
                     this._deleteElement(el);
                     this.selectionManager.clear();
                 }
@@ -1916,6 +2142,7 @@ class App {
 
             el.markdownText = text;
             el._render();
+            const newState = JSON.parse(JSON.stringify(el.serialize()));
 
             if (isNew) {
                 this.elements.push(el);
@@ -1924,8 +2151,8 @@ class App {
             } else if (oldText !== text) {
                 this.history.push({
                     description: 'Edit Markdown',
-                    undo: () => { el.markdownText = oldText; el._render(); this.renderer.markDirty(); },
-                    redo: () => { el.markdownText = text; el._render(); this.renderer.markDirty(); }
+                    undo: restoreOriginal,
+                    redo: () => this._restoreElementSnapshot(el, newState, originalIndex)
                 });
             }
 
@@ -1938,8 +2165,7 @@ class App {
         // ── Cancel ──────────────────────────────────
         const cancel = () => {
             if (!isNew) {
-                el.markdownText = oldText;
-                el._render();
+                restoreOriginal();
             }
             this.selectionManager.clear();
             closeDialog();

@@ -9,6 +9,7 @@ export class Transform {
         this.startX = 0;
         this.startY = 0;
         this.startBounds = null;
+        this.startResizeState = null;
         this.startRotation = 0;
         this.startPositions = [];   // for multi-drag
     }
@@ -21,6 +22,10 @@ export class Transform {
         this._ep = {
             p1x: el.x,              p1y: el.y,
             p2x: el.x + el.width,  p2y: el.y + el.height
+        };
+        this._connections = {
+            p1: el.connections?.p1 ? { ...el.connections.p1 } : null,
+            p2: el.connections?.p2 ? { ...el.connections.p2 } : null
         };
     }
 
@@ -45,6 +50,7 @@ export class Transform {
         this.targetElement = el;
         // Let element snapshot any internal state it needs for proportional resize
         if (el.onResizeStart) el.onResizeStart();
+        this.startResizeState = el.captureResizeState?.() ?? null;
     }
 
     startRotate(wx, wy, el) {
@@ -226,18 +232,30 @@ export class Transform {
             info.element = this.targetElement;
             info.epIndex = this.epIndex;
             info._ep = { ...this._ep };
+            info._connections = {
+                p1: this._connections.p1 ? { ...this._connections.p1 } : null,
+                p2: this._connections.p2 ? { ...this._connections.p2 } : null
+            };
         }
         if (this.mode === 'drag') {
             info.elements = this.startPositions.map(sp => ({
                 el: sp.el,
                 fromX: sp.x, fromY: sp.y,
-                toX: sp.el.x, toY: sp.el.y
+                toX: sp.el.x, toY: sp.el.y,
+                fromPoints: sp.points ? sp.points.map(point => ({ ...point })) : null,
+                toPoints: sp.el.points ? sp.el.points.map(point => ({ ...point })) : null
             }));
         }
         if (this.mode === 'resize') {
             info.element = this.targetElement;
             info.fromBounds = { ...this.startBounds };
             info.toBounds = { x: this.targetElement.x, y: this.targetElement.y, w: this.targetElement.width, h: this.targetElement.height };
+            info.fromPoints = this.startPoints ? this.startPoints.map(point => ({ ...point })) : null;
+            info.toPoints = this.targetElement.points
+                ? this.targetElement.points.map(point => ({ ...point }))
+                : null;
+            info.fromResizeState = this.startResizeState;
+            info.toResizeState = this.targetElement.captureResizeState?.() ?? null;
         }
         if (this.mode === 'rotate') {
             info.element = this.targetElement;
@@ -249,6 +267,8 @@ export class Transform {
         this.handleIndex = -1;
         this.startPositions = [];
         this.targetElement = null;
+        this.startResizeState = null;
+        this._connections = null;
         return info;
     }
 
@@ -259,23 +279,41 @@ export class Transform {
             el.x = ep.p1x; el.y = ep.p1y;
             el.width  = ep.p2x - ep.p1x;
             el.height = ep.p2y - ep.p1y;
+            if (el.connections) {
+                el.connections.p1 = this._connections.p1 ? { ...this._connections.p1 } : null;
+                el.connections.p2 = this._connections.p2 ? { ...this._connections.p2 } : null;
+            }
         }
         if (this.mode === 'drag') {
             for (const sp of this.startPositions) {
                 sp.el.x = sp.x;
                 sp.el.y = sp.y;
+                if (sp.points && Array.isArray(sp.el.points)) {
+                    sp.el.points = sp.points.map(point => ({ ...point }));
+                }
             }
         }
         if (this.mode === 'resize' && this.targetElement) {
-            Object.assign(this.targetElement, {
+            const el = this.targetElement;
+            Object.assign(el, {
                 x: this.startBounds.x, y: this.startBounds.y,
                 width: this.startBounds.w, height: this.startBounds.h
             });
+            if (this.startPoints && Array.isArray(el.points)) {
+                el.points = this.startPoints.map(point => ({ ...point }));
+            }
+            if (this.startResizeState && typeof el.restoreResizeState === 'function') {
+                el.restoreResizeState(this.startResizeState);
+            } else if (typeof el.onResize === 'function') {
+                el.onResize(this.startBounds.w, this.startBounds.h);
+            }
         }
         if (this.mode === 'rotate' && this.targetElement) {
             this.targetElement.rotation = this.startRotation;
         }
         this.mode = null;
+        this.startResizeState = null;
+        this._connections = null;
         this.app.renderer.markDirty();
     }
 }

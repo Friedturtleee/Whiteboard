@@ -87,7 +87,7 @@ export class Renderer {
 
         // Draw selection handles on selected elements
         for (const el of sel.selectedElements) {
-            if (el.hidden || el.isEditingNode) continue;
+            if (el.hidden || el.isEditingNode || el.isEditingEdge) continue;
             ctx.save();
             this._drawElementHandles(ctx, el);
             ctx.restore();

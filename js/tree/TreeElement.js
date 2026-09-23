@@ -18,6 +18,7 @@ export class TreeElement extends Element {
         this.label = 'Tree';
         this.hasWeights = false;
         this._nodeValueOverrides = {};
+        this._edgeWeightOverrides = {};
         this._draggingNode = null;
     }
 
@@ -71,6 +72,7 @@ export class TreeElement extends Element {
         this.inputText = input;
         this.hasWeights = result.hasWeights || false;
         this._nodeValueOverrides = {};
+        this._edgeWeightOverrides = {};
         // Compute Euler tour timestamps for euler tree type
         if (this.treeType === 'euler') {
             TreeParser.computeEulerTour(this.root);
@@ -189,6 +191,18 @@ export class TreeElement extends Element {
         });
     }
 
+    hitTestEdgeNode(wx, wy, tolerance = 12) {
+        if (!this.root) return null;
+        const point = this.toLocalPoint(wx, wy);
+        const { offsetX, offsetY } = this._getCurrentOffsets();
+        return TreeRenderer.hitTestEdgeNode(this.root, point.x, point.y, {
+            nodeRadius: this.nodeRadius,
+            offsetX,
+            offsetY,
+            tolerance
+        });
+    }
+
     /**
      * Connection ports = the actual tree nodes in world coordinates.
      */
@@ -219,6 +233,40 @@ export class TreeElement extends Element {
         this._origNodeRadius = this.nodeRadius;
         this._origResizeW = this.width;
         this._origResizeH = this.height;
+    }
+
+    captureResizeState() {
+        const nodePositions = [];
+        const pending = this.root ? [this.root] : [];
+        const visited = new Set();
+        while (pending.length) {
+            const node = pending.pop();
+            if (!node || visited.has(node)) continue;
+            visited.add(node);
+            nodePositions.push({ node, x: node.x, y: node.y });
+            (node.children || []).forEach(child => pending.push(child));
+        }
+        return {
+            nodeRadius: this.nodeRadius,
+            nodePositions,
+            relOffsetX: this._relOffsetX,
+            relOffsetY: this._relOffsetY,
+            offsetX: this._offsetX,
+            offsetY: this._offsetY
+        };
+    }
+
+    restoreResizeState(state) {
+        if (!state) return;
+        this.nodeRadius = state.nodeRadius;
+        for (const { node, x, y } of state.nodePositions || []) {
+            node.x = x;
+            node.y = y;
+        }
+        this._relOffsetX = state.relOffsetX;
+        this._relOffsetY = state.relOffsetY;
+        this._offsetX = state.offsetX;
+        this._offsetY = state.offsetY;
     }
 
     /**
@@ -256,6 +304,62 @@ export class TreeElement extends Element {
         return false;
     }
 
+    getNodePath(targetNode) {
+        if (!this.root || !targetNode) return null;
+        const pending = [{ node: this.root, path: 'r' }];
+        const visited = new Set();
+        while (pending.length) {
+            const { node, path } = pending.pop();
+            if (!node || visited.has(node)) continue;
+            visited.add(node);
+            if (node === targetNode) return path;
+            (node.children || []).forEach((child, index) => {
+                if (child) pending.push({ node: child, path: `${path}.${index}` });
+            });
+        }
+        return null;
+    }
+
+    getNodeAtPath(path) {
+        if (!this.root || typeof path !== 'string' || !/^r(?:\.\d+)*$/.test(path)) return null;
+        let node = this.root;
+        for (const part of path.split('.').slice(1)) {
+            node = node?.children?.[Number(part)];
+            if (!node) return null;
+        }
+        return node;
+    }
+
+    setEdgeWeight(targetNode, value) {
+        if (!this.root || !targetNode) return false;
+        const pending = [{ node: this.root, path: 'r' }];
+        const visited = new Set();
+        while (pending.length) {
+            const { node, path } = pending.pop();
+            if (!node || visited.has(node)) continue;
+            visited.add(node);
+            if (node === targetNode) {
+                if (path === 'r') return false;
+                const weight = String(value ?? '').trim();
+                if (weight && !Number.isFinite(Number(weight))) return false;
+                node.meta ||= {};
+                if (weight) {
+                    node.meta.edgeWeight = weight;
+                    this._edgeWeightOverrides[path] = weight;
+                } else {
+                    delete node.meta.edgeWeight;
+                    this._edgeWeightOverrides[path] = null;
+                }
+                this.hasWeights = true;
+                return true;
+            }
+            (node.children || []).forEach((child, index) => {
+                if (child) pending.push({ node: child, path: `${path}.${index}` });
+            });
+        }
+        return false;
+    }
+
     _restoreNodeValueOverrides(overrides) {
         const entries = Object.entries(overrides || {});
         if (entries.length > MAX_TREE_NODES || (entries.length && !this.root)) {
@@ -277,6 +381,32 @@ export class TreeElement extends Element {
         this._nodeValueOverrides = Object.fromEntries(entries);
     }
 
+    _restoreEdgeWeightOverrides(overrides) {
+        const entries = Object.entries(overrides || {});
+        if (entries.length > MAX_TREE_NODES || (entries.length && !this.root)) {
+            throw new TypeError('Saved tree edge-weight overrides are invalid.');
+        }
+        for (const [path, value] of entries) {
+            const validValue = value === null ||
+                typeof value === 'string' && value.length <= MAX_TREE_INPUT_LENGTH &&
+                    (value === '' || Number.isFinite(Number(value))) ||
+                typeof value === 'number' && Number.isFinite(value);
+            if (!/^r(?:\.\d+)+$/.test(path) || !validValue) {
+                throw new TypeError('Saved tree edge-weight overrides are invalid.');
+            }
+            let node = this.root;
+            for (const part of path.split('.').slice(1)) {
+                node = node?.children?.[Number(part)];
+                if (!node) throw new TypeError('Saved tree edge-weight override path is invalid.');
+            }
+            node.meta ||= {};
+            if (value === null || value === '') delete node.meta.edgeWeight;
+            else node.meta.edgeWeight = String(value);
+        }
+        this._edgeWeightOverrides = Object.fromEntries(entries);
+        if (entries.length) this.hasWeights = true;
+    }
+
     serialize() {
         return {
             ...super.serialize(),
@@ -285,6 +415,7 @@ export class TreeElement extends Element {
             inputText: this.inputText,
             hasWeights: this.hasWeights,
             nodeValueOverrides: { ...this._nodeValueOverrides },
+            edgeWeightOverrides: { ...this._edgeWeightOverrides },
             _relOffsetX: this._relOffsetX,
             _relOffsetY: this._relOffsetY
         };
@@ -293,8 +424,12 @@ export class TreeElement extends Element {
     deserialize(data) {
         super.deserialize(data);
         const nodeValueOverrides = data.nodeValueOverrides || {};
+        const edgeWeightOverrides = data.edgeWeightOverrides || {};
         if (!nodeValueOverrides || typeof nodeValueOverrides !== 'object' || Array.isArray(nodeValueOverrides)) {
             throw new TypeError('Saved tree node overrides are invalid.');
+        }
+        if (!edgeWeightOverrides || typeof edgeWeightOverrides !== 'object' || Array.isArray(edgeWeightOverrides)) {
+            throw new TypeError('Saved tree edge-weight overrides are invalid.');
         }
         this.treeType = data.treeType || 'tree';
         this.nodeRadius = data.nodeRadius || 18;
@@ -316,7 +451,9 @@ export class TreeElement extends Element {
                 this._relOffsetY = data._relOffsetY;
             }
         }
+        this.hasWeights = Boolean(data.hasWeights) || this.hasWeights;
         this._restoreNodeValueOverrides(nodeValueOverrides);
+        this._restoreEdgeWeightOverrides(edgeWeightOverrides);
         return this;
     }
 

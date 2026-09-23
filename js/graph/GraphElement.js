@@ -199,6 +199,18 @@ export class GraphElement extends Element {
         }
     }
 
+    captureResizeState() {
+        return [...this.nodes.values()].map(node => ({ node, x: node.x, y: node.y }));
+    }
+
+    restoreResizeState(state) {
+        if (!state) return;
+        for (const { node, x, y } of state) {
+            node.x = x;
+            node.y = y;
+        }
+    }
+
     /**
      * Scale node positions proportionally when the element bounding box is resized.
      */

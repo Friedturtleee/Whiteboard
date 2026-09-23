@@ -47,22 +47,23 @@ export class TreeRenderer {
             ctx.stroke();
             ctx.globalAlpha = savedAlpha;
 
-            // Draw edge weight label
-            if (hasWeights && child.meta && child.meta.edgeWeight != null) {
+            // Draw edge weights as text, keeping the canvas transparent and uncluttered.
+            if (hasWeights) {
                 const mx = (x1 + x2) / 2;
                 const my = (y1 + y2) / 2;
                 ctx.font = '11px Consolas, monospace';
-                const label = String(child.meta.edgeWeight);
-                const labelWidth = ctx.measureText(label).width + 8;
+                const rawWeight = child.meta?.edgeWeight;
+                const hasWeight = rawWeight != null && String(rawWeight).trim() !== '';
+                const label = hasWeight ? String(rawWeight) : '?';
                 ctx.save();
-                ctx.fillStyle = 'rgba(30, 30, 30, 0.92)';
-                ctx.fillRect(mx - labelWidth / 2, my - 9, labelWidth, 18);
-                ctx.strokeStyle = '#f0c040';
-                ctx.lineWidth = 1;
-                ctx.strokeRect(mx - labelWidth / 2, my - 9, labelWidth, 18);
-                ctx.fillStyle = '#f0c040';
                 ctx.textAlign = 'center';
                 ctx.textBaseline = 'middle';
+                if (typeof ctx.strokeText === 'function') {
+                    ctx.strokeStyle = 'rgba(25, 25, 25, 0.95)';
+                    ctx.lineWidth = 3;
+                    ctx.strokeText(label, mx, my);
+                }
+                ctx.fillStyle = hasWeight ? '#f0c040' : 'rgba(240, 192, 64, 0.42)';
                 ctx.fillText(label, mx, my);
                 ctx.restore();
             }
@@ -189,6 +190,33 @@ export class TreeRenderer {
             if (TreeRenderer.hitTestEdge(child, wx, wy, opts, visited)) return true;
         }
         return false;
+    }
+
+    /** Return the child node whose incoming edge is closest to the point. */
+    static hitTestEdgeNode(root, wx, wy, opts = {}) {
+        const best = { node: null, distance: Infinity };
+        _findTreeEdgeNode(root, wx, wy, opts, new Set(), best);
+        return best.node;
+    }
+}
+
+function _findTreeEdgeNode(node, wx, wy, opts, visited, best) {
+    if (!node || node.value === null || visited.has(node)) return;
+    visited.add(node);
+    const r = opts.nodeRadius || 18;
+    const ox = opts.offsetX || 0;
+    const oy = opts.offsetY || 0;
+    const tol = opts.tolerance || 12;
+
+    for (const child of (node.children || []).filter(Boolean)) {
+        const x1 = node.x + ox, y1 = node.y + oy + r;
+        const x2 = child.x + ox, y2 = child.y + oy - r;
+        const distance = _treePtSegDist(wx, wy, x1, y1, x2, y2);
+        if (distance <= tol && distance < best.distance) {
+            best.node = child;
+            best.distance = distance;
+        }
+        _findTreeEdgeNode(child, wx, wy, opts, visited, best);
     }
 }
 

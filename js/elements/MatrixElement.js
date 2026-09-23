@@ -85,6 +85,16 @@ export class MatrixElement extends Element {
         this._origResizeH = this.height;
     }
 
+    captureResizeState() {
+        return { cellSize: this.cellSize, fontSize: this.fontSize };
+    }
+
+    restoreResizeState(state) {
+        if (!state) return;
+        this.cellSize = state.cellSize;
+        this.fontSize = state.fontSize;
+    }
+
     /**
      * Called when element is resized via handle. Recalculates cellSize from new dimensions.
      */
@@ -281,6 +291,9 @@ export class MatrixElement extends Element {
         ctx.font = `${this.fontSize}px Consolas, monospace`;
         ctx.textAlign = 'center';
         ctx.textBaseline = 'middle';
+        const snappedTextAngle = Math.abs(Math.sin(rotation)) > Math.abs(Math.cos(rotation))
+            ? Math.PI / 2
+            : 0;
 
         for (let r = 0; r < rows; r++) {
             for (let c = 0; c < cols; c++) {
@@ -306,7 +319,11 @@ export class MatrixElement extends Element {
                 const val = this.data[r]?.[c] ?? '';
                 if (!isEmptyCell(val)) {
                     ctx.fillStyle = this.getEffectiveColor(this.color);
-                    ctx.fillText(String(val), cx + cellSize / 2, cy + cellSize / 2, cellSize - 4);
+                    ctx.save();
+                    ctx.translate(cx + cellSize / 2, cy + cellSize / 2);
+                    ctx.rotate(snappedTextAngle - rotation);
+                    ctx.fillText(String(val), 0, 0, cellSize - 4);
+                    ctx.restore();
                 }
 
                 // Cell selection highlight

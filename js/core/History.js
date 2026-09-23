@@ -24,7 +24,12 @@ export class History {
     undo() {
         if (this.undoStack.length === 0) return;
         const cmd = this.undoStack.pop();
-        cmd.undo();
+        try {
+            cmd.undo();
+        } catch (error) {
+            this.undoStack.push(cmd);
+            throw error;
+        }
         this.redoStack.push(cmd);
         this.app.renderer.markDirty();
     }
@@ -32,28 +37,34 @@ export class History {
     redo() {
         if (this.redoStack.length === 0) return;
         const cmd = this.redoStack.pop();
-        cmd.redo();
+        try {
+            cmd.redo();
+        } catch (error) {
+            this.redoStack.push(cmd);
+            throw error;
+        }
         this.undoStack.push(cmd);
         this.app.renderer.markDirty();
     }
 
     /** Helper: create a move command */
-    pushMove(elementsInfo) {
+    pushMove(elementsInfo, onChange = null) {
         // elementsInfo = [{ el, fromX, fromY, toX, toY }, ...]
-        this.push({
-            description: 'Move',
-            undo() {
-                for (const info of elementsInfo) {
-                    info.el.x = info.fromX;
-                    info.el.y = info.fromY;
-                }
-            },
-            redo() {
-                for (const info of elementsInfo) {
-                    info.el.x = info.toX;
-                    info.el.y = info.toY;
+        const apply = key => {
+            for (const info of elementsInfo) {
+                info.el.x = info[key === 'from' ? 'fromX' : 'toX'];
+                info.el.y = info[key === 'from' ? 'fromY' : 'toY'];
+                const points = info[key === 'from' ? 'fromPoints' : 'toPoints'];
+                if (points && Array.isArray(info.el.points)) {
+                    info.el.points = points.map(point => ({ ...point }));
                 }
             }
+            onChange?.();
+        };
+        this.push({
+            description: 'Move',
+            undo() { apply('from'); },
+            redo() { apply('to'); }
         });
     }
 
@@ -67,13 +78,17 @@ export class History {
                 for (const el of arr) {
                     const idx = app.elements.indexOf(el);
                     if (idx >= 0) app.elements.splice(idx, 1);
-                    app.selectionManager.remove(el);
+                }
+                if (app.selectionManager?.selectedElements) {
+                    const removed = new Set(arr);
+                    app.selectionManager.selectedElements = app.selectionManager.selectedElements
+                        .filter(el => !removed.has(el));
                 }
                 app.layerManager._reindex();
             },
             redo() {
                 for (const el of arr) {
-                    app.elements.push(el);
+                    if (!app.elements.includes(el)) app.elements.push(el);
                 }
                 app.layerManager._reindex();
             }
@@ -82,6 +97,7 @@ export class History {
 
     /** Helper: create a delete command */
     pushDelete(app, elements) {
+        const previousSelection = app.selectionManager?.selectedElements?.slice() || [];
         const copies = elements
             .map(el => ({ el, idx: app.elements.indexOf(el) }))
             .filter(copy => copy.idx >= 0)
@@ -90,14 +106,23 @@ export class History {
             description: 'Delete',
             undo() {
                 for (const c of copies) {
-                    app.elements.splice(c.idx, 0, c.el);
+                    if (!app.elements.includes(c.el)) app.elements.splice(c.idx, 0, c.el);
                 }
                 app.layerManager._reindex();
+                if (app.selectionManager?.selectedElements) {
+                    app.selectionManager.selectedElements = previousSelection
+                        .filter(el => app.elements.includes(el));
+                }
             },
             redo() {
                 for (const c of copies) {
                     const idx = app.elements.indexOf(c.el);
                     if (idx >= 0) app.elements.splice(idx, 1);
+                }
+                if (app.selectionManager?.selectedElements) {
+                    const deleted = new Set(copies.map(copy => copy.el));
+                    app.selectionManager.selectedElements = app.selectionManager.selectedElements
+                        .filter(el => !deleted.has(el));
                 }
                 app.layerManager._reindex();
             }
@@ -114,20 +139,38 @@ export class History {
     }
 
     /** Helper: resize command */
-    pushResize(el, fromBounds, toBounds) {
+    pushResize(
+        el, fromBounds, toBounds, fromPoints = null, toPoints = null,
+        onChange = null, fromResizeState = null, toResizeState = null
+    ) {
+        const applyBounds = (bounds, points, resizeState) => {
+            el.x = bounds.x;
+            el.y = bounds.y;
+            el.width = bounds.w;
+            el.height = bounds.h;
+            if (points && Array.isArray(el.points)) {
+                el.points = points.map(point => ({ ...point }));
+            }
+            if (resizeState && typeof el.restoreResizeState === 'function') {
+                el.restoreResizeState(resizeState);
+            } else if (typeof el.onResize === 'function') {
+                el.onResize(bounds.w, bounds.h);
+            }
+            onChange?.();
+        };
         this.push({
             description: 'Resize',
-            undo() { el.x = fromBounds.x; el.y = fromBounds.y; el.width = fromBounds.w; el.height = fromBounds.h; },
-            redo() { el.x = toBounds.x; el.y = toBounds.y; el.width = toBounds.w; el.height = toBounds.h; }
+            undo() { applyBounds(fromBounds, fromPoints, fromResizeState); },
+            redo() { applyBounds(toBounds, toPoints, toResizeState); }
         });
     }
 
     /** Helper: rotate command */
-    pushRotate(el, fromRot, toRot) {
+    pushRotate(el, fromRot, toRot, onChange = null) {
         this.push({
             description: 'Rotate',
-            undo() { el.rotation = fromRot; },
-            redo() { el.rotation = toRot; }
+            undo() { el.rotation = fromRot; onChange?.(); },
+            redo() { el.rotation = toRot; onChange?.(); }
         });
     }
 }
