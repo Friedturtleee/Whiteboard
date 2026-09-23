@@ -1710,6 +1710,7 @@ class App {
         const overlay = document.getElementById('text-edit-overlay');
         if (!overlay) return;
 
+        treeEl.isEditingNode = true;
         overlay.style.cssText = '';
         overlay.className = 'transparent-selection';
         
@@ -1734,6 +1735,7 @@ class App {
         overlay.value = String(treeNode.value);
         overlay.focus();
         overlay.select();
+        this.renderer.markDirty();
 
         const oldValue = treeNode.value;
         let cancelled = false;
@@ -1745,6 +1747,7 @@ class App {
         const finishEdit = () => {
             const newValue = cancelled ? oldValue : (overlay.value.trim() || oldValue);
             treeEl.setNodeValue(treeNode, newValue);
+            treeEl.isEditingNode = false;
             overlay.style.display = 'none';
             overlay.onblur = null;
             overlay.oninput = null;

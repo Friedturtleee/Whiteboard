@@ -113,10 +113,13 @@ test('rooted tree weights are rendered on edges and reject non-numeric weights',
     assert.equal(child.meta.nodeWeight, undefined);
 
     const labels = [];
+    const weightRects = [];
     const ctx = {
         globalAlpha: 1,
         save() {}, restore() {}, beginPath() {}, moveTo() {}, lineTo() {}, stroke() {},
-        fill() {}, fillRect() {}, strokeRect() {}, arc() {},
+        fill() {},
+        fillRect: (x, y, width, height) => weightRects.push({ x, y, width, height }),
+        strokeRect() {}, arc() {},
         measureText: text => ({ width: String(text).length * 6 }),
         fillText: text => labels.push(String(text))
     };
@@ -129,6 +132,12 @@ test('rooted tree weights are rendered on edges and reject non-numeric weights',
     });
     assert.ok(labels.includes('7'));
     assert.ok(!labels.includes('w:7'));
+    const weightRect = weightRects[0];
+    assert.ok(weightRect);
+    assert.equal(weightRect.x + weightRect.width / 2,
+        (tree.root.x + child.x) / 2);
+    assert.equal(weightRect.y + weightRect.height / 2,
+        (tree.root.y + child.y) / 2);
     assert.match(TreeParser.parseRootedFormat(['2', '1 2 nope']).error, /有限數值/);
 
     assert.equal(tree.setNodeValue(child, 'updated'), true);

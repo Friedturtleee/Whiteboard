@@ -53,18 +53,17 @@ export class TreeRenderer {
                 const my = (y1 + y2) / 2;
                 ctx.font = '11px Consolas, monospace';
                 const label = String(child.meta.edgeWeight);
-                const labelX = mx + 10;
                 const labelWidth = ctx.measureText(label).width + 8;
                 ctx.save();
                 ctx.fillStyle = 'rgba(30, 30, 30, 0.92)';
-                ctx.fillRect(labelX - labelWidth / 2, my - 9, labelWidth, 18);
+                ctx.fillRect(mx - labelWidth / 2, my - 9, labelWidth, 18);
                 ctx.strokeStyle = '#f0c040';
                 ctx.lineWidth = 1;
-                ctx.strokeRect(labelX - labelWidth / 2, my - 9, labelWidth, 18);
+                ctx.strokeRect(mx - labelWidth / 2, my - 9, labelWidth, 18);
                 ctx.fillStyle = '#f0c040';
                 ctx.textAlign = 'center';
                 ctx.textBaseline = 'middle';
-                ctx.fillText(label, labelX, my);
+                ctx.fillText(label, mx, my);
                 ctx.restore();
             }
 

@@ -219,15 +219,25 @@ try {
         tree.buildFromText('2\n1 2 7', 'rooted');
         const node = tree.root.children[0];
         app.elements.push(tree);
+        app.selectionManager.select(tree);
         app.history.clear();
         app._editTreeNodeValue(tree, node, 0, 0);
         const style = getComputedStyle(overlay);
         const nodeHasNoEditorFrame = style.borderTopWidth === '0px' &&
             style.backgroundColor === 'rgba(0, 0, 0, 0)';
+        const originalDrawElementHandles = app.renderer._drawElementHandles;
+        let handleDrawCount = 0;
+        app.renderer._drawElementHandles = () => { handleDrawCount++; };
+        const selectionCtx = { save() {}, restore() {} };
+        app.renderer._drawSelectionOverlay(selectionCtx, 1);
+        const selectionFrameHidden = handleDrawCount === 0;
         overlay.value = '9';
         overlay.dispatchEvent(new Event('input', { bubbles: true }));
         const nodePreviewSynced = node.value === '9';
         overlay.blur();
+        app.renderer._drawSelectionOverlay(selectionCtx, 1);
+        const selectionFrameRestored = handleDrawCount === 1;
+        app.renderer._drawElementHandles = originalDrawElementHandles;
         const nodeCommitSynced = node.value === '9';
         app.history.undo();
         const nodeUndoSynced = node.value === '2';
@@ -266,7 +276,8 @@ try {
         app.renderer.markDirty();
 
         return {
-            nodeHasNoEditorFrame, nodePreviewSynced, nodeCommitSynced,
+            nodeHasNoEditorFrame, selectionFrameHidden, selectionFrameRestored,
+            nodePreviewSynced, nodeCommitSynced,
             nodeUndoSynced, nodeRedoSynced, nodeSaveSynced, textPreviewSynced,
             textUndoSynced, textRedoSynced
         };
