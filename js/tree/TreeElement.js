@@ -17,6 +17,7 @@ export class TreeElement extends Element {
         this.inputText = '';
         this.label = 'Tree';
         this.hasWeights = false;
+        this._nodeValueOverrides = {};
         this._draggingNode = null;
     }
 
@@ -69,6 +70,7 @@ export class TreeElement extends Element {
         this.root = result.root;
         this.inputText = input;
         this.hasWeights = result.hasWeights || false;
+        this._nodeValueOverrides = {};
         // Compute Euler tour timestamps for euler tree type
         if (this.treeType === 'euler') {
             TreeParser.computeEulerTour(this.root);
@@ -234,6 +236,47 @@ export class TreeElement extends Element {
         this._layoutTree();
     }
 
+    setNodeValue(targetNode, value) {
+        if (!this.root || !targetNode) return false;
+        const pending = [{ node: this.root, path: 'r' }];
+        const visited = new Set();
+        while (pending.length) {
+            const { node, path } = pending.pop();
+            if (!node || visited.has(node)) continue;
+            visited.add(node);
+            if (node === targetNode) {
+                node.value = value;
+                this._nodeValueOverrides[path] = value;
+                return true;
+            }
+            (node.children || []).forEach((child, index) => {
+                if (child) pending.push({ node: child, path: `${path}.${index}` });
+            });
+        }
+        return false;
+    }
+
+    _restoreNodeValueOverrides(overrides) {
+        const entries = Object.entries(overrides || {});
+        if (entries.length > MAX_TREE_NODES || (entries.length && !this.root)) {
+            throw new TypeError('Saved tree node overrides are invalid.');
+        }
+        for (const [path, value] of entries) {
+            if (!/^r(?:\.\d+)*$/.test(path) ||
+                !(typeof value === 'string' || (typeof value === 'number' && Number.isFinite(value))) ||
+                (typeof value === 'string' && value.length > MAX_TREE_INPUT_LENGTH)) {
+                throw new TypeError('Saved tree node overrides are invalid.');
+            }
+            let node = this.root;
+            for (const part of path.split('.').slice(1)) {
+                node = node?.children?.[Number(part)];
+                if (!node) throw new TypeError('Saved tree node override path is invalid.');
+            }
+            node.value = value;
+        }
+        this._nodeValueOverrides = Object.fromEntries(entries);
+    }
+
     serialize() {
         return {
             ...super.serialize(),
@@ -241,6 +284,7 @@ export class TreeElement extends Element {
             nodeRadius: this.nodeRadius,
             inputText: this.inputText,
             hasWeights: this.hasWeights,
+            nodeValueOverrides: { ...this._nodeValueOverrides },
             _relOffsetX: this._relOffsetX,
             _relOffsetY: this._relOffsetY
         };
@@ -248,6 +292,10 @@ export class TreeElement extends Element {
 
     deserialize(data) {
         super.deserialize(data);
+        const nodeValueOverrides = data.nodeValueOverrides || {};
+        if (!nodeValueOverrides || typeof nodeValueOverrides !== 'object' || Array.isArray(nodeValueOverrides)) {
+            throw new TypeError('Saved tree node overrides are invalid.');
+        }
         this.treeType = data.treeType || 'tree';
         this.nodeRadius = data.nodeRadius || 18;
         this.inputText = data.inputText || '';
@@ -268,6 +316,7 @@ export class TreeElement extends Element {
                 this._relOffsetY = data._relOffsetY;
             }
         }
+        this._restoreNodeValueOverrides(nodeValueOverrides);
         return this;
     }
 

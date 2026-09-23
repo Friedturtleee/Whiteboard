@@ -207,6 +207,74 @@ try {
     if (Object.values(historyRoundTrip).some(value => !value)) {
         throw new Error('A data-structure delete/undo/redo browser check failed.');
     }
+    const inlineEditing = await page.evaluate(async () => {
+        const [{ TreeElement }, { TextElement }] = await Promise.all([
+            import('/js/tree/TreeElement.js'),
+            import('/js/elements/TextElement.js')
+        ]);
+        const app = window.__whiteboard;
+        const overlay = document.getElementById('text-edit-overlay');
+
+        const tree = new TreeElement(40, 40);
+        tree.buildFromText('2\n1 2 7', 'rooted');
+        const node = tree.root.children[0];
+        app.elements.push(tree);
+        app.history.clear();
+        app._editTreeNodeValue(tree, node, 0, 0);
+        const style = getComputedStyle(overlay);
+        const nodeHasNoEditorFrame = style.borderTopWidth === '0px' &&
+            style.backgroundColor === 'rgba(0, 0, 0, 0)';
+        overlay.value = '9';
+        overlay.dispatchEvent(new Event('input', { bubbles: true }));
+        const nodePreviewSynced = node.value === '9';
+        overlay.blur();
+        const nodeCommitSynced = node.value === '9';
+        app.history.undo();
+        const nodeUndoSynced = node.value === '2';
+        app.history.redo();
+        const nodeRedoSynced = node.value === '9';
+        const savedTree = tree.serialize();
+        const restoredTree = TreeElement.fromData(savedTree);
+        restoredTree.deserialize(savedTree);
+        const nodeSaveSynced = restoredTree.root.children[0].value === '9';
+        app.elements.splice(app.elements.indexOf(tree), 1);
+
+        const text = new TextElement(80, 80);
+        text.text = 'before';
+        text.autoSize(app.renderer.ctx);
+        text.width *= 1.5;
+        text.height *= 1.25;
+        const savedText = text.serialize();
+        const restoredText = TextElement.fromData(savedText);
+        restoredText.deserialize(savedText);
+        app.elements.push(restoredText);
+        app.history.clear();
+        app._startTextEditing(restoredText);
+        overlay.value = 'a much longer string';
+        overlay.dispatchEvent(new Event('input', { bubbles: true }));
+        const textPreviewSynced = restoredText.text === overlay.value &&
+            restoredText.width > savedText.width;
+        app._finishTextEditing();
+        const editedWidth = restoredText.width;
+        app.history.undo();
+        const textUndoSynced = restoredText.text === 'before' && restoredText.width < editedWidth;
+        app.history.redo();
+        const textRedoSynced = restoredText.text === 'a much longer string' &&
+            restoredText.width === editedWidth;
+        app.elements.splice(app.elements.indexOf(restoredText), 1);
+        app.history.clear();
+        app.renderer.markDirty();
+
+        return {
+            nodeHasNoEditorFrame, nodePreviewSynced, nodeCommitSynced,
+            nodeUndoSynced, nodeRedoSynced, nodeSaveSynced, textPreviewSynced,
+            textUndoSynced, textRedoSynced
+        };
+    });
+    if (Object.values(inlineEditing).some(value => !value)) {
+        throw new Error('An inline tree/text editing synchronization check failed: ' +
+            JSON.stringify(inlineEditing));
+    }
     if (pageErrors.length) {
         throw new AggregateError(pageErrors, 'The page reported uncaught JavaScript errors.');
     }

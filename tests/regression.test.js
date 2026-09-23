@@ -14,6 +14,7 @@ import { GraphRenderer } from '../js/graph/GraphRenderer.js';
 import { TreeElement } from '../js/tree/TreeElement.js';
 import { TreeLayout } from '../js/tree/TreeLayout.js';
 import { TreeParser } from '../js/tree/TreeParser.js';
+import { TreeRenderer } from '../js/tree/TreeRenderer.js';
 
 test('array placeholders remain distinct from ordinary user data', () => {
     const input = 'left\u3000__WHITEBOARD_EMPTY__\u3000right';
@@ -104,6 +105,40 @@ test('tree edge parser rejects cycles and accepts a connected acyclic tree', () 
     assert.equal(valid.nodes.size, 4);
 });
 
+test('rooted tree weights are rendered on edges and reject non-numeric weights', () => {
+    const tree = new TreeElement();
+    assert.equal(tree.buildFromText('2\n1 2 7', 'rooted'), null);
+    const child = tree.root.children[0];
+    assert.equal(child.meta.edgeWeight, '7');
+    assert.equal(child.meta.nodeWeight, undefined);
+
+    const labels = [];
+    const ctx = {
+        globalAlpha: 1,
+        save() {}, restore() {}, beginPath() {}, moveTo() {}, lineTo() {}, stroke() {},
+        fill() {}, fillRect() {}, strokeRect() {}, arc() {},
+        measureText: text => ({ width: String(text).length * 6 }),
+        fillText: text => labels.push(String(text))
+    };
+    TreeRenderer.draw(ctx, tree.root, {
+        nodeRadius: tree.nodeRadius,
+        treeType: tree.treeType,
+        hasWeights: tree.hasWeights,
+        offsetX: 0,
+        offsetY: 0
+    });
+    assert.ok(labels.includes('7'));
+    assert.ok(!labels.includes('w:7'));
+    assert.match(TreeParser.parseRootedFormat(['2', '1 2 nope']).error, /有限數值/);
+
+    assert.equal(tree.setNodeValue(child, 'updated'), true);
+    const saved = tree.serialize();
+    const restored = TreeElement.fromData(saved);
+    restored.deserialize(saved);
+    assert.equal(restored.root.children[0].value, 'updated');
+    assert.equal(restored.root.children[0].meta.edgeWeight, '7');
+});
+
 test('text hydration normalizes legacy fonts without mutating saved data', () => {
     const data = {
         type: 'text', x: 10, y: 20, width: 100, height: 24,
@@ -116,6 +151,24 @@ test('text hydration normalizes legacy fonts without mutating saved data', () =>
     assert.equal(element.fontFamily, "'Zen Maru Gothic', sans-serif");
     assert.equal(element.isBold, true);
     assert.equal(data.fontFamily, 'Segoe UI');
+});
+
+test('text hydration restores scale bases so edits and resizing stay aligned', () => {
+    const data = {
+        type: 'text', x: 0, y: 0, width: 200, height: 48,
+        text: 'abc', fontSize: 16, baseWidth: 100, baseHeight: 24
+    };
+    const element = TextElement.fromData(data);
+    element.deserialize(data);
+    assert.equal(element._baseWidth, 100);
+    assert.equal(element._baseHeight, 24);
+
+    element.autoSize({
+        save() {}, restore() {},
+        measureText: text => ({ width: text.length * 10 })
+    });
+    assert.equal(element.width, 60);
+    assert.equal(element.height, 41.6);
 });
 
 test('pen bounds handle large strokes without argument spreading or rescanning each point', () => {

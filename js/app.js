@@ -1186,21 +1186,24 @@ class App {
         const overlay = document.getElementById('text-edit-overlay');
         if (!overlay) return;
 
-        const screenTL = this.camera.worldToScreen(el.x, el.y);
         const scaleX = (el._baseWidth && el._baseWidth > 0) ? el.width / el._baseWidth : 1;
+        const scaleY = (el._baseHeight && el._baseHeight > 0) ? el.height / el._baseHeight : 1;
+        const screenTL = this.camera.worldToScreen(el.x, el.y);
+        const canvasRect = this.canvas.getBoundingClientRect();
         const effectiveFontSize = el.fontSize * scaleX * this.camera.zoom;
 
-        overlay.style.left = screenTL.x + 'px';
-        overlay.style.top = screenTL.y + 'px';
+        overlay.style.left = (canvasRect.left + screenTL.x) + 'px';
+        overlay.style.top = (canvasRect.top + screenTL.y) + 'px';
         overlay.style.width = (el.width * this.camera.zoom) + 'px';
         overlay.style.height = (el.height * this.camera.zoom) + 'px';
         overlay.style.fontSize = effectiveFontSize + 'px';
+        overlay.style.lineHeight = (1.3 * scaleY / scaleX).toString();
         
         if (el.rotation) {
-            overlay.style.transformOrigin = 'top left';
+            overlay.style.transformOrigin = 'center center';
             overlay.style.transform = `rotate(${el.rotation}rad)`;
         } else {
-            overlay.style.transformOrigin = 'top left';
+            overlay.style.transformOrigin = 'center center';
             overlay.style.transform = 'none';
         }
     }
@@ -1217,7 +1220,6 @@ class App {
         this._updateTextEditingOverlay();
         
         overlay.style.fontFamily = el.fontFamily;
-        overlay.style.lineHeight = '1.3';
         overlay.style.textAlign = 'left';
         overlay.style.whiteSpace = 'pre';
         overlay.style.color = 'transparent';
@@ -1268,7 +1270,15 @@ class App {
             el.text = oldText;
             el.autoSize(this.ctx);
         } else if (oldText !== newText) {
-            this.history.pushPropertyChange(el, 'text', oldText, newText);
+            const applyText = value => {
+                el.text = value;
+                el.autoSize(this.ctx);
+            };
+            this.history.push({
+                description: 'Edit text',
+                undo: () => applyText(oldText),
+                redo: () => applyText(newText)
+            });
         }
 
         overlay.style.display = 'none';
@@ -1286,6 +1296,7 @@ class App {
         }
 
         this.renderer.markDirty();
+        this._autosave();
     }
 
     // ═════════════════════════════════════════════════════
@@ -1687,55 +1698,78 @@ class App {
     // ═════════════════════════════════════════════════════
     _editTreeNodeValue(treeEl, treeNode, wx, wy) {
         const { offsetX, offsetY } = treeEl._getCurrentOffsets();
-        const nodeScreenPos = this.camera.worldToScreen(
+        const nodeWorldPos = treeEl.toWorldPoint(
             treeNode.x + offsetX,
             treeNode.y + offsetY
         );
+        const nodeScreenPos = this.camera.worldToScreen(nodeWorldPos.x, nodeWorldPos.y);
+        const canvasRect = this.canvas.getBoundingClientRect();
         const r = treeEl.nodeRadius * this.camera.zoom;
+        const fontSize = 13 * this.camera.zoom;
 
         const overlay = document.getElementById('text-edit-overlay');
         if (!overlay) return;
 
         overlay.style.cssText = '';
-        overlay.className = '';
+        overlay.className = 'transparent-selection';
         
         overlay.style.display = 'block';
-        overlay.style.left = (nodeScreenPos.x - r) + 'px';
-        overlay.style.top = (nodeScreenPos.y - r / 2) + 'px';
+        overlay.style.left = (canvasRect.left + nodeScreenPos.x - r) + 'px';
+        overlay.style.top = (canvasRect.top + nodeScreenPos.y - fontSize * 1.3 / 2) + 'px';
         overlay.style.width = (r * 2) + 'px';
-        overlay.style.height = r + 'px';
-        overlay.style.fontSize = (13 * this.camera.zoom) + 'px';
+        overlay.style.height = (fontSize * 1.3) + 'px';
+        overlay.style.boxSizing = 'border-box';
+        overlay.style.padding = '0';
+        overlay.style.fontFamily = 'Consolas, monospace';
+        overlay.style.fontSize = fontSize + 'px';
+        overlay.style.lineHeight = '1.3';
         overlay.style.textAlign = 'center';
-        overlay.style.background = 'var(--bg-panel, #2a2a2a)';
-        overlay.style.color = 'var(--text-primary, #fff)';
-        overlay.style.border = '1px solid var(--accent, #6366f1)';
-        overlay.style.borderRadius = '4px';
+        overlay.style.background = 'transparent';
+        overlay.style.color = 'transparent';
+        overlay.style.caretColor = 'var(--text-primary, #fff)';
+        overlay.style.border = 'none';
+        overlay.style.outline = 'none';
+        overlay.style.transformOrigin = 'center center';
+        overlay.style.transform = treeEl.rotation ? `rotate(${treeEl.rotation}rad)` : 'none';
         overlay.value = String(treeNode.value);
         overlay.focus();
         overlay.select();
 
         const oldValue = treeNode.value;
+        let cancelled = false;
+        const updatePreview = () => {
+            treeEl.setNodeValue(treeNode, overlay.value);
+            this.renderer.markDirty();
+        };
 
         const finishEdit = () => {
-            const newValue = overlay.value.trim() || oldValue;
-            treeNode.value = newValue;
+            const newValue = cancelled ? oldValue : (overlay.value.trim() || oldValue);
+            treeEl.setNodeValue(treeNode, newValue);
             overlay.style.display = 'none';
-            overlay.style.textAlign = '';
             overlay.onblur = null;
+            overlay.oninput = null;
+            overlay.onkeydown = null;
             if (oldValue !== newValue) {
                 this.history.push({
                     description: 'Edit Tree Node',
-                    undo: () => { treeNode.value = oldValue; this.renderer.markDirty(); },
-                    redo: () => { treeNode.value = newValue; this.renderer.markDirty(); }
+                    undo: () => { treeEl.setNodeValue(treeNode, oldValue); this.renderer.markDirty(); },
+                    redo: () => { treeEl.setNodeValue(treeNode, newValue); this.renderer.markDirty(); }
                 });
+                this._autosave();
             }
             this.renderer.markDirty();
         };
 
+        overlay.oninput = updatePreview;
         overlay.onblur = finishEdit;
         overlay.onkeydown = (e) => {
             if (e.key === 'Enter') { e.preventDefault(); overlay.blur(); }
-            if (e.key === 'Escape') { overlay.value = String(oldValue); overlay.blur(); }
+            if (e.key === 'Escape') {
+                e.preventDefault();
+                cancelled = true;
+                overlay.value = String(oldValue);
+                overlay.blur();
+            }
         };
     }
 

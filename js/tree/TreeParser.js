@@ -3,8 +3,8 @@
  *
  * Format R (rooted, default for 'tree' type):
  *   First line: n (number of nodes)
- *   Next n-1 lines: parent child [child_weight]
- *   child_weight is stored as meta.nodeWeight on the child node.
+ *   Next n-1 lines: parent child [edge_weight]
+ *   The optional weight belongs to the parent-child edge.
  *
  * Format A (parent array):
  *   Each line n is the parent of node n (1-indexed).
@@ -83,8 +83,8 @@ export class TreeParser {
     }
 
     /**
-     * Parse rooted format: first line = n, then n-1 lines of "parent child [child_weight]".
-     * child_weight is stored as meta.nodeWeight on the child node.
+     * Parse rooted format: first line = n, then n-1 lines of "parent child [edge_weight]".
+     * The optional weight is stored on the child as metadata for its incoming edge.
      * @param {string[]} lines - pre-split, trimmed, non-empty lines
      */
     static parseRootedFormat(lines) {
@@ -121,11 +121,11 @@ export class TreeParser {
         // Create all n nodes (1-based)
         for (let i = 1; i <= n; i++) getNode(i);
 
-        // Parse n-1 directed edges: parent → child [child_node_weight].
+        // Parse n-1 directed edges: parent → child [edge_weight].
         for (let i = 1; i < lines.length; i++) {
             const parts = lines[i].split(/\s+/);
             if (parts.length < 2 || parts.length > 3) {
-                return invalid('第 ' + (i + 1) + ' 行格式應為：父節點 子節點 [節點權重]。');
+                return invalid('第 ' + (i + 1) + ' 行格式應為：父節點 子節點 [邊權重]。');
             }
             const parentKey = parts[0];
             const childKey = parts[1];
@@ -139,6 +139,9 @@ export class TreeParser {
                 parentId < 1 || parentId > n || childId < 1 || childId > n) {
                 return invalid('第 ' + (i + 1) + ' 行的節點編號必須介於 1 和 ' + n + '。');
             }
+            if (weight !== null && !Number.isFinite(Number(weight))) {
+                return invalid('第 ' + (i + 1) + ' 行的邊權重必須是有限數值。');
+            }
             if (parentId === childId) {
                 return invalid('第 ' + (i + 1) + ' 行不能讓節點成為自己的父節點。');
             }
@@ -150,7 +153,7 @@ export class TreeParser {
             }
 
             if (weight !== null) {
-                childNode.meta.nodeWeight = weight;
+                childNode.meta.edgeWeight = weight;
                 hasWeights = true;
             }
 

@@ -120,6 +120,12 @@ export class TextElement extends Element {
         const normalized = data.fontFamily?.includes('Segoe UI')
             ? { ...data, fontFamily: "'Zen Maru Gothic', sans-serif" }
             : data;
-        return super.deserialize(normalized);
+        super.deserialize(normalized);
+        const positiveFinite = value => Number.isFinite(value) && value > 0 ? value : null;
+        this._baseWidth = positiveFinite(data.baseWidth) ??
+            positiveFinite(data._baseWidth) ?? positiveFinite(this.width) ?? 1;
+        this._baseHeight = positiveFinite(data.baseHeight) ??
+            positiveFinite(data._baseHeight) ?? positiveFinite(this.height) ?? 1;
+        return this;
     }
 }
