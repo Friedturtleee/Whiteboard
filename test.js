@@ -44,7 +44,8 @@ try {
     const collaborationRequests = [];
     page.on('pageerror', error => pageErrors.push(error));
     page.on('request', request => {
-        if (/clerk|whiteboard-server\.friedturtleee\.workers\.dev/i.test(request.url())) {
+        if (/clerk|whiteboard-server\.friedturtleee\.workers\.dev|esm\.sh\/(?:yjs|y-websocket)/i
+            .test(request.url())) {
             collaborationRequests.push(request.url());
         }
     });
