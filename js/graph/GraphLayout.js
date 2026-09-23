@@ -10,9 +10,31 @@ export class GraphLayout {
 
         const width = options.width || 400;
         const height = options.height || 300;
-        const iterations = options.iterations || 80;
+        const requestedIterations = Math.max(1, Math.floor(options.iterations || 80));
 
         const nodesArr = Array.from(nodes.values());
+        const attractionEdges = [];
+        const seenPairs = new Set();
+        for (const edge of edges) {
+            if (!nodes.has(edge.u) || !nodes.has(edge.v) || edge.u === edge.v) continue;
+            const [u, v] = [String(edge.u), String(edge.v)].sort();
+            const key = JSON.stringify([u, v]);
+            if (seenPairs.has(key)) continue;
+            seenPairs.add(key);
+            attractionEdges.push(edge);
+        }
+
+        // Keep interactive previews responsive on dense/parallel-edge inputs.
+        // Parallel edges still render individually, but their endpoints only
+        // need one attraction force during layout.
+        const repulsionPairs = nodesArr.length * (nodesArr.length - 1) / 2;
+        const estimatedWorkPerIteration = repulsionPairs + attractionEdges.length;
+        const workBudget = options.workBudget || 6000000;
+        const budgetedIterations = Math.max(
+            8,
+            Math.floor(workBudget / Math.max(1, estimatedWorkPerIteration))
+        );
+        const iterations = Math.min(requestedIterations, budgetedIterations);
 
         // Initialize positions if not set
         const cx = width / 2;
@@ -59,7 +81,7 @@ export class GraphLayout {
                 }
             }
             // Attraction
-            for (const e of edges) {
+            for (const e of attractionEdges) {
                 const n1 = nodes.get(e.u);
                 const n2 = nodes.get(e.v);
                 if (!n1 || !n2) continue;

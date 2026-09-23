@@ -64,6 +64,85 @@ try {
     if (collaborationUiPresent || collaborationRequests.length) {
         throw new Error('The local-only page unexpectedly loaded collaboration UI or services.');
     }
+    const rendered = await page.evaluate(async () => {
+        const [
+            { ShapeElement }, { TextElement }, { MatrixElement }, { QueueElement },
+            { StackElement }, { TreeElement }, { GraphElement }
+        ] = await Promise.all([
+            import('/js/elements/ShapeElement.js'),
+            import('/js/elements/TextElement.js'),
+            import('/js/elements/MatrixElement.js'),
+            import('/js/elements/QueueElement.js'),
+            import('/js/elements/StackElement.js'),
+            import('/js/tree/TreeElement.js'),
+            import('/js/graph/GraphElement.js')
+        ]);
+        const shape = new ShapeElement('rectangle', 10, 10);
+        shape.width = 80;
+        shape.height = 50;
+        const text = new TextElement(110, 10);
+        text.text = 'smoke test';
+        const matrix = new MatrixElement(10, 100);
+        matrix.setFromText('1 2\n3 4');
+        const queue = new QueueElement(150, 100);
+        queue.setFromText('front back');
+        const stack = new StackElement(280, 100);
+        stack.setFromText('bottom top');
+        const tree = new TreeElement(400, 30);
+        const treeError = tree.buildFromText('3\n1 2\n1 3', 'rooted');
+        const graph = new GraphElement(600, 30);
+        const graphError = graph.buildFromText('3 2\n1 2\n2 3');
+        if (treeError || graphError) throw new Error(treeError || graphError);
+
+        const canvas = document.createElement('canvas');
+        canvas.width = 1000;
+        canvas.height = 600;
+        const ctx = canvas.getContext('2d');
+        const elements = [shape, text, matrix, queue, stack, tree, graph];
+        for (const element of elements) {
+            element.rotation = Math.PI / 18;
+            element.draw(ctx, { zoom: 1 });
+        }
+        return elements.map(element => element.type);
+    });
+    if (rendered.length !== 7) throw new Error('Not all representative element types rendered.');
+    const historyRoundTrip = await page.evaluate(async () => {
+        const [{ MatrixElement }, { QueueElement }] = await Promise.all([
+            import('/js/elements/MatrixElement.js'),
+            import('/js/elements/QueueElement.js')
+        ]);
+        const app = window.__whiteboard;
+        const matrix = new MatrixElement(20, 20);
+        matrix.setFromText('7');
+        app.elements.push(matrix);
+        app.layerManager._reindex();
+        app.history.clear();
+        matrix.selectedCells.add('0,0');
+        app._deleteSelectedMatrixCells(matrix);
+        const matrixDeleted = !app.elements.includes(matrix);
+        app.history.undo();
+        const matrixRestored = app.elements.includes(matrix) && matrix.data[0][0] === '7';
+        app.history.redo();
+        const matrixRedone = !app.elements.includes(matrix);
+
+        const queue = new QueueElement(20, 20);
+        queue.setFromText('7');
+        app.elements.push(queue);
+        app.layerManager._reindex();
+        app.history.clear();
+        queue.selectedIndices.add(0);
+        app._deleteSelectedItems(queue);
+        const queueDeleted = !app.elements.includes(queue);
+        app.history.undo();
+        const queueRestored = app.elements.includes(queue) && queue.items[0] === '7';
+        app.history.redo();
+        const queueRedone = !app.elements.includes(queue);
+        app.history.clear();
+        return { matrixDeleted, matrixRestored, matrixRedone, queueDeleted, queueRestored, queueRedone };
+    });
+    if (Object.values(historyRoundTrip).some(value => !value)) {
+        throw new Error('A data-structure delete/undo/redo browser check failed.');
+    }
     if (pageErrors.length) {
         throw new AggregateError(pageErrors, 'The page reported uncaught JavaScript errors.');
     }

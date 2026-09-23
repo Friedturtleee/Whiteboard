@@ -7,6 +7,7 @@ import { Serializer } from '../js/core/Serializer.js';
 import { History } from '../js/core/History.js';
 import { GraphElement } from '../js/graph/GraphElement.js';
 import { GraphParser } from '../js/graph/GraphParser.js';
+import { GraphLayout } from '../js/graph/GraphLayout.js';
 import { TreeElement } from '../js/tree/TreeElement.js';
 import { TreeLayout } from '../js/tree/TreeLayout.js';
 import { TreeParser } from '../js/tree/TreeParser.js';
@@ -73,6 +74,24 @@ test('invalid graph edits leave the previous graph intact', () => {
     assert.match(graph.buildFromText('2 1\n1 3'), /range/);
     assert.deepEqual([...graph.nodes.keys()], previousNodes);
     assert.equal(graph.inputText, previousText);
+});
+
+test('parallel graph edges do not distort force-directed node positions', () => {
+    const makeNodes = () => new Map([
+        ['1', { id: '1', x: 0, y: 0 }],
+        ['2', { id: '2', x: 0, y: 0 }],
+        ['3', { id: '3', x: 0, y: 0 }]
+    ]);
+    const singleEdgeLayout = makeNodes();
+    const parallelEdgeLayout = makeNodes();
+    const edge = { u: '1', v: '2' };
+
+    GraphLayout.layout(singleEdgeLayout, [edge], { iterations: 80 });
+    GraphLayout.layout(parallelEdgeLayout, new Array(100).fill(edge), { iterations: 80 });
+    assert.deepEqual(
+        [...parallelEdgeLayout.values()].map(({ x, y }) => [x, y]),
+        [...singleEdgeLayout.values()].map(({ x, y }) => [x, y])
+    );
 });
 
 test('tree edge parser rejects cycles and accepts a connected acyclic tree', () => {
