@@ -54,6 +54,7 @@ export class StackElement extends Element {
         if (vals.length > MAX_ITEMS) return '最多輸入 10000 個元素。';
         this.inputText = rawText;
         this.items = vals;
+        this.highlights = {};
         this.selectedIndices.clear();
         this._lastItemIdx = -1;
         this._updateSize();

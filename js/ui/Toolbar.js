@@ -29,6 +29,7 @@ export class Toolbar {
     }
 
     setTool(tool) {
+        if (this.app.cloudBoards?.isReadOnly && !['pan', 'select'].includes(tool)) return;
         this.currentTool = tool;
 
         // Update button states

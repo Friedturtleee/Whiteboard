@@ -30,7 +30,7 @@ export class LayerManager {
 
     bringToFront(el) {
         const idx = this.app.elements.indexOf(el);
-        if (idx < 0) return;
+        if (idx < 0 || idx === this.app.elements.length - 1) return;
         const oldArr = this.app.elements.slice();
         this.app.elements.splice(idx, 1);
         this.app.elements.push(el);
@@ -40,7 +40,7 @@ export class LayerManager {
 
     sendToBack(el) {
         const idx = this.app.elements.indexOf(el);
-        if (idx < 0) return;
+        if (idx <= 0) return;
         const oldArr = this.app.elements.slice();
         this.app.elements.splice(idx, 1);
         this.app.elements.unshift(el);

@@ -144,6 +144,37 @@ export class ShapeElement extends Element {
         return super.getConnectionPorts();
     }
 
+    getEndpointWorld(index) {
+        const x = index === 0 ? this.x : this.x + this.width;
+        const y = index === 0 ? this.y : this.y + this.height;
+        return this.toWorldPoint(x, y);
+    }
+
+    setEndpointWorld(index, point) {
+        if ((this.shapeType !== 'line' && this.shapeType !== 'arrow') ||
+            (index !== 0 && index !== 1) || !Number.isFinite(point?.x) || !Number.isFinite(point?.y)) {
+            return false;
+        }
+
+        const fixedEndpoint = this.getEndpointWorld(index === 0 ? 1 : 0);
+        const endpoints = index === 0 ? [point, fixedEndpoint] : [fixedEndpoint, point];
+        const cx = (endpoints[0].x + endpoints[1].x) / 2;
+        const cy = (endpoints[0].y + endpoints[1].y) / 2;
+        const cos = Math.cos(this.rotation || 0);
+        const sin = Math.sin(this.rotation || 0);
+        const local = endpoints.map(endpoint => {
+            const dx = endpoint.x - cx;
+            const dy = endpoint.y - cy;
+            return { x: cx + dx * cos + dy * sin, y: cy - dx * sin + dy * cos };
+        });
+
+        this.x = local[0].x;
+        this.y = local[0].y;
+        this.width = local[1].x - local[0].x;
+        this.height = local[1].y - local[0].y;
+        return true;
+    }
+
     getBounds() {
         if (this.shapeType === 'line' || this.shapeType === 'arrow') {
             const x1 = this.x, y1 = this.y;

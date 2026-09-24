@@ -28,7 +28,9 @@ export class PropertyPanel {
             swatch.dataset.color = color;
             swatch.addEventListener('click', () => {
                 const sel = this.app.selectionManager;
-                const oldVals = sel.selectedElements.map(e => ({ el: e, old: e.color }));
+                const oldVals = sel.selectedElements
+                    .filter(e => e.color !== color)
+                    .map(e => ({ el: e, old: e.color }));
                 sel.setProperty('color', color);
                 
                 if (oldVals.length > 0) {
@@ -59,7 +61,9 @@ export class PropertyPanel {
                     this._colorGrid.querySelectorAll('.color-swatch').forEach(s => s.classList.remove('selected'));
                     customBtn.classList.add('selected');
                     const sel = this.app.selectionManager;
-                    const oldVals = sel.selectedElements.map(e => ({ el: e, old: e.color }));
+                    const oldVals = sel.selectedElements
+                        .filter(e => e.color !== c)
+                        .map(e => ({ el: e, old: e.color }));
                     sel.setProperty('color', c);
                     
                     if (oldVals.length > 0) {
@@ -88,14 +92,46 @@ export class PropertyPanel {
             if (!el) return;
             let oldVals = null;
             const geometryProp = ['x', 'y', 'width', 'height', 'rotation'].includes(prop);
+            const isValidValue = value => {
+                if (!Number.isFinite(value)) return false;
+                const selected = oldVals?.map(item => item.el) ||
+                    this.app.selectionManager.selectedElements;
+                if (prop === 'x' || prop === 'y') {
+                    return Math.abs(value) <= 100_000_000 && selected.every(item => {
+                        const end = value + (prop === 'x' ? item.width : item.height);
+                        return Math.abs(end) <= 100_000_000;
+                    });
+                }
+                if (prop === 'width' || prop === 'height') {
+                    const signedBounds = selected.length > 0 && selected.every(item =>
+                        item.type === 'line' || item.type === 'arrow');
+                    return Math.abs(value) <= 10_000_000 && (signedBounds || value >= 1) &&
+                        selected.every(item => Math.abs(
+                            (prop === 'width' ? item.x : item.y) + value
+                        ) <= 100_000_000);
+                }
+                if (prop === 'rotation') return Math.abs(value) <= Math.PI * 2;
+                if (prop === 'opacity' || prop === 'saturation') return value >= 0 && value <= 1;
+                if (prop === 'strokeWidth') return value >= 0 && value <= 10_000;
+                return true;
+            };
 
             const startEdit = () => {
                 if (oldVals) return;
                 const sel = this.app.selectionManager;
-                oldVals = sel.selectedElements.map(e => ({ el: e, old: e[prop] }));
-                if (prop === 'width' || prop === 'height') {
-                    for (const item of oldVals) item.el.onResizeStart?.();
-                }
+                const resizing = prop === 'width' || prop === 'height';
+                if (resizing) sel.selectedElements.forEach(item => item.onResizeStart?.());
+                oldVals = sel.selectedElements.map(e => ({
+                    el: e,
+                    old: e[prop],
+                    bounds: resizing
+                        ? { x: e.x, y: e.y, width: e.width, height: e.height }
+                        : null,
+                    points: resizing && Array.isArray(e.points)
+                        ? e.points.map(point => ({ ...point }))
+                        : null,
+                    resizeState: resizing ? e.captureResizeState?.() ?? null : null
+                }));
             };
 
             el.addEventListener('pointerdown', startEdit);
@@ -103,7 +139,9 @@ export class PropertyPanel {
 
             el.addEventListener('input', () => {
                 const val = transform(el.value);
-                const selected = this.app.selectionManager.selectedElements;
+                if (!isValidValue(val)) return;
+                const selected = oldVals?.map(item => item.el) ||
+                    this.app.selectionManager.selectedElements;
                 for (const item of selected) {
                     item[prop] = val;
                     if ((prop === 'width' || prop === 'height') && item.onResize) {
@@ -116,8 +154,80 @@ export class PropertyPanel {
 
             el.addEventListener('change', () => {
                 const val = transform(el.value);
+                if (!isValidValue(val)) {
+                    if (oldVals?.length) {
+                        for (const item of oldVals) {
+                            item.el[prop] = item.old;
+                            if (prop === 'width' || prop === 'height') {
+                                Object.assign(item.el, item.bounds);
+                                if (item.points && Array.isArray(item.el.points)) {
+                                    item.el.points = item.points.map(point => ({ ...point }));
+                                }
+                                if (item.resizeState && typeof item.el.restoreResizeState === 'function') {
+                                    item.el.restoreResizeState(item.resizeState);
+                                } else if (typeof item.el.onResize === 'function') {
+                                    item.el.onResize(item.bounds.width, item.bounds.height);
+                                }
+                            }
+                        }
+                        if (geometryProp) {
+                            this.app._updateConnectedLines(oldVals.map(item => item.el.id));
+                        }
+                        this.app.renderer.markDirty();
+                    }
+                    oldVals = null;
+                    this.update();
+                    return;
+                }
                 if (oldVals?.length) {
                     const localOlds = [...oldVals];
+                    if (localOlds.every(item => Object.is(item.old, val))) {
+                        oldVals = null;
+                        return;
+                    }
+                    if (prop === 'width' || prop === 'height') {
+                        const snapshots = localOlds.map(item => ({
+                            el: item.el,
+                            fromBounds: item.bounds,
+                            toBounds: {
+                                x: item.el.x, y: item.el.y,
+                                width: item.el.width, height: item.el.height
+                            },
+                            fromPoints: item.points,
+                            toPoints: Array.isArray(item.el.points)
+                                ? item.el.points.map(point => ({ ...point }))
+                                : null,
+                            fromResizeState: item.resizeState,
+                            toResizeState: item.el.captureResizeState?.() ?? null
+                        }));
+                        const applyResize = key => {
+                            for (const snapshot of snapshots) {
+                                const bounds = snapshot[key === 'from' ? 'fromBounds' : 'toBounds'];
+                                const points = snapshot[key === 'from' ? 'fromPoints' : 'toPoints'];
+                                const resizeState = snapshot[
+                                    key === 'from' ? 'fromResizeState' : 'toResizeState'
+                                ];
+                                Object.assign(snapshot.el, bounds);
+                                if (points && Array.isArray(snapshot.el.points)) {
+                                    snapshot.el.points = points.map(point => ({ ...point }));
+                                }
+                                if (resizeState && typeof snapshot.el.restoreResizeState === 'function') {
+                                    snapshot.el.restoreResizeState(resizeState);
+                                } else if (typeof snapshot.el.onResize === 'function') {
+                                    snapshot.el.onResize(bounds.width, bounds.height);
+                                }
+                            }
+                            this.app._updateConnectedLines(snapshots.map(item => item.el.id));
+                            this.app.renderer.markDirty();
+                        };
+                        this.app.history.push({
+                            description: `Resize ${prop}`,
+                            undo: () => applyResize('from'),
+                            redo: () => applyResize('to')
+                        });
+                        oldVals = null;
+                        return;
+                    }
                     const applyValue = value => {
                         for (const item of localOlds) {
                             item.el[prop] = value;
@@ -167,12 +277,24 @@ export class PropertyPanel {
             drawStyleSelect.addEventListener('change', () => {
                 const val = drawStyleSelect.value;
                 const sel = this.app.selectionManager;
+                const changes = [];
                 for (const el of sel.selectedElements) {
-                    if (el.drawStyle !== undefined) {
-                        const old = el.drawStyle;
-                        el.drawStyle = val;
-                        this.app.history.pushPropertyChange(el, 'drawStyle', old, val);
-                    }
+                    if (el.drawStyle === undefined || el.drawStyle === val) continue;
+                    changes.push({ el, old: el.drawStyle });
+                    el.drawStyle = val;
+                }
+                if (changes.length) {
+                    this.app.history.push({
+                        description: 'Change draw style',
+                        undo: () => {
+                            changes.forEach(({ el, old }) => { el.drawStyle = old; });
+                            this.app.renderer.markDirty();
+                        },
+                        redo: () => {
+                            changes.forEach(({ el }) => { el.drawStyle = val; });
+                            this.app.renderer.markDirty();
+                        }
+                    });
                 }
                 this.app.renderer.markDirty();
             });
@@ -196,14 +318,15 @@ export class PropertyPanel {
             cellSizeInput.addEventListener('input', () => {
                 const val = Number(cellSizeInput.value);
                 if (cellSizeVal) cellSizeVal.textContent = val;
-                const sel = this.app.selectionManager;
-                for (const el of sel.selectedElements) {
+                const selected = oldCellSizeVals?.map(item => item.el) ||
+                    this.app.selectionManager.selectedElements;
+                for (const el of selected) {
                     if (el.cellSize !== undefined) {
                         el.cellSize = val;
                         el._updateSize();
                     }
                 }
-                this.app._updateConnectedLines(sel.selectedElements.map(el => el.id));
+                this.app._updateConnectedLines(selected.map(el => el.id));
                 this.app.renderer.markDirty();
             });
 
@@ -211,6 +334,10 @@ export class PropertyPanel {
                 const val = Number(cellSizeInput.value);
                 if (oldCellSizeVals && oldCellSizeVals.length > 0) {
                     const localOlds = [...oldCellSizeVals];
+                    if (localOlds.every(item => Object.is(item.old, val))) {
+                        oldCellSizeVals = null;
+                        return;
+                    }
                     const applyCellSize = value => {
                         localOlds.forEach(c => { c.el.cellSize = value; c.el._updateSize(); });
                         this.app._updateConnectedLines(localOlds.map(c => c.el.id));
@@ -248,15 +375,16 @@ export class PropertyPanel {
             fontSizeInput.addEventListener('input', () => {
                 const val = Number(fontSizeInput.value);
                 if (fontSizeVal) fontSizeVal.textContent = val;
-                const sel = this.app.selectionManager;
-                for (const el of sel.selectedElements) {
+                const selected = oldFontSizeVals?.map(item => item.el) ||
+                    this.app.selectionManager.selectedElements;
+                for (const el of selected) {
                     if (el.fontSize !== undefined) {
                         el.fontSize = val;
                         if (el.type === 'text') el.autoSize(this.app.renderer.ctx);
                         if (el.type === 'markdown') el._render();
                     }
                 }
-                this.app._updateConnectedLines(sel.selectedElements.map(el => el.id));
+                this.app._updateConnectedLines(selected.map(el => el.id));
                 this.app.renderer.markDirty();
             });
 
@@ -264,6 +392,10 @@ export class PropertyPanel {
                 const val = Number(fontSizeInput.value);
                 if (oldFontSizeVals && oldFontSizeVals.length > 0) {
                     const localOlds = [...oldFontSizeVals];
+                    if (localOlds.every(item => Object.is(item.old, val))) {
+                        oldFontSizeVals = null;
+                        return;
+                    }
                     const applyFontSize = value => {
                         localOlds.forEach(c => {
                             c.el.fontSize = value;

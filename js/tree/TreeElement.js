@@ -211,14 +211,21 @@ export class TreeElement extends Element {
         const ports = [];
         const { offsetX, offsetY } = this._getCurrentOffsets();
         const visited = new Set();
-        const walk = (node) => {
-            if (!node || node.value === null || visited.has(node)) return;
+        const usedPortIds = new Set();
+        const pending = [{ node: this.root, path: 'r' }];
+        while (pending.length) {
+            const { node, path } = pending.pop();
+            if (!node || node.value === null || visited.has(node)) continue;
             visited.add(node);
             const point = this.toWorldPoint(offsetX + node.x, offsetY + node.y);
-            ports.push({ id: `node_${node.value}`, x: point.x, y: point.y });
-            if (node.children) node.children.forEach(walk);
-        };
-        walk(this.root);
+            const legacyId = `node_${node.value}`;
+            const id = usedPortIds.has(legacyId) ? `tree@${path}` : legacyId;
+            usedPortIds.add(id);
+            ports.push({ id, x: point.x, y: point.y });
+            for (let index = (node.children?.length || 0) - 1; index >= 0; index--) {
+                pending.push({ node: node.children[index], path: `${path}.${index}` });
+            }
+        }
         return ports;
     }
 
@@ -237,14 +244,16 @@ export class TreeElement extends Element {
 
     captureResizeState() {
         const nodePositions = [];
-        const pending = this.root ? [this.root] : [];
+        const pending = this.root ? [{ node: this.root, path: 'r' }] : [];
         const visited = new Set();
         while (pending.length) {
-            const node = pending.pop();
+            const { node, path } = pending.pop();
             if (!node || visited.has(node)) continue;
             visited.add(node);
-            nodePositions.push({ node, x: node.x, y: node.y });
-            (node.children || []).forEach(child => pending.push(child));
+            nodePositions.push({ path, x: node.x, y: node.y });
+            (node.children || []).forEach((child, index) => {
+                if (child) pending.push({ node: child, path: `${path}.${index}` });
+            });
         }
         return {
             nodeRadius: this.nodeRadius,
@@ -259,9 +268,11 @@ export class TreeElement extends Element {
     restoreResizeState(state) {
         if (!state) return;
         this.nodeRadius = state.nodeRadius;
-        for (const { node, x, y } of state.nodePositions || []) {
-            node.x = x;
-            node.y = y;
+        for (const { node, path, x, y } of state.nodePositions || []) {
+            const currentNode = path ? this.getNodeAtPath(path) : node;
+            if (!currentNode) continue;
+            currentNode.x = x;
+            currentNode.y = y;
         }
         this._relOffsetX = state.relOffsetX;
         this._relOffsetY = state.relOffsetY;
@@ -423,6 +434,11 @@ export class TreeElement extends Element {
 
     deserialize(data) {
         super.deserialize(data);
+        // Reused elements (especially those updated by remote sync) must not
+        // keep nodes or offsets from an older snapshot when the source is empty.
+        this.root = null;
+        this._offsetX = undefined;
+        this._offsetY = undefined;
         const nodeValueOverrides = data.nodeValueOverrides || {};
         const edgeWeightOverrides = data.edgeWeightOverrides || {};
         if (!nodeValueOverrides || typeof nodeValueOverrides !== 'object' || Array.isArray(nodeValueOverrides)) {

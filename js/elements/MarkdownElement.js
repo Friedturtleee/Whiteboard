@@ -11,6 +11,17 @@
  */
 import { Element } from '../core/Element.js';
 
+const MAX_RENDER_DIMENSION = 16_384;
+const MAX_RENDER_PIXELS = 16_000_000;
+
+function exceedsRenderLineLimit(text, limit) {
+    let lines = 1;
+    for (let index = 0; index < text.length; index++) {
+        if (text.charCodeAt(index) === 10 && ++lines > limit) return true;
+    }
+    return false;
+}
+
 function escapeHTML(value) {
     return String(value).replace(/[&<>"']/g, char => ({
         '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;'
@@ -28,6 +39,9 @@ function safeMarkdownURL(rawURL) {
 }
 
 export class MarkdownElement extends Element {
+    static MAX_SOURCE_LENGTH = 1_000_000;
+    static MAX_RENDER_LINES = 2_000;
+
     constructor(x = 0, y = 0, markdownText = '') {
         super('markdown', x, y, 320, 200);
         this.markdownText = markdownText;
@@ -52,7 +66,13 @@ export class MarkdownElement extends Element {
      * @returns {string} rendered HTML
      */
     static renderToHTML(md) {
-        if (!md || !md.trim()) return '';
+        if (typeof md !== 'string' || !md.trim()) return '';
+        if (md.length > MarkdownElement.MAX_SOURCE_LENGTH) {
+            return '<p>Markdown source exceeds the 1 MB rendering limit.</p>';
+        }
+        if (exceedsRenderLineLimit(md, MarkdownElement.MAX_RENDER_LINES)) {
+            return '<p>Markdown preview is limited to 2000 lines. Shorten the source to render it.</p>';
+        }
 
         // 1. Limit blockquote nesting to 5 levels
         md = MarkdownElement._limitBlockquoteDepth(md, 5);
@@ -208,6 +228,10 @@ export class MarkdownElement extends Element {
             this._rendering = false;
             return;
         }
+        if (exceedsRenderLineLimit(md, MarkdownElement.MAX_RENDER_LINES)) {
+            this._showRenderLimitNotice();
+            return;
+        }
 
         const html = MarkdownElement.renderToHTML(md);
         const w = this._renderWidth;
@@ -240,11 +264,23 @@ export class MarkdownElement extends Element {
                 return;
             }
             const actualH = container.scrollHeight;
+            const requiredScale = Math.min(
+                2,
+                MAX_RENDER_DIMENSION / w,
+                MAX_RENDER_DIMENSION / actualH,
+                Math.sqrt(MAX_RENDER_PIXELS / (w * actualH))
+            );
+            const minimumScale = typeof html2canvas !== 'undefined' ? 0.5 : 1;
+            if (!Number.isFinite(requiredScale) || requiredScale < minimumScale) {
+                if (container.parentNode) container.parentNode.removeChild(container);
+                this._showRenderLimitNotice();
+                return;
+            }
 
             if (typeof html2canvas !== 'undefined') {
                 html2canvas(container, {
                     backgroundColor: null,
-                    scale: 2,
+                    scale: requiredScale,
                     useCORS: true,
                     logging: false,
                     width: w,
@@ -256,8 +292,8 @@ export class MarkdownElement extends Element {
                     const oldScale = (this._naturalW > 0) ? (this.width / this._naturalW) : 1;
                     
                     this.img = canvas;
-                    this._naturalW = canvas.width / 2;
-                    this._naturalH = canvas.height / 2;
+                    this._naturalW = canvas.width / requiredScale;
+                    this._naturalH = canvas.height / requiredScale;
                     
                     this.width = this._naturalW * oldScale;
                     this.height = this._naturalH * oldScale;
@@ -272,6 +308,31 @@ export class MarkdownElement extends Element {
                 this._renderFallbackSVG(html, w, actualH, container, revision);
             }
         });
+    }
+
+    _showRenderLimitNotice() {
+        const width = Math.min(Math.max(this._renderWidth || 600, 240), 1200);
+        const height = 48;
+        const scale = 2;
+        const canvas = document.createElement('canvas');
+        canvas.width = Math.ceil(width * scale);
+        canvas.height = height * scale;
+        const ctx = canvas.getContext('2d');
+        if (ctx) {
+            ctx.scale(scale, scale);
+            ctx.fillStyle = '#e0e0e0';
+            ctx.font = '14px sans-serif';
+            ctx.textBaseline = 'middle';
+            ctx.fillText('Markdown is too large to render. Shorten it to show the canvas preview.', 8, height / 2, width - 16);
+        }
+        const oldScale = this._naturalW > 0 ? this.width / this._naturalW : 1;
+        this.img = canvas;
+        this._naturalW = width;
+        this._naturalH = height;
+        this.width = width * oldScale;
+        this.height = height * oldScale;
+        this._rendering = false;
+        globalThis.window?.appInstance?.renderer.markDirty();
     }
 
     /** Apply inline styles for html2canvas rendering */
@@ -450,7 +511,7 @@ export class MarkdownElement extends Element {
         this.markdownText = data.markdownText || '';
         this._renderWidth = data.renderWidth || 600;
         this.fontSize = data.fontSize || 15;
-        if (this.markdownText) this._render();
+        this._render();
         return this;
     }
 

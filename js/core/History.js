@@ -14,6 +14,7 @@ export class History {
         this.undoStack.push(command);
         if (this.undoStack.length > this.maxSize) this.undoStack.shift();
         this.redoStack = [];
+        this.app._autosave?.();
     }
 
     clear() {
@@ -22,6 +23,11 @@ export class History {
     }
 
     undo() {
+        if (this.app.cloudBoards?.isReadOnly) return;
+        if (this.app.cloudBoards?.isCloudBoard && this.app.cloudBoards.connection) {
+            this.app.cloudBoards.connection.undo();
+            return;
+        }
         if (this.undoStack.length === 0) return;
         const cmd = this.undoStack.pop();
         try {
@@ -32,9 +38,15 @@ export class History {
         }
         this.redoStack.push(cmd);
         this.app.renderer.markDirty();
+        this.app._autosave?.();
     }
 
     redo() {
+        if (this.app.cloudBoards?.isReadOnly) return;
+        if (this.app.cloudBoards?.isCloudBoard && this.app.cloudBoards.connection) {
+            this.app.cloudBoards.connection.redo();
+            return;
+        }
         if (this.redoStack.length === 0) return;
         const cmd = this.redoStack.pop();
         try {
@@ -45,6 +57,7 @@ export class History {
         }
         this.undoStack.push(cmd);
         this.app.renderer.markDirty();
+        this.app._autosave?.();
     }
 
     /** Helper: create a move command */
@@ -69,11 +82,15 @@ export class History {
     }
 
     /** Helper: create an add element(s) command */
-    pushAdd(app, elements) {
+    pushAdd(app, elements, { discardable = false } = {}) {
         const arr = Array.isArray(elements) ? elements : [elements];
         const desc = arr.length === 1 ? 'Add ' + arr[0].type : 'Add ' + arr.length + ' elements';
+        // Keep each original slot: re-adding at the end silently changes z-order.
+        const originalIndices = arr.map(el => app.elements.indexOf(el));
+        const previousRedoStack = discardable ? this.redoStack.slice() : null;
         this.push({
             description: desc,
+            ...(discardable ? { addedElements: arr, previousRedoStack } : {}),
             undo() {
                 for (const el of arr) {
                     const idx = app.elements.indexOf(el);
@@ -87,12 +104,41 @@ export class History {
                 app.layerManager._reindex();
             },
             redo() {
-                for (const el of arr) {
-                    if (!app.elements.includes(el)) app.elements.push(el);
+                const entries = arr.map((el, index) => ({
+                    el,
+                    index: originalIndices[index] < 0
+                        ? app.elements.length + index
+                        : originalIndices[index]
+                })).sort((a, b) => a.index - b.index);
+                for (const entry of entries) {
+                    if (app.elements.includes(entry.el)) continue;
+                    const index = Math.max(0, Math.min(entry.index, app.elements.length));
+                    app.elements.splice(index, 0, entry.el);
                 }
                 app.layerManager._reindex();
             }
         });
+    }
+
+    /** Remove a newly-created element's add command when its creation dialog is cancelled. */
+    discardAdd(elements) {
+        const arr = Array.isArray(elements) ? elements : [elements];
+        let index = -1;
+        for (let i = this.undoStack.length - 1; i >= 0; i--) {
+            const added = this.undoStack[i].addedElements;
+            if (added?.length === arr.length && arr.every(el => added.includes(el))) {
+                index = i;
+                break;
+            }
+        }
+        if (index < 0) return false;
+
+        const [command] = this.undoStack.splice(index, 1);
+        if (index === this.undoStack.length && this.redoStack.length === 0) {
+            this.redoStack = command.previousRedoStack || [];
+        }
+        this.app._autosave?.();
+        return true;
     }
 
     /** Helper: create a delete command */
@@ -143,6 +189,17 @@ export class History {
         el, fromBounds, toBounds, fromPoints = null, toPoints = null,
         onChange = null, fromResizeState = null, toResizeState = null
     ) {
+        const sameSnapshot = (left, right) => {
+            try {
+                return JSON.stringify(left ?? null) === JSON.stringify(right ?? null);
+            } catch (_) {
+                return left === right;
+            }
+        };
+        const sameBounds = ['x', 'y', 'w', 'h'].every(key => fromBounds[key] === toBounds[key]);
+        if (sameBounds && sameSnapshot(fromPoints, toPoints) &&
+            sameSnapshot(fromResizeState, toResizeState)) return false;
+
         const applyBounds = (bounds, points, resizeState) => {
             el.x = bounds.x;
             el.y = bounds.y;
@@ -163,14 +220,17 @@ export class History {
             undo() { applyBounds(fromBounds, fromPoints, fromResizeState); },
             redo() { applyBounds(toBounds, toPoints, toResizeState); }
         });
+        return true;
     }
 
     /** Helper: rotate command */
     pushRotate(el, fromRot, toRot, onChange = null) {
+        if (fromRot === toRot) return false;
         this.push({
             description: 'Rotate',
             undo() { el.rotation = fromRot; onChange?.(); },
             redo() { el.rotation = toRot; onChange?.(); }
         });
+        return true;
     }
 }

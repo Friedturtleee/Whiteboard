@@ -1,6 +1,18 @@
 /**
  * Element — abstract base class for all whiteboard elements.
  */
+const TRANSIENT_STATE_FIELDS = new Set([
+    'img', 'nodes', 'root', 'selectedCells', 'selectedIndices', '_draggingNode',
+    '_hoverEdge', '_lastCellKey', '_lastItemIdx', '_offsetX', '_offsetY',
+    '_naturalW', '_naturalH', '_rendering', '_renderRevision',
+    '_origCellHeight', '_origCellSize', '_origCellWidth', '_origNodePos',
+    '_origNodeRadius', '_origResizeH', '_origResizeW',
+    'isEditing', 'isEditingNode', 'isEditingEdge'
+]);
+const PERSISTED_INTERNAL_FIELDS = new Set([
+    '_baseWidth', '_baseHeight', '_nextNodeId', '_relOffsetX', '_relOffsetY'
+]);
+
 export class Element {
     constructor(type, x = 0, y = 0, w = 100, h = 100) {
         this.id = crypto.randomUUID();
@@ -152,7 +164,17 @@ export class Element {
 
     /** Deserialize from plain object */
     deserialize(data) {
-        Object.assign(this, data);
+        // Imported JSON is untrusted: don't let serialized keys replace class
+        // methods/accessors or invoke Object.prototype setters such as __proto__.
+        const reservedKeys = new Set();
+        for (let prototype = Object.getPrototypeOf(this); prototype; prototype = Object.getPrototypeOf(prototype)) {
+            for (const key of Object.getOwnPropertyNames(prototype)) reservedKeys.add(key);
+        }
+        for (const [key, value] of Object.entries(data)) {
+            if (reservedKeys.has(key) || TRANSIENT_STATE_FIELDS.has(key) ||
+                (key.startsWith('_') && !PERSISTED_INTERNAL_FIELDS.has(key))) continue;
+            this[key] = value;
+        }
         return this;
     }
 

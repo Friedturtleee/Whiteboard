@@ -5,6 +5,10 @@ export class TextInputDialog {
     constructor(app) {
         this.app = app;
         this._overlay = null;
+        this._escHandler = null;
+        this._cancelHandler = null;
+        this._previewTimer = null;
+        this._flushPreview = null;
     }
 
     /**
@@ -12,7 +16,9 @@ export class TextInputDialog {
      * opts callbacks receive: (text, type, mode, directed, zeroBased, graphMode)
      */
     show(opts = {}) {
-        this.close();
+        this.cancel();
+        this._element = opts.element || null;
+        this.app._pendingElementDialogElement = this._element;
 
         const overlay = document.createElement('div');
         overlay.className = 'modal-overlay';
@@ -215,22 +221,25 @@ export class TextInputDialog {
         });
 
         // Real-time preview — debounced
-        let _previewTimer = null;
         const _fireInput = () => {
             if (!opts.onInput) return;
-            if (_previewTimer) clearTimeout(_previewTimer);
-            _previewTimer = setTimeout(() => {
+            if (this._previewTimer) clearTimeout(this._previewTimer);
+            this._previewTimer = setTimeout(() => {
+                this._previewTimer = null;
+                if (this._overlay !== overlay) return;
                 const v = _getValues();
                 opts.onInput(v.text, v.type, v.mode, v.directed, v.zeroBased, v.graphMode);
             }, 180);
         };
         const _fireImmediate = () => {
-            if (_previewTimer) clearTimeout(_previewTimer);
+            if (this._previewTimer) clearTimeout(this._previewTimer);
+            this._previewTimer = null;
             if (opts.onInput) {
                 const v = _getValues();
                 opts.onInput(v.text, v.type, v.mode, v.directed, v.zeroBased, v.graphMode);
             }
         };
+        this._flushPreview = _fireImmediate;
 
         textarea.addEventListener('input', _fireInput);
         if (typeSelect)      typeSelect.addEventListener('change', _fireInput);
@@ -243,8 +252,18 @@ export class TextInputDialog {
         actions.className = 'modal-actions';
 
         const fireCancel = () => {
-            if (opts.onCancel) opts.onCancel();
+            if (this._overlay !== overlay) return;
+            const onCancel = opts.onCancel;
             this.close();
+            onCancel?.();
+        };
+        this._cancelHandler = fireCancel;
+        const fireConfirm = () => {
+            if (this._overlay !== overlay) return;
+            const values = _getValues();
+            this.close();
+            opts.onConfirm?.(values.text, values.type, values.mode,
+                values.directed, values.zeroBased, values.graphMode);
         };
 
         const cancelBtn = document.createElement('button');
@@ -254,11 +273,7 @@ export class TextInputDialog {
         const confirmBtn = document.createElement('button');
         confirmBtn.className = 'btn-primary';
         confirmBtn.textContent = '確認';
-        confirmBtn.addEventListener('click', () => {
-            const v = _getValues();
-            if (opts.onConfirm) opts.onConfirm(v.text, v.type, v.mode, v.directed, v.zeroBased, v.graphMode);
-            this.close();
-        });
+        confirmBtn.addEventListener('click', fireConfirm);
 
         actions.appendChild(cancelBtn);
         actions.appendChild(confirmBtn);
@@ -268,20 +283,17 @@ export class TextInputDialog {
 
         // Close on overlay click (confirm)
         overlay.addEventListener('click', (e) => {
-            if (e.target === overlay) {
-                const v = _getValues();
-                if (opts.onConfirm) opts.onConfirm(v.text, v.type, v.mode, v.directed, v.zeroBased, v.graphMode);
-                this.close();
-            }
+            if (e.target === overlay) fireConfirm();
         });
 
         // ESC to close
         const escHandler = (e) => {
-            if (e.key === 'Escape') { 
-                fireCancel(); 
-                document.removeEventListener('keydown', escHandler); 
+            if (e.key === 'Escape' && this._overlay === overlay) {
+                e.preventDefault();
+                fireCancel();
             }
         };
+        this._escHandler = escHandler;
         document.addEventListener('keydown', escHandler);
 
         document.body.appendChild(overlay);
@@ -290,9 +302,31 @@ export class TextInputDialog {
     }
 
     close() {
+        if (this._previewTimer) {
+            clearTimeout(this._previewTimer);
+            this._previewTimer = null;
+        }
+        if (this._escHandler) {
+            document.removeEventListener('keydown', this._escHandler);
+            this._escHandler = null;
+        }
         if (this._overlay) {
             this._overlay.remove();
             this._overlay = null;
         }
+        this._cancelHandler = null;
+        this._flushPreview = null;
+        this.app._clearPendingElementDialog?.(this._element);
+        this._element = null;
+    }
+
+    cancel() {
+        if (!this._cancelHandler) return false;
+        this._cancelHandler();
+        return true;
+    }
+
+    flushPreview() {
+        this._flushPreview?.();
     }
 }

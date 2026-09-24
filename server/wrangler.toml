@@ -9,3 +9,10 @@ class_name = "WhiteboardRoom"
 [[migrations]]
 tag = "v1"
 new_sqlite_classes = ["WhiteboardRoom"]
+
+# Before enabling cloud boards, create a D1 database and add this binding with
+# the real database ID (do not commit credentials or placeholder IDs):
+# [[d1_databases]]
+# binding = "DB"
+# database_name = "whiteboard-metadata"
+# database_id = "<database-id-from-cloudflare>"

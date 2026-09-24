@@ -184,3 +184,68 @@
     line-height: 1;
     font-variation-settings: 'FILL' 0, 'wght' 300, 'GRAD' 0, 'opsz' 24;
 }
+
+.cloud-modal[hidden] { display: none; }
+.cloud-modal {
+    position: fixed;
+    inset: 0;
+    z-index: 1100;
+    display: grid;
+    place-items: start center;
+    padding: 68px 16px 24px;
+    background: rgba(0, 0, 0, 0.42);
+}
+.cloud-panel {
+    width: min(680px, 100%);
+    max-height: calc(100vh - 92px);
+    overflow: auto;
+    color: var(--text-primary);
+    background: var(--bg-secondary);
+    border: 1px solid var(--border-color);
+    border-radius: 12px;
+    box-shadow: 0 16px 48px rgba(0, 0, 0, 0.34);
+    padding: 18px;
+}
+.cloud-panel-header, .cloud-board-row, .cloud-board-actions, .cloud-actions {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+}
+.cloud-panel-header { justify-content: space-between; margin-bottom: 12px; }
+.cloud-panel-header h2 { margin: 0; font-size: 18px; font-weight: 500; }
+.cloud-identity, .cloud-status, .cloud-muted { color: var(--text-secondary); font-size: 13px; }
+.cloud-status { margin: 8px 0 12px; }
+.cloud-status[data-state="error"], .cloud-status[data-state="revoked"] { color: #ef7272; }
+.top-bar-btn[data-state="saved"] { color: #16a36a; }
+.top-bar-btn[data-state="error"], .top-bar-btn[data-state="revoked"] { color: #ef7272; }
+.cloud-actions { flex-wrap: wrap; margin-bottom: 14px; }
+.cloud-board-list { display: grid; gap: 8px; }
+.cloud-board-row { justify-content: space-between; border: 1px solid var(--border-color); border-radius: 8px; padding: 10px; }
+.cloud-board-info { display: grid; min-width: 0; gap: 4px; }
+.cloud-board-info strong { overflow-wrap: anywhere; }
+.cloud-board-actions { justify-content: end; flex-wrap: wrap; }
+.cloud-primary, .cloud-secondary, .cloud-danger, .cloud-icon-button {
+    color: var(--text-primary);
+    background: var(--bg-surface);
+    border: 1px solid var(--border-color);
+    border-radius: 7px;
+    padding: 7px 10px;
+    cursor: pointer;
+    font: inherit;
+    font-size: 13px;
+}
+.cloud-primary { background: #5148e5; color: white; border-color: #5148e5; }
+.cloud-danger { color: #ef7272; }
+.cloud-icon-button { width: 32px; height: 32px; padding: 0; font-size: 22px; }
+.cloud-primary:hover, .cloud-secondary:hover, .cloud-danger:hover, .cloud-icon-button:hover { filter: brightness(1.12); }
+.cloud-error { color: #ef7272; white-space: pre-wrap; margin: 8px 0; }
+.cloud-error:empty { display: none; }
+body.wb-cloud-readonly #property-panel,
+body.wb-cloud-readonly #layer-panel { pointer-events: none; opacity: 0.58; }
+body.wb-cloud-readonly #toolbar [data-tool]:not([data-tool="pan"]) { opacity: 0.45; pointer-events: none; }
+@media (max-width: 640px) {
+    .cloud-modal { padding: 60px 8px 8px; }
+    .cloud-panel { max-height: calc(100vh - 68px); padding: 12px; }
+    .cloud-board-row { align-items: start; flex-direction: column; }
+    .cloud-board-actions { justify-content: start; }
+}

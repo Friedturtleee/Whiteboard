@@ -58,6 +58,7 @@ export class QueueElement extends Element {
         if (vals.length > MAX_ITEMS) return '最多輸入 10000 個元素。';
         this.inputText = rawText;
         this.items = vals;
+        this.highlights = {};
         this.selectedIndices.clear();
         this._lastItemIdx = -1;
         this._updateSize();
@@ -203,6 +204,7 @@ export class QueueElement extends Element {
     }
 
     hitTestItem(wx, wy) {
+        if (this.items.length === 0) return -1;
         const point = this.toLocalPoint(wx, wy);
         const slots = Math.max(1, Math.min(this.items.length, this.maxDisplay));
         for (let i = 0; i < slots; i++) {

@@ -8,6 +8,9 @@ import { PenElement } from '../js/elements/PenElement.js';
 import { Serializer } from '../js/core/Serializer.js';
 import { History } from '../js/core/History.js';
 import { SelectionManager } from '../js/core/SelectionManager.js';
+import { Transform } from '../js/core/Transform.js';
+import { HitTest } from '../js/canvas/HitTest.js';
+import { ShapeElement } from '../js/elements/ShapeElement.js';
 import { GraphElement } from '../js/graph/GraphElement.js';
 import { GraphParser } from '../js/graph/GraphParser.js';
 import { GraphLayout } from '../js/graph/GraphLayout.js';
@@ -16,6 +19,8 @@ import { TreeElement } from '../js/tree/TreeElement.js';
 import { TreeLayout } from '../js/tree/TreeLayout.js';
 import { TreeParser } from '../js/tree/TreeParser.js';
 import { TreeRenderer } from '../js/tree/TreeRenderer.js';
+import { MarkdownElement } from '../js/elements/MarkdownElement.js';
+import { authorizeRequest, getRoomId } from '../server/src/auth.mjs';
 
 test('array placeholders remain distinct from ordinary user data', () => {
     const input = 'left\u3000__WHITEBOARD_EMPTY__\u3000right';
@@ -437,7 +442,228 @@ test('failed JSON imports leave the current board and camera unchanged', () => {
             points: [{ x: 'invalid', y: 0 }]
         }]
     }), /invalid point data/);
+    for (const camera of [
+        { x: 1e20, y: 0, zoom: 1 },
+        { x: 0, y: -1e20, zoom: 1 },
+        { x: 0, y: 0, zoom: 1e-300 },
+        { x: 0, y: 0, zoom: 11 }
+    ]) {
+        assert.throws(() => Serializer.loadJSONData(app, { elements: [], camera }), /invalid camera settings/);
+    }
     assert.deepEqual(app.elements, [existing]);
+    assert.deepEqual(app.camera, { x: 4, y: 5, zoom: 2 });
+});
+
+test('JSON imports reject oversized and duplicate data before replacing the board', () => {
+    const existing = { id: 'keep-existing-board' };
+    const app = {
+        elements: [existing],
+        camera: { x: 0, y: 0, zoom: 1 },
+        selectionManager: { clear() {} },
+        renderer: { markDirty() {} }
+    };
+
+    assert.throws(() => Serializer.loadJSONData(app, {
+        elements: [{
+            type: 'pen', x: 0, y: 0, width: 0, height: 0,
+            points: Array.from({ length: 100001 }, () => ({ x: 0, y: 0 }))
+        }]
+    }), /invalid point data or exceeds the supported point limit/);
+    assert.throws(() => Serializer.loadJSONData(app, {
+        elements: [
+            { id: 'duplicate', type: 'rectangle', x: 0, y: 0, width: 10, height: 10 },
+            { id: 'duplicate', type: 'rectangle', x: 20, y: 0, width: 10, height: 10 }
+        ]
+    }), /duplicate element ID/);
+    assert.throws(() => Serializer.loadJSONData(app, {
+        elements: [{ type: 'rectangle', x: 1e20, y: 0, width: 10, height: 10 }]
+    }), /outside the supported range/);
+    assert.throws(() => Serializer.loadJSONData(app, {
+        elements: [{
+            type: 'rectangle', x: 0, y: 0, width: 10, height: 10,
+            rotation: { toString: null, valueOf: null }
+        }]
+    }), /invalid style values/);
+    assert.throws(() => Serializer.loadJSONData(app, {
+        elements: [{ type: 'rectangle', x: 0, y: 0, width: 10, height: 10, opacity: 2 }]
+    }), /invalid style values/);
+    assert.throws(() => Serializer.loadJSONData(app, {
+        elements: [{
+            type: 'text', x: 0, y: 0, width: 10, height: 10, text: 'safe',
+            fontFamily: { includes: true }
+        }]
+    }), /invalid or oversized text\/style data/);
+    assert.throws(() => Serializer.loadJSONData(app, {
+        elements: [{
+            type: 'pen', x: 0, y: 0, width: 0, height: 0,
+            points: [{ x: -1e308, y: 0 }, { x: 1e308, y: 0 }]
+        }]
+    }), /invalid point data/);
+    assert.throws(() => Serializer.loadJSONData(app, {
+        elements: [{
+            type: 'matrix', x: 0, y: 0, width: 62, height: 62,
+            rows: 1, cols: 1, data: [[{ toString: null, valueOf: null }]]
+        }]
+    }), /invalid dimensions or cell data/);
+    assert.throws(() => Serializer.loadJSONData(app, {
+        elements: [{
+            type: 'graph', x: 0, y: 0, width: 400, height: 350,
+            graphNodes: [{ id: '1', x: 1e20, y: 0, label: '1' }], edges: []
+        }]
+    }), /invalid node/);
+    assert.deepEqual(app.elements, [existing]);
+});
+
+test('JSON import preserves signed line endpoints', () => {
+    const app = {
+        elements: [],
+        camera: { x: 0, y: 0, zoom: 1 },
+        selectionManager: { clear() {} },
+        renderer: { markDirty() {} }
+    };
+    Serializer.loadJSONData(app, {
+        elements: [{ type: 'line', x: 30, y: 20, width: -20, height: 15 }]
+    });
+    assert.equal(app.elements[0].width, -20);
+    assert.equal(app.elements[0].height, 15);
+});
+
+test('JSON import detaches line endpoints that reference missing elements', () => {
+    const app = {
+        elements: [],
+        camera: { x: 0, y: 0, zoom: 1 },
+        selectionManager: { clear() {} },
+        renderer: { markDirty() {} }
+    };
+    Serializer.loadJSONData(app, {
+        elements: [{
+            type: 'line', id: 'line-1', x: 30, y: 20, width: -20, height: 15,
+            connections: {
+                p1: { elementId: 'missing-target', portId: 'right' },
+                p2: null
+            }
+        }]
+    });
+    assert.deepEqual(app.elements[0].connections, { p1: null, p2: null });
+    assert.equal(app.elements[0].width, -20);
+});
+
+test('graph JSON import normalizes mixed numeric and string node IDs', () => {
+    const app = {
+        elements: [],
+        camera: { x: 0, y: 0, zoom: 1 },
+        selectionManager: { clear() {} },
+        renderer: { markDirty() {} }
+    };
+    Serializer.loadJSONData(app, {
+        elements: [{
+            type: 'graph', x: 0, y: 0, width: 400, height: 350,
+            graphNodes: [
+                { id: 1, x: 40, y: 40, label: '1' },
+                { id: '2', x: 80, y: 80, label: '2' }
+            ],
+            edges: [{ u: '1', v: 2, w: null, directed: false }]
+        }]
+    });
+
+    const graph = app.elements[0];
+    assert.equal(graph.nodes.size, 2);
+    assert.equal(graph.edges[0].u, '1');
+    assert.equal(graph.edges[0].v, '2');
+    assert.ok(graph.nodes.has(graph.edges[0].u));
+    assert.ok(graph.nodes.has(graph.edges[0].v));
+});
+
+test('JSON element records cannot shadow methods or change element prototypes', () => {
+    const app = {
+        elements: [],
+        camera: { x: 0, y: 0, zoom: 1 },
+        selectionManager: { clear() {} },
+        renderer: { markDirty() {} }
+    };
+    const input = JSON.parse('{"elements":[{"type":"rectangle","x":0,"y":0,"width":10,"height":10,' +
+        '"draw":"not-a-function","serialize":"not-a-function","constructor":{"polluted":true},' +
+        '"__proto__":{"polluted":true}}]}');
+
+    Serializer.loadJSONData(app, input);
+    const [element] = app.elements;
+    assert.equal(typeof element.draw, 'function');
+    assert.equal(typeof element.serialize, 'function');
+    assert.equal(Object.hasOwn(element, 'draw'), false);
+    assert.equal(Object.prototype.polluted, undefined);
+});
+
+test('oversized JSON files are rejected before allocating a FileReader', async () => {
+    const app = { elements: [] };
+    await assert.rejects(
+        Serializer.importJSON(app, { size: 25 * 1024 * 1024 + 1 }),
+        /25 MB import limit/
+    );
+});
+
+test('Markdown rendering bounds input size before invoking the parser', () => {
+    const rendered = MarkdownElement.renderToHTML('x'.repeat(MarkdownElement.MAX_SOURCE_LENGTH + 1));
+    assert.match(rendered, /1 MB rendering limit/);
+    assert.ok(rendered.length < 100);
+    assert.equal(MarkdownElement.renderToHTML(null), '');
+});
+
+test('Worker authentication fails closed and does not expose verifier errors', async () => {
+    let verifyCalls = 0;
+    const verify = async () => { verifyCalls++; };
+    const missingSecret = await authorizeRequest(
+        new Request('https://worker.example/room?token=valid'),
+        {},
+        verify
+    );
+    assert.deepEqual(missingSecret, { status: 503, message: 'Authentication is not configured.' });
+    assert.equal(verifyCalls, 0);
+
+    const missingToken = await authorizeRequest(
+        new Request('https://worker.example/room'),
+        { CLERK_SECRET_KEY: 'test-secret', ALLOWED_ORIGINS: 'https://whiteboard.example' },
+        verify
+    );
+    assert.deepEqual(missingToken, { status: 401, message: 'Unauthorized.' });
+    assert.equal(verifyCalls, 0);
+
+    const authorized = await authorizeRequest(
+        new Request('https://worker.example/room?token=query-token', {
+            headers: { Authorization: 'Bearer header-token' }
+        }),
+        { CLERK_SECRET_KEY: 'test-secret', ALLOWED_ORIGINS: 'https://whiteboard.example' },
+        async (token, options) => {
+            verifyCalls++;
+            assert.equal(token, 'header-token');
+            assert.equal(options.secretKey, 'test-secret');
+            return { sub: 'user_123' };
+        }
+    );
+    assert.equal(authorized, null);
+
+    const legacyWebSocketToken = await authorizeRequest(
+        new Request('https://worker.example/room?token=websocket-token'),
+        { CLERK_SECRET_KEY: 'test-secret', ALLOWED_ORIGINS: 'https://whiteboard.example' },
+        async () => assert.fail('Query-string tokens must not reach the Clerk verifier.')
+    );
+    assert.deepEqual(legacyWebSocketToken, { status: 401, message: 'Unauthorized.' });
+
+    const invalid = await authorizeRequest(
+        new Request('https://worker.example/room?token=invalid'),
+        { CLERK_SECRET_KEY: 'test-secret', ALLOWED_ORIGINS: 'https://whiteboard.example' },
+        async () => { throw new Error('secret verifier diagnostics'); }
+    );
+    assert.deepEqual(invalid, { status: 401, message: 'Unauthorized.' });
+    assert.equal(JSON.stringify(invalid).includes('secret verifier diagnostics'), false);
+});
+
+test('Worker room names are bounded and reject encoded or path-like IDs', () => {
+    const boardId = 'a'.repeat(32);
+    assert.equal(getRoomId('/'), null);
+    assert.equal(getRoomId('/' + boardId), boardId);
+    assert.equal(getRoomId('/' + 'a'.repeat(65)), null);
+    assert.equal(getRoomId('/a%2Fb'), null);
+    assert.equal(getRoomId('/room/other'), null);
 });
 
 test('multi-select delete undo restores original stacking order', () => {
@@ -463,24 +689,28 @@ test('multi-select delete undo restores original stacking order', () => {
     assert.deepEqual(app.selectionManager.selectedElements, []);
 });
 
-test('undoing an add uses the current selection API and redo does not duplicate it', () => {
-    const added = { type: 'rectangle' };
+test('undoing an add uses the current selection API and redo restores group z-order', () => {
+    const before = { type: 'rectangle', id: 'before' };
+    const added = { type: 'rectangle', id: 'added' };
+    const addedSecond = { type: 'rectangle', id: 'added-second' };
+    const middle = { type: 'rectangle', id: 'middle' };
+    const after = { type: 'rectangle', id: 'after' };
     const app = {
-        elements: [added],
+        elements: [before, added, middle, addedSecond, after],
         layerManager: { _reindex() {} },
         renderer: { markDirty() {} }
     };
     app.selectionManager = new SelectionManager(app);
     app.selectionManager.select(added);
     const history = new History(app);
-    history.pushAdd(app, added);
+    history.pushAdd(app, [added, addedSecond]);
 
     assert.doesNotThrow(() => history.undo());
-    assert.deepEqual(app.elements, []);
+    assert.deepEqual(app.elements, [before, middle, after]);
     assert.deepEqual(app.selectionManager.selectedElements, []);
     history.redo();
     history.redo();
-    assert.deepEqual(app.elements, [added]);
+    assert.deepEqual(app.elements, [before, added, middle, addedSecond, after]);
 });
 
 test('failed history commands remain available for retry', () => {
@@ -501,6 +731,26 @@ test('failed history commands remain available for retry', () => {
     assert.throws(() => history.redo(), error);
     assert.equal(history.redoStack.length, 1);
     assert.equal(history.undoStack.length, 0);
+});
+
+test('history push, undo, and redo each schedule autosave', () => {
+    let saves = 0;
+    let value = 2;
+    const history = new History({
+        renderer: { markDirty() {} },
+        _autosave() { saves++; }
+    });
+    history.push({
+        undo() { value = 1; },
+        redo() { value = 2; }
+    });
+    assert.equal(saves, 1);
+    history.undo();
+    assert.equal(value, 1);
+    assert.equal(saves, 2);
+    history.redo();
+    assert.equal(value, 2);
+    assert.equal(saves, 3);
 });
 
 test('resizing undo restores internal matrix, tree, and graph geometry', () => {
@@ -578,6 +828,51 @@ test('resizing undo restores internal matrix, tree, and graph geometry', () => {
     assert.deepEqual([...graph.nodes.values()].map(({ x, y }) => ({ x, y })), originalNodePositions);
     history.redo();
     assert.deepEqual([...graph.nodes.values()].map(({ x, y }) => ({ x, y })), resizedNodePositions);
+});
+
+test('resize history restores graph and tree positions after their nodes are rebuilt', () => {
+    const history = new History({ renderer: { markDirty() {} } });
+    const tree = new TreeElement();
+    const treeInput = '3\n1 2\n1 3';
+    assert.equal(tree.buildFromText(treeInput, 'rooted'), null);
+    const treeBounds = { x: tree.x, y: tree.y, w: tree.width, h: tree.height };
+    tree.onResizeStart();
+    const treeBefore = tree.captureResizeState();
+    tree.onResize(tree.width * 1.5, tree.height * 1.5);
+    const treeResizedBounds = { x: tree.x, y: tree.y, w: tree.width, h: tree.height };
+    const treeAfter = tree.captureResizeState();
+    history.pushResize(tree, treeBounds, treeResizedBounds, null, null, null, treeBefore, treeAfter);
+    assert.equal(tree.buildFromText(treeInput, 'rooted'), null);
+    history.undo();
+    assert.deepEqual(treeBefore.nodePositions.map(({ path, x, y }) => {
+        const node = tree.getNodeAtPath(path);
+        return { x: node.x, y: node.y };
+    }), treeBefore.nodePositions.map(({ x, y }) => ({ x, y })));
+    history.redo();
+    assert.deepEqual(treeAfter.nodePositions.map(({ path, x, y }) => {
+        const node = tree.getNodeAtPath(path);
+        return { x: node.x, y: node.y };
+    }), treeAfter.nodePositions.map(({ x, y }) => ({ x, y })));
+
+    const graph = new GraphElement();
+    const graphInput = '3 2\n1 2\n2 3';
+    assert.equal(graph.buildFromText(graphInput), null);
+    const graphBounds = { x: graph.x, y: graph.y, w: graph.width, h: graph.height };
+    graph.onResizeStart();
+    const graphBefore = graph.captureResizeState();
+    graph.width *= 1.5;
+    graph.height *= 1.5;
+    graph.onResize(graph.width, graph.height);
+    const graphResizedBounds = { x: graph.x, y: graph.y, w: graph.width, h: graph.height };
+    const graphAfter = graph.captureResizeState();
+    history.pushResize(graph, graphBounds, graphResizedBounds, null, null, null, graphBefore, graphAfter);
+    assert.equal(graph.buildFromText(graphInput), null);
+    history.undo();
+    assert.deepEqual(graphBefore.map(({ id }) => graph.nodes.get(id)).map(({ x, y }) => ({ x, y })),
+        graphBefore.map(({ x, y }) => ({ x, y })));
+    history.redo();
+    assert.deepEqual(graphAfter.map(({ id }) => graph.nodes.get(id)).map(({ x, y }) => ({ x, y })),
+        graphAfter.map(({ x, y }) => ({ x, y })));
 });
 
 test('successful board import clears stale undo and redo commands', () => {
@@ -673,6 +968,27 @@ test('rotated graph/tree node hit tests and connection ports use rendered positi
     assert.ok(Math.hypot(treePort.x - treeNode.x, treePort.y - treeNode.y) < 1e-8);
 });
 
+test('duplicate tree values receive distinct connection port IDs', () => {
+    const tree = new TreeElement(80, 45);
+    tree.treeType = 'bst';
+    assert.equal(tree.buildFromText('10 10 10', 'values'), null);
+
+    const ports = tree.getConnectionPorts();
+    assert.equal(ports.length, 3);
+    assert.equal(new Set(ports.map(port => port.id)).size, 3);
+    assert.equal(ports[0].id, 'node_10');
+
+    for (const path of ['r', 'r.1', 'r.1.1']) {
+        const node = tree.getNodeAtPath(path);
+        const portId = path === 'r' ? 'node_10' : `tree@${path}`;
+        const port = ports.find(candidate => candidate.id === portId);
+        const offsets = tree._getCurrentOffsets();
+        const expected = tree.toWorldPoint(offsets.offsetX + node.x, offsets.offsetY + node.y);
+        assert.ok(port);
+        assert.ok(Math.hypot(port.x - expected.x, port.y - expected.y) < 1e-8);
+    }
+});
+
 test('resizing a graph with minimal bounds keeps node coordinates finite', () => {
     const graph = new GraphElement();
     assert.equal(graph.buildFromText('2 1\n1 2'), null);
@@ -684,4 +1000,32 @@ test('resizing a graph with minimal bounds keeps node coordinates finite', () =>
         assert.ok(Number.isFinite(node.x));
         assert.ok(Number.isFinite(node.y));
     }
+});
+
+test('rotated line endpoint hit tests and drags stay in world coordinates', () => {
+    const line = new ShapeElement('arrow', 10, 20, 40, -20);
+    line.rotation = Math.PI / 3;
+    const originalEndpoints = [line.getEndpointWorld(0), line.getEndpointWorld(1)];
+    const endpointHandle = HitTest.hitTestHandles(
+        line, originalEndpoints[0].x, originalEndpoints[0].y, { zoom: 1 }
+    );
+    assert.deepEqual(endpointHandle, { type: 'endpoint', index: 0, cursor: 'crosshair' });
+
+    const transform = new Transform({ renderer: { markDirty() {} } });
+    transform.startEndpoint(originalEndpoints[0].x, originalEndpoints[0].y, 0, line);
+    const movedEndpoint = { x: originalEndpoints[0].x + 25, y: originalEndpoints[0].y - 12 };
+    transform.update(movedEndpoint.x, movedEndpoint.y);
+    const actualEndpoints = [line.getEndpointWorld(0), line.getEndpointWorld(1)];
+    const closeTo = (actual, expected) =>
+        Math.hypot(actual.x - expected.x, actual.y - expected.y) < 1e-9;
+    assert.ok(closeTo(actualEndpoints[0], movedEndpoint));
+    assert.ok(closeTo(actualEndpoints[1], originalEndpoints[1]));
+    const info = transform.finish();
+    assert.deepEqual(info._worldEndpoints, originalEndpoints);
+
+    transform.startEndpoint(actualEndpoints[1].x, actualEndpoints[1].y, 1, line);
+    transform.update(actualEndpoints[1].x - 40, actualEndpoints[1].y + 15);
+    transform.cancel();
+    assert.ok(closeTo(line.getEndpointWorld(0), actualEndpoints[0]));
+    assert.ok(closeTo(line.getEndpointWorld(1), actualEndpoints[1]));
 });

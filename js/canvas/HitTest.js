@@ -23,11 +23,11 @@ export class HitTest {
         // ── Line / Arrow: only two endpoint handles ──────────────────────────
         if (el.shapeType === 'line' || el.shapeType === 'arrow') {
             const tol = 8 / camera.zoom;
-            const x1 = el.x,               y1 = el.y;
-            const x2 = el.x + el.width,    y2 = el.y + el.height;
-            if (Math.hypot(wx - x1, wy - y1) < tol)
+            const p1 = el.getEndpointWorld?.(0) ?? el.toWorldPoint(el.x, el.y);
+            const p2 = el.getEndpointWorld?.(1) ?? el.toWorldPoint(el.x + el.width, el.y + el.height);
+            if (Math.hypot(wx - p1.x, wy - p1.y) < tol)
                 return { type: 'endpoint', index: 0, cursor: 'crosshair' };
-            if (Math.hypot(wx - x2, wy - y2) < tol)
+            if (Math.hypot(wx - p2.x, wy - p2.y) < tol)
                 return { type: 'endpoint', index: 1, cursor: 'crosshair' };
             return null;
         }

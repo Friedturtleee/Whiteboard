@@ -33,6 +33,12 @@ import { Toolbar } from './ui/Toolbar.js';
 import { PropertyPanel } from './ui/PropertyPanel.js';
 import { LayerPanel } from './ui/LayerPanel.js';
 import { TextInputDialog } from './ui/TextInputDialog.js';
+import { CloudBoards } from './network/CloudBoards.js';
+
+const isEmptyDataStructureInput = value => {
+    const text = String(value ?? '');
+    return !text.includes('\u3000') && text.trim() === '';
+};
 
 // ═════════════════════════════════════════════════════════
 // Application Singleton
@@ -43,11 +49,17 @@ class App {
         this.elements = [];
         this._edgePreview = null;      // { x1,y1,x2,y2 } for live graph-edge feedback
         this._isPanning = false;
+        this._activePointerId = null;
         this._isCreating = false;      // drawing a new shape
         this._createStart = null;      // { wx, wy }
         this._creatingElement = null;
         this._lastPanScreen = null;    // { sx, sy }
         this._textEditing = null;      // element being text-edited
+        this._inlineEdit = null;
+        this._markdownDialogCancel = null;
+        this._markdownDialogConfirm = null;
+        this._markdownDialogClose = null;
+        this._pendingElementDialogElement = null;
         this._isPenDrawing = false;    // freehand pen drawing
         this._penElement   = null;     // pen element currently being drawn
         this._penLastPoint = null;     // last recorded world point
@@ -64,7 +76,7 @@ class App {
         this.layerManager = new LayerManager(this);
         this.transform = new Transform(this);
         
-        // Local-only mode: network collaboration is intentionally disabled.
+        // Restore the local board before the cloud-board controller is attached.
         
         this.history = new History(this);
         this.renderer = new Renderer(this.canvas, this.ctx, this.camera, this.grid, this);
@@ -77,7 +89,13 @@ class App {
 
         // ── Bind Events ─────────────────────────────────
         // ── Settings ────────────────────────────────────
-        this.settings = { showGrid: true, gridSpacing: 40, defaultPenSize: 2, defaultPenSmoothing: 3 };
+        this.settings = {
+            showGrid: true,
+            gridSpacing: 40,
+            defaultPenSize: 2,
+            defaultPenSmoothing: 3,
+            defaultStrokeWidth: 2
+        };
         this._loadSettings();
 
         this._initCamera();
@@ -108,6 +126,7 @@ class App {
         this._skipAutosave = false;
         this.autosaveKey = 'cp_whiteboard_autosave_whiteboard';
         this._tryLoadAutosave();
+        this.cloudBoards = new CloudBoards(this);
 
         this._fetchGitHubVersion();
     }
@@ -133,7 +152,7 @@ class App {
                     display.style.cursor = 'pointer';
                     display.style.textDecoration = 'underline';
                     display.addEventListener('click', () => {
-                        window.open(`https://github.com/Friedturtleee/Whiteboard/releases/tag/${latestTag}`, '_blank');
+                        window.open(`https://github.com/Friedturtleee/Whiteboard/releases/tag/${latestTag}`, '_blank', 'noopener,noreferrer');
                     });
                 } else {
                     display.textContent = 'CP WhiteBoard (Local)';
@@ -208,6 +227,7 @@ class App {
             this.camera.zoomAt(1, cx, cy);
             this._updateZoomDisplay();
             this.renderer.markDirty();
+            this._autosave();
         });
         $('btn-zoom-out')?.addEventListener('click', () => {
             const cx = this.canvas.clientWidth / 2;
@@ -215,15 +235,18 @@ class App {
             this.camera.zoomAt(-1, cx, cy);
             this._updateZoomDisplay();
             this.renderer.markDirty();
+            this._autosave();
         });
         $('zoom-display')?.addEventListener('click', () => {
             this.camera.reset();
             this._updateZoomDisplay();
             this.renderer.markDirty();
+            this._autosave();
         });
 
         $('btn-export-json')?.addEventListener('click', () => Serializer.exportJSON(this));
         $('btn-export-png')?.addEventListener('click', () => Serializer.exportPNG(this));
+        $('btn-cloud-boards')?.addEventListener('click', () => this.cloudBoards?.openPanel());
         $('btn-import-json')?.addEventListener('click', () => $('json-file-input').click());
         $('btn-settings')?.addEventListener('click', () => {
             const modal = document.getElementById('settings-modal');
@@ -235,6 +258,11 @@ class App {
         $('json-file-input')?.addEventListener('change', async (e) => {
             const file = e.target.files[0];
             if (!file) return;
+            if (this.cloudBoards?.isCloudBoard) {
+                this._toast('請先返回本機白板，再匯入 JSON，避免覆蓋尚未同步的雲端內容。');
+                e.target.value = '';
+                return;
+            }
             try {
                 this._skipAutosave = true;  // prevent immediate re-save during import
                 await Serializer.importJSON(this, file);
@@ -281,6 +309,8 @@ class App {
         this.canvas.addEventListener('pointerdown', e => this._onPointerDown(e));
         this.canvas.addEventListener('pointermove', e => this._onPointerMove(e));
         this.canvas.addEventListener('pointerup',   e => this._onPointerUp(e));
+        this.canvas.addEventListener('pointercancel', e => this._cancelPointerInteraction(e.pointerId));
+        this.canvas.addEventListener('lostpointercapture', e => this._cancelPointerInteraction(e.pointerId));
         this.canvas.addEventListener('dblclick',     e => this._onDoubleClick(e));
 
         // Custom context menu (replaces browser default)
@@ -289,6 +319,9 @@ class App {
 
     // ────────── Pointer Down ────────────────────────────
     _onPointerDown(e) {
+        if (this.cloudBoards?.isReadOnly && this.toolbar.currentTool !== 'pan' && e.button !== 1) return;
+        if (this._activePointerId !== null) return;
+        this._activePointerId = e.pointerId;
         this.canvas.setPointerCapture(e.pointerId);
         const { sx, sy } = this._screenPos(e);
         const { x: wx, y: wy } = this._worldPos(e);
@@ -387,6 +420,7 @@ class App {
 
     // ────────── Pointer Move ────────────────────────────
     _onPointerMove(e) {
+        if (this._activePointerId !== null && e.pointerId !== this._activePointerId) return;
         const { sx, sy } = this._screenPos(e);
         const { x: wx, y: wy } = this._worldPos(e);
 
@@ -398,6 +432,7 @@ class App {
             this._lastPanScreen = { sx, sy };
             this._updateZoomDisplay();
             this.renderer.markDirty();
+            this._autosave();
             return;
         }
 
@@ -452,7 +487,16 @@ class App {
 
     // ────────── Pointer Up ──────────────────────────────
     _onPointerUp(e) {
-        if (e.pointerId) {
+        if (this._activePointerId !== null && e.pointerId !== this._activePointerId) return;
+        try {
+            this._finishPointerUp(e);
+        } finally {
+            if (this._activePointerId === e.pointerId) this._activePointerId = null;
+        }
+    }
+
+    _finishPointerUp(e) {
+        if (e.pointerId !== undefined && e.pointerId !== null) {
             try { this.canvas.releasePointerCapture(e.pointerId); } catch(err) {}
         }
         const { x: wx, y: wy } = this._worldPos(e);
@@ -516,28 +560,32 @@ class App {
                 if (info.mode === 'endpoint') {
                     const el = info.element;
                     const snap = this._snapPreview;
-                    const originalEndpoint = info.epIndex === 0
-                        ? { x: info._ep.p1x, y: info._ep.p1y }
-                        : { x: info._ep.p2x, y: info._ep.p2y };
+                    const originalEndpoint = info._worldEndpoints[info.epIndex];
                     if (snap) {
                         // Snap endpoint to connection port
                         const ep = info._ep;
-                        if (info.epIndex === 0) {
+                        if (typeof el.setEndpointWorld === 'function') {
+                            el.setEndpointWorld(info.epIndex, snap);
+                        } else if (info.epIndex === 0) {
                             el.x = snap.x; el.y = snap.y;
                             el.width  = ep.p2x - snap.x;
                             el.height = ep.p2y - snap.y;
-                            el.connections.p1 = { elementId: snap.elementId, portId: snap.portId };
                         } else {
                             el.x = ep.p1x; el.y = ep.p1y;
                             el.width  = snap.x - ep.p1x;
                             el.height = snap.y - ep.p1y;
-                            el.connections.p2 = { elementId: snap.elementId, portId: snap.portId };
                         }
+                        el.connections[info.epIndex === 0 ? 'p1' : 'p2'] = {
+                            elementId: snap.elementId, portId: snap.portId
+                        };
                     } else {
-                        const currentEndpoint = info.epIndex === 0
-                            ? { x: el.x, y: el.y }
-                            : { x: el.x + el.width, y: el.y + el.height };
-                        if (currentEndpoint.x === originalEndpoint.x && currentEndpoint.y === originalEndpoint.y) {
+                        const currentEndpoint = el.getEndpointWorld?.(info.epIndex) ??
+                            (info.epIndex === 0
+                                ? { x: el.x, y: el.y }
+                                : { x: el.x + el.width, y: el.y + el.height });
+                        el.connections[info.epIndex === 0 ? 'p1' : 'p2'] = null;
+                        if (Math.hypot(currentEndpoint.x - originalEndpoint.x,
+                            currentEndpoint.y - originalEndpoint.y) < 1e-7) {
                             el.connections.p1 = info._connections.p1 ? { ...info._connections.p1 } : null;
                             el.connections.p2 = info._connections.p2 ? { ...info._connections.p2 } : null;
                         }
@@ -641,7 +689,59 @@ class App {
     // ═════════════════════════════════════════════════════
     // Double Click
     // ═════════════════════════════════════════════════════
+    _cancelPointerInteraction(pointerId = null, { preserveCreatedElements = false } = {}) {
+        if (pointerId !== null && this._activePointerId !== null &&
+            pointerId !== this._activePointerId) return;
+        const hasActiveInteraction = this._isPanning || this._isPenDrawing || this._isCreating ||
+            this.transform.mode || this.selectionManager.rubberBand || this._edgePreview ||
+            this._tempRightClickTool;
+        if (!hasActiveInteraction) {
+            if (this._activePointerId !== null) {
+                try { this.canvas.releasePointerCapture(this._activePointerId); } catch {}
+            }
+            if (pointerId === this._activePointerId) this._activePointerId = null;
+            return;
+        }
+
+        if (this._tempRightClickTool) {
+            this.toolbar.setTool(this._tempRightClickTool);
+            this._tempRightClickTool = null;
+        }
+        this._isPanning = false;
+        this._lastPanScreen = null;
+        this.canvas.style.cursor = '';
+
+        if (this._isPenDrawing && this._penElement && !preserveCreatedElements) {
+            const index = this.elements.indexOf(this._penElement);
+            if (index >= 0) this.elements.splice(index, 1);
+        }
+        this._isPenDrawing = false;
+        this._penElement = null;
+        this._penLastPoint = null;
+
+        if (this._isCreating && this._creatingElement && !preserveCreatedElements) {
+            const index = this.elements.indexOf(this._creatingElement);
+            if (index >= 0) this.elements.splice(index, 1);
+        }
+        this._isCreating = false;
+        this._creatingElement = null;
+        this._createStart = null;
+        this._creatingTool = null;
+
+        this.transform.cancel();
+        if (this.selectionManager.rubberBand) this.selectionManager.rubberBand = null;
+        this._edgePreview = null;
+        this._snapPreview = null;
+        if (this._activePointerId !== null) {
+            try { this.canvas.releasePointerCapture(this._activePointerId); } catch {}
+        }
+        this._activePointerId = null;
+        this.layerManager._reindex();
+        this._refreshUI();
+    }
+
     _onDoubleClick(e) {
+        if (this.cloudBoards?.isReadOnly) return;
         if (this.toolbar && this.toolbar.currentTool !== 'select') {
             this.toolbar.setTool('select');
             
@@ -905,6 +1005,9 @@ class App {
         }
 
         el.color = '#e0e0e0';
+        if (el.type !== 'text' && el.type !== 'markdown') {
+            el.strokeWidth = this.settings.defaultStrokeWidth || 2;
+        }
         this._creatingElement = el;
         this.elements.push(el);
         this.renderer.markDirty();
@@ -1015,7 +1118,8 @@ class App {
         }
 
         this.layerManager._reindex();
-        this.history.pushAdd(this, el);
+        const opensDataStructureDialog = ['matrix', 'stack', 'queue', 'tree', 'graph'].includes(tool);
+        this.history.pushAdd(this, el, { discardable: opensDataStructureDialog });
         this.selectionManager.select(el);
         this._isCreating = false;
         this._creatingElement = null;
@@ -1031,9 +1135,9 @@ class App {
                     el.setFromText('');
                 }
             }
-            if (tool === 'tree') this._showTreeDialog(el);
-            else if (tool === 'graph') this._showGraphDialog(el);
-            else this._showDataStructureDialog(el);
+            if (tool === 'tree') this._showTreeDialog(el, true);
+            else if (tool === 'graph') this._showGraphDialog(el, true);
+            else this._showDataStructureDialog(el, true);
         } else {
             // Keep current tool
         }
@@ -1045,6 +1149,12 @@ class App {
         if (idx >= 0) this.elements.splice(idx, 1);
         this.selectionManager.selectedElements = this.selectionManager.selectedElements.filter(e => e !== el);
         this.layerManager._reindex();
+    }
+
+    _discardPendingElementCreation(el) {
+        this._deleteElement(el);
+        this.history?.discardAdd?.(el);
+        this.renderer.markDirty();
     }
 
     _restoreElementSnapshot(el, snapshot, index) {
@@ -1251,7 +1361,7 @@ class App {
         el.autoSize(this.ctx);
         this.elements.push(el);
         this.layerManager._reindex();
-        this.history.pushAdd(this, el);
+        this.history.pushAdd(this, el, { discardable: true });
         this.selectionManager.select(el);
         this._startTextEditing(el);
         this._refreshUI();
@@ -1290,10 +1400,11 @@ class App {
     }
 
     _startTextEditing(el) {
-        this._textEditing = el;
-        el.isEditing = true;
         const overlay = document.getElementById('text-edit-overlay');
         if (!overlay) return;
+
+        this._textEditing = el;
+        el.isEditing = true;
 
         overlay.style.cssText = '';
         overlay.className = 'transparent-selection';
@@ -1336,22 +1447,28 @@ class App {
         overlay.onblur = () => this._finishTextEditing();
     }
 
-    _finishTextEditing(cancel = false) {
+    _finishTextEditing(cancel = false, preserveEmptyElement = false) {
         if (!this._textEditing) return;
         const overlay = document.getElementById('text-edit-overlay');
-        if (!overlay) return;
+        if (!overlay) {
+            this._textEditing.isEditing = false;
+            this._textEditing = null;
+            this._textInputHandler = null;
+            return;
+        }
 
         overlay.removeEventListener('input', this._textInputHandler);
 
         const el = this._textEditing;
         const newText = overlay.value;
         const oldText = this._textEditOld;
+        const discardingNewBlankText = el.type === 'text' && !oldText.trim() && !newText.trim();
         const deletesExistingText = el.type === 'text' && !newText.trim() && oldText !== newText;
 
         if (cancel) {
             el.text = oldText;
             el.autoSize(this.ctx);
-        } else if (oldText !== newText) {
+        } else if (oldText !== newText && !discardingNewBlankText) {
             const applyText = value => {
                 el.text = value;
                 el.autoSize(this.ctx);
@@ -1387,13 +1504,9 @@ class App {
         el.isEditing = false;
         this._textEditing = null;
 
-        if (!el.text.trim() && el.type === 'text') {
+        if (!preserveEmptyElement && !el.text.trim() && el.type === 'text') {
             this._deleteElement(el);
-            // Remove the 'Add text' from history if it was just created
-            const lastCmd = this.history.undoStack[this.history.undoStack.length - 1];
-            if (lastCmd && lastCmd.description === 'Add text') {
-                this.history.undoStack.pop();
-            }
+            if (!oldText.trim()) this.history.discardAdd?.(el);
         }
 
         this.renderer.markDirty();
@@ -1412,36 +1525,41 @@ class App {
         } else {
             el = new QueueElement(wx, wy);
         }
+        el.strokeWidth = this.settings.defaultStrokeWidth || 2;
         this.elements.push(el);
         this.layerManager._reindex();
-        this.history.pushAdd(this, el);
+        this.history.pushAdd(this, el, { discardable: true });
         this.selectionManager.select(el);
 
         // Open the input dialog immediately
-        this._showDataStructureDialog(el);
+        this._showDataStructureDialog(el, true);
         this._refreshUI();
     }
 
-    _showDataStructureDialog(el) {
+    _showDataStructureDialog(el, isNew = false) {
         const typeLabel = { matrix: '矩陣', stack: '堆疊', queue: '佇列' }[el.type] || el.type;
         const placeholder = el.type === 'matrix'
             ? '輸入矩陣，每行一列，數值以空格分隔\n例：\n1 2 3\n4 5 6\n\n或輸入維度建立空矩陣，例：3*5'
             : '輸入數值，以空格或換行分隔\n例：1 2 3 4 5';
         const oldText = el.inputText || '';
+        const oldInputIsEmpty = isEmptyDataStructureInput(oldText);
         const originalState = JSON.parse(JSON.stringify(el.serialize()));
         const originalIndex = this.elements.indexOf(el);
         const restoreOriginal = () => this._restoreElementSnapshot(el, originalState, originalIndex);
         this.textInputDialog.show({
+            element: el,
             title: `編輯${typeLabel}`,
             placeholder,
             defaultText: oldText,
             onInput: (text) => {
-                if (!text.trim()) return;
+                if (isEmptyDataStructureInput(text)) return;
                 const error = el.setFromText(text);
                 if (!error) this.renderer.markDirty();
             },
             onCancel: () => {
-                if (!oldText.trim()) {
+                if (isNew) {
+                    this._discardPendingElementCreation(el);
+                } else if (oldInputIsEmpty) {
                     this._deleteElement(el);
                 } else {
                     restoreOriginal();
@@ -1451,9 +1569,18 @@ class App {
                 this._refreshUI();
             },
             onConfirm: (text) => {
+                if (!isNew && text === oldText) {
+                    restoreOriginal();
+                    this.toolbar.setTool('select');
+                    this.renderer.markDirty();
+                    this._refreshUI();
+                    return;
+                }
                 const error = el.setFromText(text);
                 if (error) {
-                    if (oldText.trim()) {
+                    if (isNew) {
+                        this._discardPendingElementCreation(el);
+                    } else if (!oldInputIsEmpty) {
                         restoreOriginal();
                     } else {
                         this._deleteElement(el);
@@ -1463,8 +1590,10 @@ class App {
                     this._refreshUI();
                     return;
                 }
-                if (!text.trim() || (el.width === 0 && el.height === 0)) {
-                    if (oldText.trim()) {
+                if (isEmptyDataStructureInput(text) || (el.width === 0 && el.height === 0)) {
+                    if (isNew) {
+                        this._discardPendingElementCreation(el);
+                    } else if (!oldInputIsEmpty) {
                         this.history.push({
                             description: `Delete ${el.type}`,
                             undo: restoreOriginal,
@@ -1496,21 +1625,23 @@ class App {
     // ═════════════════════════════════════════════════════
     _createTree(wx, wy) {
         const el = new TreeElement(wx, wy);
+        el.strokeWidth = this.settings.defaultStrokeWidth || 2;
         this.elements.push(el);
         this.layerManager._reindex();
-        this.history.pushAdd(this, el);
+        this.history.pushAdd(this, el, { discardable: true });
         this.selectionManager.select(el);
-        this._showTreeDialog(el);
+        this._showTreeDialog(el, true);
         this._refreshUI();
     }
 
-    _showTreeDialog(el) {
+    _showTreeDialog(el, isNew = false) {
         const originalText = el.inputText || '';
         const originalType = el.treeType;
         const originalState = JSON.parse(JSON.stringify(el.serialize()));
         const originalIndex = this.elements.indexOf(el);
         const restoreOriginal = () => this._restoreElementSnapshot(el, originalState, originalIndex);
         this.textInputDialog.show({
+            element: el,
             title: '編輯樹',
             placeholder: '邊列表格式（首行節點數，其後每行：父 子）\n或層序數值列表',
             defaultText: originalText,
@@ -1531,7 +1662,9 @@ class App {
                 this.renderer.markDirty();
             },
             onCancel: () => {
-                if (!originalText.trim()) {
+                if (isNew) {
+                    this._discardPendingElementCreation(el);
+                } else if (!originalText.trim()) {
                     this._deleteElement(el);
                 } else {
                     restoreOriginal();
@@ -1544,7 +1677,9 @@ class App {
                 if (type) el.treeType = type;
                 const error = el.buildFromText(text, 'rooted');
                 if (!text.trim() || (el.width === 0 && el.height === 0)) {
-                    if (originalText.trim()) {
+                    if (isNew) {
+                        this._discardPendingElementCreation(el);
+                    } else if (originalText.trim()) {
                         this.history.push({
                             description: 'Delete Tree',
                             undo: restoreOriginal,
@@ -1557,7 +1692,9 @@ class App {
                     return;
                 }
                 if (error) {
-                    if (originalText.trim()) {
+                    if (isNew) {
+                        this._discardPendingElementCreation(el);
+                    } else if (originalText.trim()) {
                         restoreOriginal();
                     } else {
                         this._deleteElement(el);
@@ -1587,15 +1724,16 @@ class App {
     // ═════════════════════════════════════════════════════
     _createGraph(wx, wy) {
         const el = new GraphElement(wx, wy);
+        el.strokeWidth = this.settings.defaultStrokeWidth || 2;
         this.elements.push(el);
         this.layerManager._reindex();
-        this.history.pushAdd(this, el);
+        this.history.pushAdd(this, el, { discardable: true });
         this.selectionManager.select(el);
-        this._showGraphDialog(el);
+        this._showGraphDialog(el, true);
         this._refreshUI();
     }
 
-    _showGraphDialog(el) {
+    _showGraphDialog(el, isNew = false) {
         const originalText = el.inputText || '';
         const originalDirected = el.directed;
         const originalZeroBased = el.zeroBased;
@@ -1605,6 +1743,7 @@ class App {
         const restoreOriginal = () => this._restoreElementSnapshot(el, originalState, originalIndex);
 
         this.textInputDialog.show({
+            element: el,
             title: '編輯圖',
             placeholder: '第一行: N M (節點數 邊數)\n之後每行: u v [w]\n例：\n4 5\n1 2\n2 3 7\n3 4\n4 1\n1 3',
             defaultText: originalText,
@@ -1620,7 +1759,9 @@ class App {
                 this.renderer.markDirty();
             },
             onCancel: () => {
-                if (!originalText.trim()) {
+                if (isNew) {
+                    this._discardPendingElementCreation(el);
+                } else if (!originalText.trim()) {
                     this._deleteElement(el);
                 } else {
                     restoreOriginal();
@@ -1633,7 +1774,9 @@ class App {
                 const error = el.buildFromText(text, directed, zeroBased, graphMode);
                 
                 if (!text.trim() || (el.width === 0 && el.height === 0)) {
-                    if (originalText.trim()) {
+                    if (isNew) {
+                        this._discardPendingElementCreation(el);
+                    } else if (originalText.trim()) {
                         this.history.push({
                             description: 'Delete Graph',
                             undo: restoreOriginal,
@@ -1646,7 +1789,9 @@ class App {
                     return;
                 }
                 if (error) {
-                    if (originalText.trim()) {
+                    if (isNew) {
+                        this._discardPendingElementCreation(el);
+                    } else if (originalText.trim()) {
                         restoreOriginal();
                     } else {
                         this._deleteElement(el);
@@ -1679,6 +1824,7 @@ class App {
     // Matrix Cell Inline Edit
     // ═════════════════════════════════════════════════════
     _editMatrixCell(matrixEl, row, col) {
+        if (this._inlineEdit) this._inlineEdit.finish();
         const pad = 10;
         const cellWorldX = matrixEl.x + pad + col * matrixEl.cellSize;
         const cellWorldY = matrixEl.y + pad + row * matrixEl.cellSize;
@@ -1726,8 +1872,16 @@ class App {
             overlay.style.textAlign = '';
         };
 
-        const finishEdit = () => {
-            const newValue = overlay.value.trim();
+        let finished = false;
+        const finishEdit = (cancelled = false) => {
+            if (finished) return;
+            finished = true;
+            if (this._inlineEdit?.overlay === overlay) this._inlineEdit = null;
+            const editedValue = overlay.value.trim();
+            const originalValue = oldValue == null || oldValue === '\u3000'
+                ? ''
+                : String(oldValue).trim();
+            const newValue = cancelled || originalValue === editedValue ? oldValue : editedValue;
             if (matrixEl.data[row]) {
                 matrixEl.data[row][col] = newValue;
                 if (matrixEl.updateTextFromData) matrixEl.updateTextFromData();
@@ -1736,6 +1890,7 @@ class App {
             resetOverlayStyle();
             overlay.onblur = null;
             overlay.onkeydown = null;
+            if (document.activeElement === overlay) overlay.blur();
             if (oldValue !== newValue) {
                 const applyValue = value => {
                     if (!matrixEl.data[row]) return;
@@ -1752,10 +1907,17 @@ class App {
             this.renderer.markDirty();
         };
 
+        this._inlineEdit = {
+            element: matrixEl,
+            overlay,
+            finish: finishEdit,
+            cancel: () => finishEdit(true)
+        };
+
         overlay.onblur = finishEdit;
         overlay.onkeydown = (e) => {
             if (e.key === 'Enter') { e.preventDefault(); overlay.blur(); }
-            if (e.key === 'Escape') { overlay.value = String(oldValue ?? ''); overlay.blur(); }
+            if (e.key === 'Escape') { e.preventDefault(); finishEdit(true); }
             // Tab to next cell
             if (e.key === 'Tab') {
                 e.preventDefault();
@@ -1775,6 +1937,7 @@ class App {
     // Tree Node Inline Value Edit
     // ═════════════════════════════════════════════════════
     _editTreeNodeValue(treeEl, treeNode, wx, wy) {
+        if (this._inlineEdit) this._inlineEdit.finish();
         const nodePath = treeEl.getNodePath(treeNode);
         if (!nodePath) return;
         const { offsetX, offsetY } = treeEl._getCurrentOffsets();
@@ -1819,6 +1982,7 @@ class App {
 
         const oldValue = treeNode.value;
         let cancelled = false;
+        let finished = false;
         const applyNodeValue = value => {
             const currentNode = treeEl.getNodeAtPath(nodePath);
             if (currentNode) treeEl.setNodeValue(currentNode, value);
@@ -1829,6 +1993,9 @@ class App {
         };
 
         const finishEdit = () => {
+            if (finished) return;
+            finished = true;
+            if (this._inlineEdit?.overlay === overlay) this._inlineEdit = null;
             const newValue = cancelled ? oldValue : (overlay.value.trim() || oldValue);
             applyNodeValue(newValue);
             treeEl.isEditingNode = false;
@@ -1847,6 +2014,17 @@ class App {
             this.renderer.markDirty();
         };
 
+        this._inlineEdit = {
+            element: treeEl,
+            overlay,
+            finish: finishEdit,
+            cancel: () => {
+                cancelled = true;
+                overlay.value = String(oldValue);
+                finishEdit();
+            }
+        };
+
         overlay.oninput = updatePreview;
         overlay.onblur = finishEdit;
         overlay.onkeydown = (e) => {
@@ -1861,6 +2039,7 @@ class App {
     }
 
     _editTreeEdgeWeight(treeEl, edgeNode) {
+        if (this._inlineEdit) this._inlineEdit.finish();
         const parentNode = edgeNode?.parent;
         if (!parentNode) return;
         const nodePath = treeEl.getNodePath(edgeNode);
@@ -1931,6 +2110,7 @@ class App {
         const finishEdit = () => {
             if (finished) return;
             finished = true;
+            if (this._inlineEdit?.overlay === overlay) this._inlineEdit = null;
             const value = overlay.value.trim();
             const valid = cancelled || value === '' || Number.isFinite(Number(value));
             const newWeight = cancelled ? oldWeight : (value === '' ? null : value);
@@ -1973,6 +2153,17 @@ class App {
             this.renderer.markDirty();
         };
 
+        this._inlineEdit = {
+            element: treeEl,
+            overlay,
+            finish: finishEdit,
+            cancel: () => {
+                cancelled = true;
+                overlay.value = oldWeight ?? '';
+                finishEdit();
+            }
+        };
+
         overlay.oninput = updatePreview;
         overlay.onblur = finishEdit;
         overlay.onkeydown = event => {
@@ -2000,12 +2191,51 @@ class App {
         this._showMarkdownDialog(el, true);
     }
 
+    _dismissPendingDialogs({ commitMarkdown = false, preservePreview = false } = {}) {
+        if (preservePreview) {
+            try {
+                this.textInputDialog?.flushPreview?.();
+            } catch (error) {
+                console.warn('[Whiteboard draft] Unable to flush the last dialog preview.', error);
+            } finally {
+                this.textInputDialog?.close?.();
+            }
+        } else if (!this.textInputDialog?.cancel?.()) {
+            this.textInputDialog?.close?.();
+        }
+        if (commitMarkdown) this._markdownDialogConfirm?.();
+        else this._markdownDialogCancel?.();
+        this._markdownDialogClose?.();
+    }
+
+    _clearPendingElementDialog(element) {
+        if (this._pendingElementDialogElement === element) {
+            this._pendingElementDialogElement = null;
+        }
+    }
+
+    _cancelInlineEditForElement(element) {
+        if (this._inlineEdit?.element !== element) return false;
+        this._inlineEdit.cancel();
+        return true;
+    }
+
+    _dismissPendingDialogsForElement(element) {
+        if (!element || this._pendingElementDialogElement !== element) return false;
+        this.textInputDialog?.close?.();
+        this._markdownDialogClose?.();
+        this._clearPendingElementDialog(element);
+        return true;
+    }
+
     /**
      * Show the split-pane Markdown editor dialog.
      * @param {MarkdownElement} el
      * @param {boolean} isNew - if true, element hasn't been added yet
      */
     _showMarkdownDialog(el, isNew = false) {
+        this._markdownDialogCancel?.();
+        this._pendingElementDialogElement = el;
         const oldText = el.markdownText;
         const originalState = JSON.parse(JSON.stringify(el.serialize()));
         const originalIndex = this.elements.indexOf(el);
@@ -2038,6 +2268,7 @@ class App {
         editorLabel.textContent = '編輯';
         const textarea = document.createElement('textarea');
         textarea.value = el.markdownText || '';
+        textarea.maxLength = MarkdownElement.MAX_SOURCE_LENGTH;
         textarea.placeholder = '在此輸入 Markdown…\n\n# 標題\n## 副標題\n\n- 列表項目\n- **粗體** 和 *斜體*\n\n```python\nprint("Hello")\n```';
         textarea.spellcheck = false;
 
@@ -2101,6 +2332,7 @@ class App {
 
         // Debounced preview updates
         let previewTimer = null;
+        let onKey = null;
         textarea.addEventListener('input', () => {
             clearTimeout(previewTimer);
             previewTimer = setTimeout(updatePreview, 80);
@@ -2115,8 +2347,17 @@ class App {
         // ── Close helper ────────────────────────────
         const closeDialog = () => {
             clearTimeout(previewTimer);
+            if (onKey) {
+                document.removeEventListener('keydown', onKey, true);
+                onKey = null;
+            }
+            this._markdownDialogCancel = null;
+            this._markdownDialogConfirm = null;
+            this._markdownDialogClose = null;
+            this._clearPendingElementDialog(el);
             if (overlay.parentNode) overlay.parentNode.removeChild(overlay);
         };
+        this._markdownDialogClose = closeDialog;
 
         // ── Confirm ─────────────────────────────────
         const confirm = () => {
@@ -2172,6 +2413,8 @@ class App {
             this.toolbar.setTool('select');
             this._refreshUI();
         };
+        this._markdownDialogConfirm = confirm;
+        this._markdownDialogCancel = cancel;
 
         confirmBtn.addEventListener('click', confirm);
         cancelBtn.addEventListener('click', cancel);
@@ -2182,11 +2425,10 @@ class App {
         });
 
         // ESC to cancel
-        const onKey = (e) => {
+        onKey = (e) => {
             if (e.key === 'Escape') {
                 e.stopPropagation();
                 cancel();
-                document.removeEventListener('keydown', onKey, true);
             }
         };
         document.addEventListener('keydown', onKey, true);
@@ -2203,15 +2445,25 @@ class App {
         const graph = ep.graphElement;
         const tgtNode = graph.hitTestNode(wx, wy);
         if (tgtNode && tgtNode !== ep.sourceNode) {
-            graph.addEdge(ep.sourceNode.id, tgtNode.id);
+            const edge = {
+                u: ep.sourceNode.id,
+                v: tgtNode.id,
+                w: null,
+                directed: graph.directed
+            };
+            const edgeIndex = graph.edges.length;
+            graph.edges.splice(edgeIndex, 0, edge);
             this.history.push({
                 description: 'Add Edge',
                 undo: () => {
-                    graph.edges.pop();
+                    const currentIndex = graph.edges.indexOf(edge);
+                    if (currentIndex >= 0) graph.edges.splice(currentIndex, 1);
                     this.renderer.markDirty();
                 },
                 redo: () => {
-                    graph.addEdge(ep.sourceNode.id, tgtNode.id);
+                    if (!graph.edges.includes(edge)) {
+                        graph.edges.splice(Math.min(edgeIndex, graph.edges.length), 0, edge);
+                    }
                     this.renderer.markDirty();
                 }
             });
@@ -2240,6 +2492,7 @@ class App {
             }
 
             this.renderer.markDirty();
+            this._autosave();
             
             if (this._textEditing) {
                 this._updateTextEditingOverlay();
@@ -2254,6 +2507,8 @@ class App {
         document.addEventListener('keydown', e => {
             // Ignore when typing in inputs
             if (e.target.tagName === 'INPUT' || e.target.tagName === 'TEXTAREA' || e.target.tagName === 'SELECT') return;
+            if (this._pendingElementDialogElement) return;
+            if (this.cloudBoards?.isReadOnly && e.key !== 'Escape') return;
 
             const ctrl = e.ctrlKey || e.metaKey;
 
@@ -2368,6 +2623,7 @@ class App {
                 this.camera.zoomAt(1, rect.width / 2, rect.height / 2);
                 this._updateZoomDisplay();
                 this.renderer.markDirty();
+                this._autosave();
                 return;
             }
             if (ctrl && e.key === '-') {
@@ -2376,6 +2632,7 @@ class App {
                 this.camera.zoomAt(-1, rect.width / 2, rect.height / 2);
                 this._updateZoomDisplay();
                 this.renderer.markDirty();
+                this._autosave();
                 return;
             }
 
@@ -2457,10 +2714,14 @@ class App {
                 if (target) {
                     const port = target.getConnectionPorts().find(p => p.id === p1.portId);
                     if (port) {
-                        const ep = { p2x: el.x + el.width, p2y: el.y + el.height };
-                        el.x = port.x; el.y = port.y;
-                        el.width  = ep.p2x - port.x;
-                        el.height = ep.p2y - port.y;
+                        if (typeof el.setEndpointWorld === 'function') {
+                            el.setEndpointWorld(0, port);
+                        } else {
+                            const ep = { p2x: el.x + el.width, p2y: el.y + el.height };
+                            el.x = port.x; el.y = port.y;
+                            el.width  = ep.p2x - port.x;
+                            el.height = ep.p2y - port.y;
+                        }
                     }
                 }
             }
@@ -2469,8 +2730,12 @@ class App {
                 if (target) {
                     const port = target.getConnectionPorts().find(p => p.id === p2.portId);
                     if (port) {
-                        el.width  = port.x - el.x;
-                        el.height = port.y - el.y;
+                        if (typeof el.setEndpointWorld === 'function') {
+                            el.setEndpointWorld(1, port);
+                        } else {
+                            el.width  = port.x - el.x;
+                            el.height = port.y - el.y;
+                        }
                     }
                 }
             }
@@ -2490,6 +2755,7 @@ class App {
         this.camera.x = cx - sw / 2 / this.camera.zoom;
         this.camera.y = cy - sh / 2 / this.camera.zoom;
         this.renderer.markDirty();
+        this._autosave();
     }
 
     // ═════════════════════════════════════════════════════
@@ -2497,6 +2763,7 @@ class App {
     // ═════════════════════════════════════════════════════
     _showContextMenu(e) {
         e.preventDefault();
+        if (this.cloudBoards?.isReadOnly) return;
         const { x: wx, y: wy } = this._worldPos(e);
         const hit = HitTest.hitTestAll(this.elements, wx, wy, this.camera);
 
@@ -2650,14 +2917,27 @@ class App {
     _copyToClipboard() {
         const sel = this.selectionManager.selectedElements;
         if (!sel.length) return;
-        this._clipboard = sel.map(el => el.serialize());
+        this._clipboard = sel.map(el => JSON.parse(JSON.stringify(el.serialize())));
+    }
+
+    _remapDuplicatedConnections(elements, idMap) {
+        for (const el of elements) {
+            if (el.shapeType !== 'line' && el.shapeType !== 'arrow') continue;
+            for (const endpoint of ['p1', 'p2']) {
+                const connection = el.connections?.[endpoint];
+                const duplicateId = connection && idMap.get(connection.elementId);
+                if (duplicateId) connection.elementId = duplicateId;
+            }
+        }
     }
 
     _pasteFromClipboard() {
         if (!this._clipboard || !this._clipboard.length) return;
         const newEls = [];
+        const idMap = new Map();
         for (const data of this._clipboard) {
             const newData = JSON.parse(JSON.stringify(data));
+            const sourceId = newData.id;
             // Remove id to get new one
             delete newData.id;
             // Offset slightly
@@ -2676,6 +2956,7 @@ class App {
             if (!Cls) continue;
             newEl = Cls.fromData ? Cls.fromData(newData) : new Cls();
             newEl.deserialize(newData);
+            if (sourceId) idMap.set(sourceId, newEl.id);
             this.elements.push(newEl);
             newEls.push(newEl);
             
@@ -2684,6 +2965,7 @@ class App {
             data.y += 20;
         }
         if (newEls.length) {
+            this._remapDuplicatedConnections(newEls, idMap);
             this.history.pushAdd(this, newEls);
             this.selectionManager.clear();
             for (const n of newEls) this.selectionManager.select(n);
@@ -2699,8 +2981,10 @@ class App {
         const sel = this.selectionManager.selectedElements;
         if (!sel.length) return;
         const newEls = [];
+        const idMap = new Map();
         for (const el of sel) {
             const data = JSON.parse(JSON.stringify(el.serialize()));
+            const sourceId = data.id;
             // Remove id to get new one
             delete data.id;
             // Offset
@@ -2720,11 +3004,13 @@ class App {
             if (!Cls) continue;
             newEl = Cls.fromData ? Cls.fromData(data) : new Cls();
             newEl.deserialize(data);
+            if (sourceId) idMap.set(sourceId, newEl.id);
             // Remove the tmp from nothing
             this.elements.push(newEl);
             newEls.push(newEl);
         }
         if (newEls.length) {
+            this._remapDuplicatedConnections(newEls, idMap);
             this.history.pushAdd(this, newEls);
         }
         this.selectionManager.selectedElements = newEls;
@@ -2738,7 +3024,14 @@ class App {
         data.x += 50;
         data.y += 50;
         
-        let matrixData = data.data.map(row => row.map(val => Number(val) || 0));
+        let matrixData = data.data.map(row => row.map(value => {
+            if (value == null || String(value).trim() === '') return 0;
+            return Number(value);
+        }));
+        if (matrixData.some(row => row.some(value => !Number.isFinite(value)))) {
+            this._toast('矩陣前綴和／差分只接受有限數值；空格會視為 0。');
+            return;
+        }
         let newMatrixData = [];
         
         if (transformType === 'prefix') {
@@ -2806,6 +3099,17 @@ class App {
                     }
                 }
             }
+        }
+
+        if (newMatrixData.some(row => row.some(value => !Number.isFinite(value)))) {
+            this._toast('矩陣運算結果超出數值範圍，未建立複製。');
+            return;
+        }
+        const resultRows = newMatrixData.length;
+        const resultCols = (newMatrixData[0] || []).length;
+        if (resultRows > 200 || resultCols > 200 || resultRows * resultCols > 10000) {
+            this._toast('矩陣運算結果超出支援尺寸，未建立複製。');
+            return;
         }
         
         // Convert to string and set
@@ -2904,13 +3208,25 @@ class App {
         try {
             const raw = localStorage.getItem('wb_settings');
             if (raw) {
-                Object.assign(this.settings, JSON.parse(raw));
-                // Apply persisted grid spacing immediately
-                if (this.grid && this.settings.gridSpacing) {
-                    this.grid.baseSpacing = this.settings.gridSpacing;
+                const saved = JSON.parse(raw);
+                if (saved && typeof saved === 'object' && !Array.isArray(saved)) {
+                    if (typeof saved.showGrid === 'boolean') this.settings.showGrid = saved.showGrid;
+                    for (const [key, min, max, step] of [
+                        ['gridSpacing', 20, 120, 10],
+                        ['defaultPenSize', 1, 20, 1],
+                        ['defaultPenSmoothing', 1, 10, 1],
+                        ['defaultStrokeWidth', 1, 10, 1]
+                    ]) {
+                        const value = saved[key];
+                        if (Number.isInteger(value) && value >= min && value <= max &&
+                            (value - min) % step === 0) {
+                            this.settings[key] = value;
+                        }
+                    }
                 }
             }
         } catch (_) {}
+        if (this.grid) this.grid.baseSpacing = this.settings.gridSpacing;
     }
 
     // ═════════════════════════════════════════════════════
@@ -2918,19 +3234,46 @@ class App {
     // ═════════════════════════════════════════════════════
     _autosave() {
         if (this._skipAutosave) return;
+        this.cloudBoards?.onLocalChange();
         if (this._autosaveTimer) clearTimeout(this._autosaveTimer);
+        const autosaveKey = this.autosaveKey;
         this._autosaveTimer = setTimeout(() => {
+            this._autosaveTimer = null;
             try {
+                // Read-only shared views are never restored from local storage;
+                // avoid leaving a guest's private board copy on a shared device.
+                if (this.cloudBoards?.isCloudBoard && this.cloudBoards.isReadOnly) return;
+                // A delayed save must never write one board's snapshot under a
+                // different board's key after the user switches boards.
+                if (this.autosaveKey !== autosaveKey) return;
                 const data = {
                     version: 1,
                     elements: this.elements.map(el => el.serialize()),
                     camera: { x: this.camera.x, y: this.camera.y, zoom: this.camera.zoom }
                 };
-                localStorage.setItem(this.autosaveKey, JSON.stringify(data));
+                localStorage.setItem(autosaveKey, JSON.stringify(data));
             } catch (e) {
                 console.warn('[Autosave]', e);
             }
         }, 1200);
+    }
+
+    _flushAutosave() {
+        if (this._autosaveTimer) clearTimeout(this._autosaveTimer);
+        this._autosaveTimer = null;
+        if (this._skipAutosave || (this.cloudBoards?.isCloudBoard && this.cloudBoards.isReadOnly)) return false;
+        try {
+            const data = {
+                version: 1,
+                elements: this.elements.map(el => el.serialize()),
+                camera: { x: this.camera.x, y: this.camera.y, zoom: this.camera.zoom }
+            };
+            localStorage.setItem(this.autosaveKey, JSON.stringify(data));
+            return true;
+        } catch (error) {
+            console.warn('[Autosave]', error);
+            return false;
+        }
     }
 
     _tryLoadAutosave() {
@@ -2938,7 +3281,7 @@ class App {
             const raw = localStorage.getItem(this.autosaveKey);
             if (!raw) return;
             const data = JSON.parse(raw);
-            if (!data?.elements?.length) return;
+            if (!Array.isArray(data?.elements)) return;
             // Silently restore — no prompt (avoids repeated reload confusion)
             this._restoreFromData(data);
         } catch (e) {

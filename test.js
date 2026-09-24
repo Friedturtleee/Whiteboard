@@ -42,6 +42,7 @@ try {
     const page = await browser.newPage();
     const pageErrors = [];
     const collaborationRequests = [];
+    const localResourceFailures = [];
     page.on('pageerror', error => pageErrors.push(error));
     page.on('request', request => {
         if (/clerk|whiteboard-server\.friedturtleee\.workers\.dev|esm\.sh\/(?:yjs|y-websocket)/i
@@ -50,14 +51,34 @@ try {
         }
     });
     const port = server.address().port;
-    const response = await page.goto(`http://127.0.0.1:${port}/index.html`, {
+    const localOrigin = `http://127.0.0.1:${port}/`;
+    page.on('response', response => {
+        if (response.url().startsWith(localOrigin) && response.status() >= 400) {
+            localResourceFailures.push(`${response.status()} ${response.url()}`);
+        }
+    });
+    const response = await page.goto(`${localOrigin}index.html`, {
         waitUntil: 'domcontentloaded'
     });
     if (!response?.ok()) {
         throw new Error(`Whiteboard page returned HTTP ${response?.status() ?? 'no response'}.`);
     }
+    const cdnIntegrity = await page.evaluate(() => [...document.querySelectorAll(
+        'script[src^="https://cdn."], link[rel="stylesheet"][href^="https://cdn."]'
+    )].every(element => /^sha384-[A-Za-z0-9+/]+=*$/.test(element.integrity) &&
+        element.crossOrigin === 'anonymous'));
+    if (!cdnIntegrity) {
+        throw new Error('External CDN assets must use SHA-384 Subresource Integrity and anonymous CORS.');
+    }
     await page.waitForSelector('#main-canvas');
-    await new Promise(resolve => setTimeout(resolve, 300));
+    await page.waitForFunction(() => Boolean(window.__whiteboard), { timeout: 15000 });
+    const duplicateIds = await page.evaluate(() => {
+        const ids = [...document.querySelectorAll('[id]')].map(element => element.id);
+        return [...new Set(ids.filter((id, index) => ids.indexOf(id) !== index))];
+    });
+    if (duplicateIds.length) {
+        throw new Error('The page contains duplicate element IDs: ' + duplicateIds.join(', '));
+    }
     const collaborationUiPresent = await page.evaluate(() => Boolean(
         document.querySelector('#collab-status, #collab-status-text, [data-clerk-publishable-key]') ||
         window.Clerk
@@ -65,6 +86,259 @@ try {
     if (collaborationUiPresent || collaborationRequests.length) {
         throw new Error('The local-only page unexpectedly loaded collaboration UI or services.');
     }
+    const unusedMermaidRuntimeLoaded = await page.evaluate(() => Boolean(
+        window.mermaid || document.querySelector('script[src*="/mermaid"]')
+    ));
+    if (unusedMermaidRuntimeLoaded) {
+        throw new Error('The unused Mermaid runtime should not be loaded by the local-only page.');
+    }
+    await page.setViewport({ width: 1000, height: 700 });
+    await page.evaluate(() => {
+        document.getElementById('loading-screen')?.remove();
+        window.__whiteboard.toolbar.setTool('rectangle');
+    });
+    const settingsValidation = await page.evaluate(() => {
+        const app = window.__whiteboard;
+        const previousRaw = localStorage.getItem('wb_settings');
+        const previousSettings = { ...app.settings };
+        const previousSpacing = app.grid.baseSpacing;
+        localStorage.setItem('wb_settings',
+            '{"showGrid":"false","gridSpacing":45,"defaultPenSize":1000,' +
+            '"defaultPenSmoothing":null,"defaultStrokeWidth":-1,"__proto__":{"polluted":true}}');
+        Object.assign(app.settings, {
+            showGrid: true, gridSpacing: 40, defaultPenSize: 2,
+            defaultPenSmoothing: 3, defaultStrokeWidth: 2
+        });
+        app._loadSettings();
+        const valid = app.settings.showGrid === true && app.settings.gridSpacing === 40 &&
+            app.settings.defaultPenSize === 2 && app.settings.defaultPenSmoothing === 3 &&
+            app.settings.defaultStrokeWidth === 2 && app.grid.baseSpacing === 40 &&
+            Object.prototype.polluted === undefined;
+        if (previousRaw === null) localStorage.removeItem('wb_settings');
+        else localStorage.setItem('wb_settings', previousRaw);
+        Object.assign(app.settings, previousSettings);
+        app.grid.baseSpacing = previousSpacing;
+        return valid;
+    });
+    if (!settingsValidation) {
+        throw new Error('Invalid persisted settings must not corrupt rendering or application defaults.');
+    }
+    const defaultStrokeWidth = await page.evaluate(() => {
+        const app = window.__whiteboard;
+        const previousWidth = app.settings.defaultStrokeWidth;
+        app.settings.defaultStrokeWidth = 7;
+        app._startCreating('rectangle', 0, 0);
+        const applied = app._creatingElement.strokeWidth;
+        app._cancelPointerInteraction();
+        app.settings.defaultStrokeWidth = previousWidth;
+        return applied;
+    });
+    if (defaultStrokeWidth !== 7) {
+        throw new Error('New drawing elements must inherit the configured default stroke width.');
+    }
+    const cameraAutosave = await page.evaluate(async () => {
+        const app = window.__whiteboard;
+        const key = app.autosaveKey;
+        const originalCamera = { x: app.camera.x, y: app.camera.y, zoom: app.camera.zoom };
+        const originalAutosave = localStorage.getItem(key);
+        if (app._autosaveTimer) clearTimeout(app._autosaveTimer);
+        app._autosaveTimer = null;
+        localStorage.removeItem(key);
+        app.canvas.dispatchEvent(new WheelEvent('wheel', {
+            deltaX: 32, deltaY: 0, bubbles: true, cancelable: true
+        }));
+        const changedCamera = { x: app.camera.x, y: app.camera.y, zoom: app.camera.zoom };
+        await new Promise(resolve => setTimeout(resolve, 1300));
+        const saved = JSON.parse(localStorage.getItem(key) || 'null');
+        localStorage.setItem(key, JSON.stringify({
+            version: 1, elements: [], camera: { x: 123, y: -456, zoom: 2 }
+        }));
+        app.camera.x = 0;
+        app.camera.y = 0;
+        app.camera.zoom = 1.5;
+        app._tryLoadAutosave();
+        const emptyBoardCameraRestored = app.elements.length === 0 &&
+            app.camera.x === 123 && app.camera.y === -456 && app.camera.zoom === 2;
+        app.camera.x = originalCamera.x;
+        app.camera.y = originalCamera.y;
+        app.camera.zoom = originalCamera.zoom;
+        app._autosaveTimer = null;
+        if (originalAutosave === null) localStorage.removeItem(key);
+        else localStorage.setItem(key, originalAutosave);
+        app.renderer.markDirty();
+        return Boolean(saved?.camera && emptyBoardCameraRestored &&
+            Object.keys(changedCamera).every(key => saved.camera[key] === changedCamera[key]));
+    });
+    if (!cameraAutosave) {
+        throw new Error('Panning the canvas must persist the updated camera in autosave data.');
+    }
+    await page.mouse.move(500, 300);
+    await page.mouse.down();
+    await page.mouse.move(560, 350);
+    const previewStarted = await page.evaluate(() => {
+        const app = window.__whiteboard;
+        return app._isCreating && app.elements.includes(app._creatingElement);
+    });
+    await page.evaluate(() => {
+        const app = window.__whiteboard;
+        app.canvas.dispatchEvent(new PointerEvent('pointercancel', {
+            bubbles: true, pointerId: app._activePointerId, button: 0
+        }));
+    });
+    const previewCleared = await page.evaluate(() => {
+        const app = window.__whiteboard;
+        return !app._isCreating && !app._creatingElement &&
+            app.elements.length === 0 && app._activePointerId === null;
+    });
+    await page.mouse.up();
+    if (!previewStarted || !previewCleared) {
+        throw new Error('Cancelling an in-progress shape must remove its preview and reset creation state.');
+    }
+
+    const pointerIsolation = await page.evaluate(() => {
+        const app = window.__whiteboard;
+        const originalCapture = app.canvas.setPointerCapture;
+        app.canvas.setPointerCapture = () => {};
+        try {
+            app.toolbar.setTool('rectangle');
+            const pointer = pointerId => ({
+                pointerId, button: 0, clientX: 500, clientY: 300, shiftKey: false
+            });
+            app._onPointerDown(pointer(11));
+            const firstPreview = app._creatingElement;
+            app._onPointerDown(pointer(12));
+            app._cancelPointerInteraction(12);
+            const secondPointerIgnored = app._activePointerId === 11 &&
+                app._creatingElement === firstPreview && app.elements.length === 1;
+            app._cancelPointerInteraction(11);
+            return secondPointerIgnored && app.elements.length === 0 && app._activePointerId === null;
+        } finally {
+            app.canvas.setPointerCapture = originalCapture;
+        }
+    });
+    if (!pointerIsolation) {
+        throw new Error('A second pointer must not replace or cancel the active canvas interaction.');
+    }
+
+    const transformCancelled = await page.evaluate(async () => {
+        const app = window.__whiteboard;
+        const { ShapeElement } = await import('/js/elements/ShapeElement.js');
+        const element = new ShapeElement('rectangle', 100, 100, 50, 40);
+        app.elements.push(element);
+        app.selectionManager.select(element);
+        app.transform.startDrag(0, 0);
+        app.transform.update(20, 30);
+        app.canvas.dispatchEvent(new Event('lostpointercapture', { bubbles: true }));
+        return element.x === 100 && element.y === 100 && app.transform.mode === null;
+    });
+    if (!transformCancelled) {
+        throw new Error('Unexpected pointer-capture loss must restore an in-progress transform.');
+    }
+
+    const connectedRotatedLine = await page.evaluate(async () => {
+        const { ShapeElement } = await import('/js/elements/ShapeElement.js');
+        const app = window.__whiteboard;
+        const previousElements = app.elements;
+        const target = new ShapeElement('rectangle', 100, 100, 80, 50);
+        const line = new ShapeElement('arrow', 0, 0, 40, 20);
+        target.rotation = 0.35;
+        line.rotation = -0.6;
+        const port = target.getConnectionPorts().find(candidate => candidate.id === 'right');
+        line.setEndpointWorld(0, port);
+        line.connections.p1 = { elementId: target.id, portId: 'right' };
+        const fixedEndpoint = line.getEndpointWorld(1);
+        app.elements = [target, line];
+        target.x += 25;
+        target.y -= 10;
+        app._updateConnectedLines([target.id]);
+        const movedPort = target.getConnectionPorts().find(candidate => candidate.id === 'right');
+        const attachedEndpoint = line.getEndpointWorld(0);
+        const finalFixedEndpoint = line.getEndpointWorld(1);
+        app.elements = previousElements;
+        return Math.hypot(attachedEndpoint.x - movedPort.x, attachedEndpoint.y - movedPort.y) < 1e-7 &&
+            Math.hypot(finalFixedEndpoint.x - fixedEndpoint.x, finalFixedEndpoint.y - fixedEndpoint.y) < 1e-7;
+    });
+    if (!connectedRotatedLine) {
+        throw new Error('A rotated connector must track a moved shape port without moving its other endpoint.');
+    }
+
+    const detachedLineHistory = await page.evaluate(async () => {
+        const { ShapeElement } = await import('/js/elements/ShapeElement.js');
+        const app = window.__whiteboard;
+        const previousElements = app.elements;
+        const previousSelection = app.selectionManager.selectedElements.slice();
+        const previousUndo = app.history.undoStack;
+        const previousRedo = app.history.redoStack;
+        const target = new ShapeElement('rectangle', 100, 100, 80, 50);
+        const line = new ShapeElement('line', 0, 0, 50, 20);
+        const port = target.getConnectionPorts().find(candidate => candidate.id === 'right');
+        line.setEndpointWorld(0, port);
+        line.connections.p1 = { elementId: target.id, portId: 'right' };
+        const originalEndpoint = line.getEndpointWorld(0);
+        app.elements = [target, line];
+        app.history.undoStack = [];
+        app.history.redoStack = [];
+
+        try {
+            app.transform.startEndpoint(port.x, port.y, 0, line);
+            app.transform.update(port.x + 30, port.y + 25);
+            app._snapPreview = null;
+            app._finishPointerUp({ clientX: 0, clientY: 0, button: 0, pointerId: null, shiftKey: false });
+            const disconnected = line.connections.p1 === null;
+            app.history.undo();
+            const undoRestoredConnection = line.connections.p1?.elementId === target.id &&
+                line.connections.p1?.portId === 'right';
+            const undoRestoredEndpoint = Math.hypot(
+                line.getEndpointWorld(0).x - originalEndpoint.x,
+                line.getEndpointWorld(0).y - originalEndpoint.y
+            ) < 1e-7;
+            return disconnected && undoRestoredConnection && undoRestoredEndpoint;
+        } finally {
+            app.elements = previousElements;
+            app.selectionManager.selectedElements = previousSelection;
+            app.history.undoStack = previousUndo;
+            app.history.redoStack = previousRedo;
+            app._autosave();
+        }
+    });
+    if (!detachedLineHistory) {
+        throw new Error('Dragging an attached endpoint free must disconnect it, and undo must restore the connection.');
+    }
+
+    const propertyResizeHistory = await page.evaluate(async () => {
+        const app = window.__whiteboard;
+        const { MatrixElement } = await import('/js/elements/MatrixElement.js');
+        const matrix = new MatrixElement(0, 0);
+        matrix.rows = 2;
+        matrix.cols = 2;
+        matrix._initData();
+        app.history.clear();
+        app.elements = [matrix];
+        app.selectionManager.select(matrix);
+        app.propertyPanel.update();
+
+        const widthInput = document.getElementById('prop-w');
+        widthInput.dispatchEvent(new Event('focus'));
+        widthInput.value = '80';
+        widthInput.dispatchEvent(new Event('input', { bubbles: true }));
+        widthInput.dispatchEvent(new Event('change', { bubbles: true }));
+        const resized = { width: matrix.width, height: matrix.height, cellSize: matrix.cellSize };
+        app.history.undo();
+        const undone = { width: matrix.width, height: matrix.height, cellSize: matrix.cellSize };
+        app.history.redo();
+        const redone = { width: matrix.width, height: matrix.height, cellSize: matrix.cellSize };
+        return { resized, undone, redone };
+    });
+    if (propertyResizeHistory.undone.width !== 104 ||
+        propertyResizeHistory.undone.height !== 104 ||
+        propertyResizeHistory.undone.cellSize !== 42 ||
+        propertyResizeHistory.redone.width !== 80 ||
+        propertyResizeHistory.redone.height !== 80 ||
+        propertyResizeHistory.redone.cellSize !== 30) {
+        throw new Error('Property-panel matrix resize undo/redo did not restore complete geometry: ' +
+            JSON.stringify(propertyResizeHistory));
+    }
+
     const rendered = await page.evaluate(async () => {
         const [
             { ShapeElement }, { TextElement }, { MatrixElement }, { QueueElement },
@@ -142,6 +416,17 @@ try {
         throw new Error('Markdown sanitization or safe formatting browser check failed: ' +
             JSON.stringify(markdownSecurity));
     }
+    const katexVersion = await page.evaluate(() => window.katex?.version || '');
+    const [katexMajor, katexMinor, katexPatch] = katexVersion.split('.').map(Number);
+    if (!(katexMajor > 0 || katexMinor > 16 || (katexMinor === 16 && katexPatch >= 10))) {
+        throw new Error('KaTeX must be at least the patched 0.16.10 release; loaded version: ' +
+            (katexVersion || 'unavailable'));
+    }
+    const highlightVersion = await page.evaluate(() => window.hljs?.versionString || '');
+    if (highlightVersion !== '11.11.2') {
+        throw new Error('Highlight.js must load the pinned 11.11.2 release; loaded version: ' +
+            (highlightVersion || 'unavailable'));
+    }
     const markdownCodeHighlight = await page.evaluate(async () => {
         const { MarkdownElement } = await import('/js/elements/MarkdownElement.js');
         const sample = '#include <iostream>\nint main() { return 0; }';
@@ -198,7 +483,7 @@ try {
         }, { zoom: 1 });
 
         const markdown = new MarkdownElement(0, 0, '# Transparent\n\n**colored** text');
-        const deadline = Date.now() + 6000;
+        const deadline = Date.now() + 12000;
         while (markdown._rendering && Date.now() < deadline) {
             await new Promise(resolve => setTimeout(resolve, 25));
         }
@@ -252,6 +537,67 @@ try {
         }
     });
     if (mermaidLoadCount !== 1) throw new Error('Imported Mermaid content was loaded more than once.');
+    const mermaidSanitization = await page.evaluate(async () => {
+        const { MermaidElement } = await import('/js/elements/MermaidElement.js');
+        const svg = '<svg xmlns="http://www.w3.org/2000/svg" onload="alert(1)">' +
+            '<script>alert(2)</script><image href="https://tracker.example/pixel.png"/>' +
+            '<rect onmouseover="alert(3)" style="fill:url(https://tracker.example/paint.svg#x)"/>' +
+            '</svg>';
+        const element = new MermaidElement(0, 0, svg);
+        return {
+            hasScript: /<script/i.test(element.svgString),
+            hasEventHandler: /\son[a-z]+\s*=/i.test(element.svgString),
+            hasExternalResource: element.svgString.includes('https://tracker.example')
+        };
+    });
+    if (Object.values(mermaidSanitization).some(Boolean)) {
+        throw new Error('Imported Mermaid SVG retained active or external content: ' +
+            JSON.stringify(mermaidSanitization));
+    }
+    const mermaidLoadRace = await page.evaluate(async () => {
+        const { MermaidElement } = await import('/js/elements/MermaidElement.js');
+        const OriginalImage = window.Image;
+        const originalCreateObjectURL = URL.createObjectURL;
+        const originalRevokeObjectURL = URL.revokeObjectURL;
+        const images = [];
+        const revoked = [];
+        window.Image = class {
+            constructor() { images.push(this); this.width = 0; this.height = 0; }
+            set src(value) { this.source = value; }
+        };
+        URL.createObjectURL = () => `blob:mermaid-test-${images.length}`;
+        URL.revokeObjectURL = value => revoked.push(value);
+        try {
+            const element = new MermaidElement(0, 0,
+                '<svg xmlns="http://www.w3.org/2000/svg" width="10" height="10"></svg>');
+            element.deserialize({
+                type: 'mermaid', x: 0, y: 0, width: 200, height: 200,
+                svgString: '<svg xmlns="http://www.w3.org/2000/svg" width="20" height="30"></svg>'
+            });
+            const staleImage = images[0];
+            const currentImage = images[1];
+            staleImage.width = 900;
+            staleImage.height = 800;
+            staleImage.onload();
+            const staleLoadIgnored = element.width === 200 && element.height === 200;
+            currentImage.width = 20;
+            currentImage.height = 30;
+            currentImage.onload();
+            return {
+                staleLoadIgnored,
+                currentLoadApplied: element.width === 20 && element.height === 30,
+                allObjectUrlsRevoked: revoked.length === 2
+            };
+        } finally {
+            window.Image = OriginalImage;
+            URL.createObjectURL = originalCreateObjectURL;
+            URL.revokeObjectURL = originalRevokeObjectURL;
+        }
+    });
+    if (Object.values(mermaidLoadRace).some(result => !result)) {
+        throw new Error('Mermaid image loading race was not handled correctly: ' +
+            JSON.stringify(mermaidLoadRace));
+    }
     const historyRoundTrip = await page.evaluate(async () => {
         const [{ MatrixElement }, { QueueElement }] = await Promise.all([
             import('/js/elements/MatrixElement.js'),
@@ -423,6 +769,10 @@ try {
     }
     if (pageErrors.length) {
         throw new AggregateError(pageErrors, 'The page reported uncaught JavaScript errors.');
+    }
+    if (localResourceFailures.length) {
+        throw new Error('The page requested missing local project resources: ' +
+            localResourceFailures.join('; '));
     }
     console.log('Browser smoke test passed.');
 } catch (error) {

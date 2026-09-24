@@ -23,6 +23,9 @@ export class Transform {
             p1x: el.x,              p1y: el.y,
             p2x: el.x + el.width,  p2y: el.y + el.height
         };
+        this._worldEndpoints = [0, 1].map(index => el.getEndpointWorld?.(index) ??
+            el.toWorldPoint(index === 0 ? el.x : el.x + el.width,
+                index === 0 ? el.y : el.y + el.height));
         this._connections = {
             p1: el.connections?.p1 ? { ...el.connections.p1 } : null,
             p2: el.connections?.p2 ? { ...el.connections.p2 } : null
@@ -66,15 +69,19 @@ export class Transform {
 
         if (this.mode === 'endpoint') {
             const el = this.targetElement;
-            const ep = this._ep;
-            if (this.epIndex === 0) {
-                el.x = wx; el.y = wy;
-                el.width  = ep.p2x - wx;
-                el.height = ep.p2y - wy;
+            if (typeof el.setEndpointWorld === 'function') {
+                el.setEndpointWorld(this.epIndex, { x: wx, y: wy });
             } else {
-                el.x = ep.p1x; el.y = ep.p1y;
-                el.width  = wx - ep.p1x;
-                el.height = wy - ep.p1y;
+                const ep = this._ep;
+                if (this.epIndex === 0) {
+                    el.x = wx; el.y = wy;
+                    el.width  = ep.p2x - wx;
+                    el.height = ep.p2y - wy;
+                } else {
+                    el.x = ep.p1x; el.y = ep.p1y;
+                    el.width  = wx - ep.p1x;
+                    el.height = wy - ep.p1y;
+                }
             }
         }
 
@@ -232,6 +239,7 @@ export class Transform {
             info.element = this.targetElement;
             info.epIndex = this.epIndex;
             info._ep = { ...this._ep };
+            info._worldEndpoints = this._worldEndpoints.map(point => ({ ...point }));
             info._connections = {
                 p1: this._connections.p1 ? { ...this._connections.p1 } : null,
                 p2: this._connections.p2 ? { ...this._connections.p2 } : null
@@ -269,6 +277,7 @@ export class Transform {
         this.targetElement = null;
         this.startResizeState = null;
         this._connections = null;
+        this._worldEndpoints = null;
         return info;
     }
 
@@ -312,8 +321,12 @@ export class Transform {
             this.targetElement.rotation = this.startRotation;
         }
         this.mode = null;
+        this.handleIndex = -1;
+        this.startPositions = [];
+        this.targetElement = null;
         this.startResizeState = null;
         this._connections = null;
+        this._worldEndpoints = null;
         this.app.renderer.markDirty();
     }
 }

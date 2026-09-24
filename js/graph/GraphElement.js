@@ -54,10 +54,15 @@ export class GraphElement extends Element {
      * Add a new node at position (relative to element).
      */
     addNode(relX, relY) {
-        while (this.nodes.has(String(this._nextNodeId))) {
-            this._nextNodeId++;
+        this._syncNextNodeId();
+        let nextId = this._nextNodeId;
+        const firstId = nextId;
+        while (this.nodes.has(String(nextId))) {
+            nextId = nextId >= Number.MAX_SAFE_INTEGER ? 1 : nextId + 1;
+            if (nextId === firstId) throw new Error('No available graph node ID.');
         }
-        const id = String(this._nextNodeId++);
+        this._nextNodeId = nextId >= Number.MAX_SAFE_INTEGER ? 1 : nextId + 1;
+        const id = String(nextId);
         this.nodes.set(id, { id, x: relX, y: relY, label: id });
         return id;
     }
@@ -65,9 +70,13 @@ export class GraphElement extends Element {
     _syncNextNodeId() {
         const numericIds = [...this.nodes.keys()]
             .map(id => Number(id))
-            .filter(id => Number.isInteger(id) && id >= 0);
-        const nextFromNodes = numericIds.length ? Math.max(...numericIds) + 1 : 1;
-        this._nextNodeId = Math.max(Number(this._nextNodeId) || 1, nextFromNodes);
+            .filter(id => Number.isSafeInteger(id) && id >= 0);
+        const maxNodeId = numericIds.length ? Math.max(...numericIds) : -1;
+        const nextFromNodes = maxNodeId >= Number.MAX_SAFE_INTEGER ? 1 : maxNodeId + 1;
+        const savedNextId = Number.isSafeInteger(this._nextNodeId) && this._nextNodeId >= 1
+            ? this._nextNodeId
+            : 1;
+        this._nextNodeId = Math.max(savedNextId, nextFromNodes);
     }
 
     /**
@@ -200,14 +209,16 @@ export class GraphElement extends Element {
     }
 
     captureResizeState() {
-        return [...this.nodes.values()].map(node => ({ node, x: node.x, y: node.y }));
+        return [...this.nodes.values()].map(node => ({ id: String(node.id), x: node.x, y: node.y }));
     }
 
     restoreResizeState(state) {
         if (!state) return;
-        for (const { node, x, y } of state) {
-            node.x = x;
-            node.y = y;
+        for (const { id, node, x, y } of state) {
+            const currentNode = id !== undefined ? this.nodes.get(String(id)) : node;
+            if (!currentNode) continue;
+            currentNode.x = x;
+            currentNode.y = y;
         }
     }
 
@@ -262,14 +273,21 @@ export class GraphElement extends Element {
         this.graphMode = data.graphMode || 'edge-list';
         this.nodeRadius = data.nodeRadius || 20;
         this.inputText = data.inputText || '';
-        this._nextNodeId = data._nextNodeId || 1;
+        this._nextNodeId = Number.isSafeInteger(data._nextNodeId) && data._nextNodeId >= 1
+            ? data._nextNodeId
+            : 1;
         this.nodes = new Map();
         if (data.graphNodes) {
             for (const n of data.graphNodes) {
-                this.nodes.set(n.id, n);
+                const id = String(n.id);
+                this.nodes.set(id, { ...n, id });
             }
         }
-        this.edges = data.edges || [];
+        this.edges = (data.edges || []).map(edge => ({
+            ...edge,
+            u: String(edge.u),
+            v: String(edge.v)
+        }));
         this._syncNextNodeId();
         return this;
     }
