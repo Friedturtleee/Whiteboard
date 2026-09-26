@@ -1,6 +1,8 @@
 /**
  * PropertyPanel — right-side panel for editing element properties.
  */
+const editableSelection = selectionManager => selectionManager.selectedElements.filter(el => !el.locked);
+
 export class PropertyPanel {
     constructor(app) {
         this.app = app;
@@ -28,7 +30,7 @@ export class PropertyPanel {
             swatch.dataset.color = color;
             swatch.addEventListener('click', () => {
                 const sel = this.app.selectionManager;
-                const oldVals = sel.selectedElements
+                const oldVals = editableSelection(sel)
                     .filter(e => e.color !== color)
                     .map(e => ({ el: e, old: e.color }));
                 sel.setProperty('color', color);
@@ -61,7 +63,7 @@ export class PropertyPanel {
                     this._colorGrid.querySelectorAll('.color-swatch').forEach(s => s.classList.remove('selected'));
                     customBtn.classList.add('selected');
                     const sel = this.app.selectionManager;
-                    const oldVals = sel.selectedElements
+                    const oldVals = editableSelection(sel)
                         .filter(e => e.color !== c)
                         .map(e => ({ el: e, old: e.color }));
                     sel.setProperty('color', c);
@@ -94,8 +96,9 @@ export class PropertyPanel {
             const geometryProp = ['x', 'y', 'width', 'height', 'rotation'].includes(prop);
             const isValidValue = value => {
                 if (!Number.isFinite(value)) return false;
-                const selected = oldVals?.map(item => item.el) ||
-                    this.app.selectionManager.selectedElements;
+                const selected = oldVals
+                    ? oldVals.map(item => item.el).filter(item => !item.locked)
+                    : editableSelection(this.app.selectionManager);
                 if (prop === 'x' || prop === 'y') {
                     return Math.abs(value) <= 100_000_000 && selected.every(item => {
                         const end = value + (prop === 'x' ? item.width : item.height);
@@ -120,8 +123,9 @@ export class PropertyPanel {
                 if (oldVals) return;
                 const sel = this.app.selectionManager;
                 const resizing = prop === 'width' || prop === 'height';
-                if (resizing) sel.selectedElements.forEach(item => item.onResizeStart?.());
-                oldVals = sel.selectedElements.map(e => ({
+                const selected = editableSelection(sel);
+                if (resizing) selected.forEach(item => item.onResizeStart?.());
+                oldVals = selected.map(e => ({
                     el: e,
                     old: e[prop],
                     bounds: resizing
@@ -140,8 +144,9 @@ export class PropertyPanel {
             el.addEventListener('input', () => {
                 const val = transform(el.value);
                 if (!isValidValue(val)) return;
-                const selected = oldVals?.map(item => item.el) ||
-                    this.app.selectionManager.selectedElements;
+                const selected = oldVals
+                    ? oldVals.map(item => item.el).filter(item => !item.locked)
+                    : editableSelection(this.app.selectionManager);
                 for (const item of selected) {
                     item[prop] = val;
                     if ((prop === 'width' || prop === 'height') && item.onResize) {
@@ -156,7 +161,7 @@ export class PropertyPanel {
                 const val = transform(el.value);
                 if (!isValidValue(val)) {
                     if (oldVals?.length) {
-                        for (const item of oldVals) {
+                        for (const item of oldVals.filter(item => !item.el.locked)) {
                             item.el[prop] = item.old;
                             if (prop === 'width' || prop === 'height') {
                                 Object.assign(item.el, item.bounds);
@@ -171,7 +176,8 @@ export class PropertyPanel {
                             }
                         }
                         if (geometryProp) {
-                            this.app._updateConnectedLines(oldVals.map(item => item.el.id));
+                            this.app._updateConnectedLines(oldVals
+                                .filter(item => !item.el.locked).map(item => item.el.id));
                         }
                         this.app.renderer.markDirty();
                     }
@@ -180,7 +186,11 @@ export class PropertyPanel {
                     return;
                 }
                 if (oldVals?.length) {
-                    const localOlds = [...oldVals];
+                    const localOlds = oldVals.filter(item => !item.el.locked);
+                    if (!localOlds.length) {
+                        oldVals = null;
+                        return;
+                    }
                     if (localOlds.every(item => Object.is(item.old, val))) {
                         oldVals = null;
                         return;
@@ -278,7 +288,7 @@ export class PropertyPanel {
                 const val = drawStyleSelect.value;
                 const sel = this.app.selectionManager;
                 const changes = [];
-                for (const el of sel.selectedElements) {
+                for (const el of editableSelection(sel)) {
                     if (el.drawStyle === undefined || el.drawStyle === val) continue;
                     changes.push({ el, old: el.drawStyle });
                     el.drawStyle = val;
@@ -308,7 +318,7 @@ export class PropertyPanel {
             const startCellSizeEdit = () => {
                 if (oldCellSizeVals) return;
                 const sel = this.app.selectionManager;
-                oldCellSizeVals = sel.selectedElements
+                oldCellSizeVals = editableSelection(sel)
                     .filter(e => e.cellSize !== undefined)
                     .map(e => ({ el: e, old: e.cellSize }));
             };
@@ -318,8 +328,9 @@ export class PropertyPanel {
             cellSizeInput.addEventListener('input', () => {
                 const val = Number(cellSizeInput.value);
                 if (cellSizeVal) cellSizeVal.textContent = val;
-                const selected = oldCellSizeVals?.map(item => item.el) ||
-                    this.app.selectionManager.selectedElements;
+                const selected = oldCellSizeVals
+                    ? oldCellSizeVals.map(item => item.el).filter(item => !item.locked)
+                    : editableSelection(this.app.selectionManager);
                 for (const el of selected) {
                     if (el.cellSize !== undefined) {
                         el.cellSize = val;
@@ -333,7 +344,11 @@ export class PropertyPanel {
             cellSizeInput.addEventListener('change', () => {
                 const val = Number(cellSizeInput.value);
                 if (oldCellSizeVals && oldCellSizeVals.length > 0) {
-                    const localOlds = [...oldCellSizeVals];
+                    const localOlds = oldCellSizeVals.filter(item => !item.el.locked);
+                    if (!localOlds.length) {
+                        oldCellSizeVals = null;
+                        return;
+                    }
                     if (localOlds.every(item => Object.is(item.old, val))) {
                         oldCellSizeVals = null;
                         return;
@@ -365,7 +380,7 @@ export class PropertyPanel {
             const startFontSizeEdit = () => {
                 if (oldFontSizeVals) return;
                 const sel = this.app.selectionManager;
-                oldFontSizeVals = sel.selectedElements
+                oldFontSizeVals = editableSelection(sel)
                     .filter(e => e.fontSize !== undefined)
                     .map(e => ({ el: e, old: e.fontSize }));
             };
@@ -375,8 +390,9 @@ export class PropertyPanel {
             fontSizeInput.addEventListener('input', () => {
                 const val = Number(fontSizeInput.value);
                 if (fontSizeVal) fontSizeVal.textContent = val;
-                const selected = oldFontSizeVals?.map(item => item.el) ||
-                    this.app.selectionManager.selectedElements;
+                const selected = oldFontSizeVals
+                    ? oldFontSizeVals.map(item => item.el).filter(item => !item.locked)
+                    : editableSelection(this.app.selectionManager);
                 for (const el of selected) {
                     if (el.fontSize !== undefined) {
                         el.fontSize = val;
@@ -391,7 +407,11 @@ export class PropertyPanel {
             fontSizeInput.addEventListener('change', () => {
                 const val = Number(fontSizeInput.value);
                 if (oldFontSizeVals && oldFontSizeVals.length > 0) {
-                    const localOlds = [...oldFontSizeVals];
+                    const localOlds = oldFontSizeVals.filter(item => !item.el.locked);
+                    if (!localOlds.length) {
+                        oldFontSizeVals = null;
+                        return;
+                    }
                     if (localOlds.every(item => Object.is(item.old, val))) {
                         oldFontSizeVals = null;
                         return;
@@ -442,7 +462,7 @@ export class PropertyPanel {
                 const val = fontSelect.value;
                 const sel = this.app.selectionManager;
                 const changes = [];
-                for (const el of sel.selectedElements) {
+                for (const el of editableSelection(sel)) {
                     if (el.fontFamily === undefined || el.fontFamily === val) continue;
                     changes.push({ el, old: el.fontFamily });
                     el.fontFamily = val;
@@ -483,12 +503,13 @@ export class PropertyPanel {
                 const sel = this.app.selectionManager;
                 // Determine new state based on first element
                 let newState = true;
-                if (sel.selectedElements.length > 0) {
-                    newState = !sel.selectedElements[0][propName];
+                const selected = editableSelection(sel);
+                if (selected.length > 0) {
+                    newState = !selected[0][propName];
                 }
                 btn.classList.toggle('active', newState);
                 const changes = [];
-                for (const el of sel.selectedElements) {
+                for (const el of selected) {
                     if (el[propName] === undefined || el[propName] === newState) continue;
                     changes.push({ el, old: el[propName] });
                     el[propName] = newState;
@@ -527,13 +548,14 @@ export class PropertyPanel {
 
     update() {
         const sel = this.app.selectionManager;
-        if (sel.selectedElements.length === 0) {
+        const selected = editableSelection(sel);
+        if (selected.length === 0) {
             this._panel.classList.remove('visible');
             return;
         }
         this._panel.classList.add('visible');
 
-        const el = sel.selectedElements[0];
+        const el = selected[0];
 
         const setVal = (id, val) => {
             const inp = document.getElementById(id);

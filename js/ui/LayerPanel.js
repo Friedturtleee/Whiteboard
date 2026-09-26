@@ -53,11 +53,16 @@ export class LayerPanel {
 
             const name = document.createElement('span');
             name.className = 'layer-name';
-            name.textContent = `${el.label || el.type} #${el.id}`;
+            const layerName = `${el.label || el.type} #${el.id}`;
+            name.textContent = layerName;
 
-            const vis = document.createElement('span');
+            const vis = document.createElement('button');
+            vis.type = 'button';
             vis.className = 'layer-visibility' + (el.hidden ? ' hidden' : '');
             vis.textContent = el.hidden ? '◯' : '◉';
+            vis.title = el.hidden ? '顯示圖層' : '隱藏圖層';
+            vis.setAttribute('aria-label', `圖層可見 ${layerName}`);
+            vis.setAttribute('aria-pressed', String(!el.hidden));
             vis.addEventListener('click', (e) => {
                 e.stopPropagation();
                 const oldVal = el.hidden;
@@ -67,10 +72,33 @@ export class LayerPanel {
                 this.update();
             });
 
+            const lock = document.createElement('button');
+            lock.type = 'button';
+            lock.className = 'layer-lock';
+            lock.textContent = el.locked ? '🔒' : '🔓';
+            lock.title = el.locked ? '解鎖圖層' : '鎖定圖層';
+            lock.setAttribute('aria-label', `圖層鎖定 ${layerName}`);
+            lock.setAttribute('aria-pressed', String(Boolean(el.locked)));
+            lock.addEventListener('click', (e) => {
+                e.stopPropagation();
+                const oldVal = el.locked;
+                if (!oldVal) this._cancelEditsForLock(el);
+                el.locked = !oldVal;
+                if (el.locked) {
+                    this.app.selectionManager.selectedElements = this.app.selectionManager.selectedElements
+                        .filter(selected => selected !== el);
+                    this.app.propertyPanel.update();
+                }
+                this.app.history.pushPropertyChange(el, 'locked', oldVal, el.locked);
+                this.app.renderer.markDirty();
+                this.update();
+            });
+
             item.appendChild(dragHandle);
             item.appendChild(colorDot);
             item.appendChild(name);
             item.appendChild(vis);
+            item.appendChild(lock);
 
             // ── Click to select (with Ctrl/Shift multi-select) ─────────────────
             item.addEventListener('click', (e) => {
@@ -152,5 +180,19 @@ export class LayerPanel {
 
             this._list.appendChild(item);
         }
+    }
+
+    _cancelEditsForLock(element) {
+        const transform = this.app.transform;
+        const transformTouchesElement = transform?.targetElement === element ||
+            transform?.startPositions?.some(position => position.el === element);
+        if (transform?.mode && transformTouchesElement) {
+            this.app._cancelPointerInteraction?.(this.app._activePointerId ?? null);
+        }
+
+        if (this.app._textEditing === element) {
+            this.app._finishTextEditing?.(true, true);
+        }
+        this.app._cancelInlineEditForElement?.(element);
     }
 }

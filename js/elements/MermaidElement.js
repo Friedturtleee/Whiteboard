@@ -59,11 +59,11 @@ export class MermaidElement extends Element {
         this.label = 'Graph';
         if (svgString) {
             this.svgString = sanitizeSvg(svgString);
-            if (this.svgString) this._loadSvg();
+            if (this.svgString) this._loadSvg({ fitToImage: true });
         }
     }
 
-    _loadSvg() {
+    _loadSvg({ fitToImage = false } = {}) {
         this.svgString = sanitizeSvg(this.svgString);
         if (!this.svgString) {
             this.img = null;
@@ -76,8 +76,10 @@ export class MermaidElement extends Element {
         image.onload = () => {
             URL.revokeObjectURL(url);
             if (this.img !== image) return;
-            this.width = Math.min(image.width, MAX_INTRINSIC_DIMENSION);
-            this.height = Math.min(image.height, MAX_INTRINSIC_DIMENSION);
+            if (fitToImage) {
+                this.width = Math.min(image.width, MAX_INTRINSIC_DIMENSION);
+                this.height = Math.min(image.height, MAX_INTRINSIC_DIMENSION);
+            }
             // Try to trigger a render update
             window.__whiteboard?.renderer.markDirty();
         };

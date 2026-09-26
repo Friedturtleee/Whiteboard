@@ -1029,3 +1029,74 @@ test('rotated line endpoint hit tests and drags stay in world coordinates', () =
     assert.ok(closeTo(line.getEndpointWorld(0), actualEndpoints[0]));
     assert.ok(closeTo(line.getEndpointWorld(1), actualEndpoints[1]));
 });
+
+test('locked elements cannot be hit, selected, moved, or deleted', () => {
+    const makeElement = (id, locked, zIndex) => ({
+        id, locked, hidden: false, x: 0, y: 0, width: 20, height: 20, zIndex,
+        containsPoint: () => true,
+        getBounds: () => ({ x: 0, y: 0, w: 20, h: 20 })
+    });
+    const locked = makeElement('locked', true, 2);
+    const movable = makeElement('movable', false, 1);
+    const app = {
+        elements: [movable, locked],
+        renderer: { markDirty() {} },
+        layerManager: { _reindex() {} }
+    };
+    app.selectionManager = new SelectionManager(app);
+
+    assert.equal(HitTest.hitTestAll(app.elements, 5, 5, { zoom: 1 }), movable);
+    assert.equal(HitTest.hitTestHandles(locked, 0, 0, { zoom: 1 }), null);
+    app.selectionManager.select(movable);
+    app.selectionManager.select(locked);
+    assert.deepEqual(app.selectionManager.selectedElements, [movable]);
+    app.selectionManager.toggleSelect(locked);
+    assert.deepEqual(app.selectionManager.selectedElements, [movable]);
+    app.selectionManager.selectedElements = [movable, locked];
+    app.selectionManager.startRubberBand(50, 50);
+    app.selectionManager.updateRubberBand(60, 60);
+    app.selectionManager.finishRubberBand(true);
+    assert.deepEqual(app.selectionManager.selectedElements, [movable]);
+    app.selectionManager.selectAll();
+    assert.deepEqual(app.selectionManager.selectedElements, [movable]);
+
+    const transform = new Transform(app);
+    app.selectionManager.selectedElements = [locked];
+    assert.equal(transform.startDrag(0, 0), false);
+    transform.update(10, 10);
+    assert.equal(locked.x, 0);
+    assert.equal(locked.y, 0);
+
+    app.selectionManager.selectedElements = [movable, locked];
+    transform.startDrag(0, 0);
+    transform.update(10, 5);
+    assert.equal(movable.x, 10);
+    assert.equal(movable.y, 5);
+    assert.equal(locked.x, 0);
+    assert.equal(locked.y, 0);
+    assert.deepEqual(transform.finish().elements.map(item => item.el.id), ['movable']);
+
+    app.selectionManager.selectedElements = [locked];
+    assert.deepEqual(app.selectionManager.deleteSelected(), []);
+    assert.deepEqual(app.elements, [movable, locked]);
+});
+
+test('layer lock state survives JSON export and import', () => {
+    const source = new ShapeElement('rectangle', 10, 20, 30, 40);
+    source.locked = true;
+    const app = {
+        elements: [],
+        camera: { x: 0, y: 0, zoom: 1 },
+        selectionManager: { clear() {} },
+        layerManager: { _reindex() {} },
+        history: { clear() {} },
+        renderer: { markDirty() {} }
+    };
+
+    Serializer.loadJSONData(app, {
+        version: 1,
+        elements: [source.serialize()],
+        camera: { x: 0, y: 0, zoom: 1 }
+    });
+    assert.equal(app.elements[0].locked, true);
+});

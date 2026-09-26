@@ -9,7 +9,7 @@ export class HitTest {
     static hitTestAll(elements, wx, wy, camera) {
         const sorted = elements.slice().sort((a, b) => b.zIndex - a.zIndex);
         for (const el of sorted) {
-            if (el.hidden) continue;
+            if (el.hidden || el.locked) continue;
             if (el.containsPoint(wx, wy, camera)) return el;
         }
         return null;
@@ -20,6 +20,7 @@ export class HitTest {
      * Returns: { type: 'resize'|'rotate', index, cursor } or null.
      */
     static hitTestHandles(el, wx, wy, camera) {
+        if (!el || el.hidden || el.locked) return null;
         // ── Line / Arrow: only two endpoint handles ──────────────────────────
         if (el.shapeType === 'line' || el.shapeType === 'arrow') {
             const tol = 8 / camera.zoom;

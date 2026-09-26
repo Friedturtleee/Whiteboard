@@ -172,6 +172,222 @@ try {
     if (!cameraAutosave) {
         throw new Error('Panning the canvas must persist the updated camera in autosave data.');
     }
+    const importAutosave = await page.evaluate(async () => {
+        const app = window.__whiteboard;
+        const key = app.autosaveKey;
+        const previousRaw = localStorage.getItem(key);
+        const previousCamera = { x: app.camera.x, y: app.camera.y, zoom: app.camera.zoom };
+        if (app._autosaveTimer) clearTimeout(app._autosaveTimer);
+        app._autosaveTimer = null;
+        localStorage.removeItem(key);
+        const toastSeen = new Promise(resolve => {
+            const findToast = () => [...document.querySelectorAll('.toast')]
+                .some(toast => toast.textContent.includes('已匯入'));
+            const observer = new MutationObserver(() => {
+                if (findToast()) {
+                    observer.disconnect();
+                    resolve(true);
+                }
+            });
+            observer.observe(document.body, { childList: true, subtree: true });
+            if (findToast()) {
+                observer.disconnect();
+                resolve(true);
+            }
+            setTimeout(() => { observer.disconnect(); resolve(false); }, 3000);
+        });
+        const payload = {
+            version: 1,
+            elements: [{ type: 'rectangle', x: 11, y: 22, width: 90, height: 55 }],
+            camera: { x: 11, y: 22, zoom: 1.75 }
+        };
+        const transfer = new DataTransfer();
+        transfer.items.add(new File([JSON.stringify(payload)], 'autosave-check.json', {
+            type: 'application/json'
+        }));
+        const input = document.getElementById('json-file-input');
+        input.files = transfer.files;
+        input.dispatchEvent(new Event('change', { bubbles: true }));
+        const showedImportToast = await toastSeen;
+        const saved = JSON.parse(localStorage.getItem(key) || 'null');
+        if (app._autosaveTimer) clearTimeout(app._autosaveTimer);
+        app._autosaveTimer = null;
+        const { Serializer } = await import('/js/core/Serializer.js');
+        Serializer.loadJSONData(app, { elements: [], camera: previousCamera });
+        if (previousRaw === null) localStorage.removeItem(key);
+        else localStorage.setItem(key, previousRaw);
+        return Boolean(showedImportToast && saved?.elements?.length === 1 &&
+            saved.camera?.x === 11 && saved.camera?.y === 22 && saved.camera?.zoom === 1.75);
+    });
+    if (!importAutosave) {
+        throw new Error('A successfully imported board must be saved before the import flow finishes.');
+    }
+    const layerLockControl = await page.evaluate(async () => {
+        const app = window.__whiteboard;
+        const [{ ShapeElement }, { TextElement }, { TreeElement }, { HitTest }] = await Promise.all([
+            import('/js/elements/ShapeElement.js'),
+            import('/js/elements/TextElement.js'),
+            import('/js/tree/TreeElement.js'),
+            import('/js/canvas/HitTest.js')
+        ]);
+        const element = new ShapeElement('rectangle', 0, 0, 30, 30);
+        app.elements.push(element);
+        app.selectionManager.select(element);
+        app.layerPanel.update();
+        const getLockButton = () => document.querySelector(
+            `.layer-item[data-el-id="${element.id}"] .layer-lock`
+        );
+        const getVisibilityButton = () => document.querySelector(
+            `.layer-item[data-el-id="${element.id}"] .layer-visibility`
+        );
+        const layerName = `${element.label || element.type} #${element.id}`;
+        const visibilityButton = getVisibilityButton();
+        const visibilityAccessible = visibilityButton?.tagName === 'BUTTON' &&
+            visibilityButton.getAttribute('aria-label') === `圖層可見 ${layerName}` &&
+            visibilityButton.getAttribute('aria-pressed') === 'true';
+        visibilityButton?.click();
+        const hidden = element.hidden &&
+            getVisibilityButton()?.getAttribute('aria-label') === `圖層可見 ${layerName}` &&
+            getVisibilityButton()?.getAttribute('aria-pressed') === 'false';
+        getVisibilityButton()?.click();
+        const shown = !element.hidden &&
+            getVisibilityButton()?.getAttribute('aria-label') === `圖層可見 ${layerName}`;
+        const initialButton = getLockButton();
+        const buttonAvailable = initialButton?.getAttribute('aria-label') === `圖層鎖定 ${layerName}` &&
+            initialButton.getAttribute('aria-pressed') === 'false';
+        app.selectionManager.select(element);
+        const opacityInput = document.getElementById('prop-opacity');
+        const previousOpacityValue = opacityInput.value;
+        opacityInput.dispatchEvent(new Event('focus'));
+        initialButton?.click();
+        const locked = element.locked && !app.selectionManager.isSelected(element) &&
+            HitTest.hitTestAll([element], 5, 5, app.camera) === null &&
+            getLockButton()?.getAttribute('aria-label') === `圖層鎖定 ${layerName}` &&
+            getLockButton()?.getAttribute('aria-pressed') === 'true';
+        // A remote lock can arrive after a property edit captured its start state.
+        opacityInput.value = '35';
+        opacityInput.dispatchEvent(new Event('input', { bubbles: true }));
+        const lockedPropertyUnchanged = element.opacity === 1;
+        opacityInput.value = previousOpacityValue;
+        app.selectionManager.selectedElements = [];
+        app.propertyPanel.update();
+        app.selectionManager.selectedElements = [element];
+        const beforeLockedDuplicate = app.elements.length;
+        app._duplicateSelected();
+        const lockedDuplicateBlocked = app.elements.length === beforeLockedDuplicate;
+        app.selectionManager.selectedElements = [];
+        getLockButton()?.click();
+        const unlocked = !element.locked && HitTest.hitTestAll([element], 5, 5, app.camera) === element &&
+            getLockButton()?.getAttribute('aria-label') === `圖層鎖定 ${layerName}`;
+        app.history.undo();
+        app.layerPanel.update();
+        const undoRestoresLock = element.locked;
+        app.history.redo();
+        app.layerPanel.update();
+        const redoRestoresUnlock = !element.locked &&
+            getLockButton()?.getAttribute('aria-label') === `圖層鎖定 ${layerName}`;
+        app.selectionManager.select(element);
+        const focusedVisibilityButton = getVisibilityButton();
+        focusedVisibilityButton?.focus();
+        focusedVisibilityButton?.dispatchEvent(new KeyboardEvent('keydown', {
+            key: 'Delete', bubbles: true, cancelable: true
+        }));
+        const focusedControlDoesNotDelete = app.elements.includes(element);
+
+        const editingText = new TextElement(40, 40);
+        editingText.text = 'Before lock';
+        app.elements.push(editingText);
+        app.layerManager._reindex();
+        app.layerPanel.update();
+        app._startTextEditing(editingText);
+        const textOverlay = document.getElementById('text-edit-overlay');
+        textOverlay.value = 'Uncommitted preview';
+        textOverlay.dispatchEvent(new Event('input', { bubbles: true }));
+        document.querySelector(`.layer-item[data-el-id="${editingText.id}"] .layer-lock`)?.click();
+        const lockingCancelsTextEdit = editingText.locked && editingText.text === 'Before lock' &&
+            !editingText.isEditing && app._textEditing !== editingText;
+
+        const editingTree = new TreeElement(80, 80);
+        editingTree.buildFromText('1 2 3', 'values');
+        const originalRootValue = editingTree.root.value;
+        app.elements.push(editingTree);
+        app.layerManager._reindex();
+        app.layerPanel.update();
+        app._editTreeNodeValue(editingTree, editingTree.root, 80, 80);
+        const treeOverlay = document.getElementById('text-edit-overlay');
+        treeOverlay.value = 'Uncommitted tree value';
+        treeOverlay.dispatchEvent(new Event('input', { bubbles: true }));
+        document.querySelector(`.layer-item[data-el-id="${editingTree.id}"] .layer-lock`)?.click();
+        const lockingCancelsTreeEdit = editingTree.locked && editingTree.root.value === originalRootValue &&
+            !editingTree.isEditingNode && app._inlineEdit?.element !== editingTree;
+
+        const startingPosition = { x: element.x, y: element.y };
+        app.selectionManager.select(element);
+        app.transform.startDrag(startingPosition.x, startingPosition.y);
+        app.transform.update(startingPosition.x + 12, startingPosition.y + 8);
+        getLockButton()?.click();
+        const lockingCancelsDrag = element.locked && !app.transform.mode &&
+            element.x === startingPosition.x && element.y === startingPosition.y;
+
+        app.history.clear();
+        app.selectionManager.clear();
+        app.elements = app.elements.filter(item =>
+            item !== element && item !== editingText && item !== editingTree);
+        if (app._autosaveTimer) clearTimeout(app._autosaveTimer);
+        app._autosaveTimer = null;
+        app.layerManager._reindex();
+        app.layerPanel.update();
+        return visibilityAccessible && hidden && shown && buttonAvailable && locked &&
+            lockedPropertyUnchanged && lockedDuplicateBlocked && unlocked &&
+            undoRestoresLock && redoRestoresUnlock && focusedControlDoesNotDelete &&
+            lockingCancelsTextEdit && lockingCancelsTreeEdit && lockingCancelsDrag;
+    });
+    if (!layerLockControl) {
+        throw new Error('Layer lock controls must block editing and support undo/redo.');
+    }
+    const lockedDataStructureDelete = await page.evaluate(async () => {
+        const [{ MatrixElement }, { StackElement }] = await Promise.all([
+            import('/js/elements/MatrixElement.js'),
+            import('/js/elements/StackElement.js')
+        ]);
+        const app = window.__whiteboard;
+        const matrix = new MatrixElement(0, 0);
+        matrix.data = [['1', '2']];
+        matrix.rows = 1;
+        matrix.cols = 2;
+        matrix.selectedCells = new Set(['0,0']);
+        matrix.locked = true;
+        const stack = new StackElement(0, 0);
+        stack.items = ['1', '2'];
+        stack.selectedIndices = new Set([0]);
+        stack.locked = true;
+        const historyLength = app.history.undoStack.length;
+        app._deleteSelectedMatrixCells(matrix);
+        app._deleteSelectedItems(stack);
+        return matrix.data[0][0] === '1' && stack.items[0] === '1' &&
+            app.history.undoStack.length === historyLength;
+    });
+    if (!lockedDataStructureDelete) {
+        throw new Error('Locked matrix cells and stack items must ignore delete operations.');
+    }
+    const hiddenSnapTargetIgnored = await page.evaluate(async () => {
+        const { ShapeElement } = await import('/js/elements/ShapeElement.js');
+        const app = window.__whiteboard;
+        const hidden = new ShapeElement('rectangle', 100, 100, 40, 40);
+        const visible = new ShapeElement('rectangle', 120, 100, 40, 40);
+        hidden.hidden = true;
+        const previousElements = app.elements;
+        const previousZoom = app.camera.zoom;
+        app.elements = [hidden, visible];
+        app.camera.zoom = 1;
+        const result = app._findSnapPort(120, 120, null);
+        app.elements = previousElements;
+        app.camera.zoom = previousZoom;
+        return result?.elementId === visible.id;
+    });
+    if (!hiddenSnapTargetIgnored) {
+        throw new Error('Connection snapping must ignore hidden elements.');
+    }
     await page.mouse.move(500, 300);
     await page.mouse.down();
     await page.mouse.move(560, 350);
@@ -583,10 +799,19 @@ try {
             currentImage.width = 20;
             currentImage.height = 30;
             currentImage.onload();
+            const currentLoadPreservedBounds = element.width === 200 && element.height === 200;
+
+            const freshElement = new MermaidElement(0, 0,
+                '<svg xmlns="http://www.w3.org/2000/svg" width="20" height="30"></svg>');
+            const freshImage = images[2];
+            freshImage.width = 20;
+            freshImage.height = 30;
+            freshImage.onload();
             return {
                 staleLoadIgnored,
-                currentLoadApplied: element.width === 20 && element.height === 30,
-                allObjectUrlsRevoked: revoked.length === 2
+                currentLoadPreservedBounds,
+                freshCreationFitsIntrinsic: freshElement.width === 20 && freshElement.height === 30,
+                allObjectUrlsRevoked: revoked.length === 3
             };
         } finally {
             window.Image = OriginalImage;
@@ -595,7 +820,7 @@ try {
         }
     });
     if (Object.values(mermaidLoadRace).some(result => !result)) {
-        throw new Error('Mermaid image loading race was not handled correctly: ' +
+        throw new Error('Mermaid image loading or saved-size preservation failed: ' +
             JSON.stringify(mermaidLoadRace));
     }
     const historyRoundTrip = await page.evaluate(async () => {
@@ -766,6 +991,26 @@ try {
     if (Object.values(inlineEditing).some(value => !value)) {
         throw new Error('An inline tree/text editing synchronization check failed: ' +
             JSON.stringify(inlineEditing));
+    }
+    const pointerCaptureCancellation = await page.evaluate(() => {
+        const app = window.__whiteboard;
+        const originalRelease = app.canvas.releasePointerCapture;
+        let releases = 0;
+        app._activePointerId = 999;
+        app.canvas.releasePointerCapture = pointerId => {
+            releases++;
+            app._cancelPointerInteraction(pointerId);
+        };
+        try {
+            app._cancelPointerInteraction(999);
+            return releases === 1 && app._activePointerId === null;
+        } finally {
+            app.canvas.releasePointerCapture = originalRelease;
+            app._activePointerId = null;
+        }
+    });
+    if (!pointerCaptureCancellation) {
+        throw new Error('Pointer cancellation must clear its active ID before releasing capture.');
     }
     if (pageErrors.length) {
         throw new AggregateError(pageErrors, 'The page reported uncaught JavaScript errors.');

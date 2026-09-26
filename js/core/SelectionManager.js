@@ -17,12 +17,33 @@ export class SelectionManager {
     }
 
     select(el) {
+        if (!el) {
+            this.selectedElements = [];
+            this.app.renderer.markDirty();
+            return;
+        }
+        if (el.locked) {
+            const editable = this.selectedElements.filter(item => !item.locked);
+            if (editable.length !== this.selectedElements.length) {
+                this.selectedElements = editable;
+                this.app.renderer.markDirty();
+            }
+            return;
+        }
         this.selectedElements = [el];
         this.app.renderer.markDirty();
     }
 
     toggleSelect(el) {
+        if (!el) return;
         const idx = this.selectedElements.indexOf(el);
+        if (el.locked) {
+            if (idx >= 0) {
+                this.selectedElements.splice(idx, 1);
+                this.app.renderer.markDirty();
+            }
+            return;
+        }
         if (idx >= 0) {
             this.selectedElements.splice(idx, 1);
         } else {
@@ -32,6 +53,12 @@ export class SelectionManager {
     }
 
     addToSelection(el) {
+        if (!el) return;
+        if (el.locked) {
+            this.selectedElements = this.selectedElements.filter(item => item !== el && !item.locked);
+            this.app.renderer.markDirty();
+            return;
+        }
         if (!this.selectedElements.includes(el)) {
             this.selectedElements.push(el);
             this.app.renderer.markDirty();
@@ -67,7 +94,9 @@ export class SelectionManager {
     finishRubberBand(additive = false) {
         if (!this.rubberBand) return;
         const rb = this.rubberBand;
-        if (!additive) this.selectedElements = [];
+        this.selectedElements = additive
+            ? this.selectedElements.filter(el => !el.locked && this.app.elements.includes(el))
+            : [];
         for (const el of this.app.elements) {
             if (el.hidden || el.locked) continue;
             const b = el.getRotatedBounds ? el.getRotatedBounds() : el.getBounds();
@@ -111,6 +140,7 @@ export class SelectionManager {
     deleteSelected() {
         const removed = [];
         for (const el of this.selectedElements) {
+            if (el.locked) continue;
             const idx = this.app.elements.indexOf(el);
             if (idx >= 0) {
                 this.app.elements.splice(idx, 1);
@@ -126,6 +156,7 @@ export class SelectionManager {
     /** Set property on all selected elements */
     setProperty(prop, value) {
         for (const el of this.selectedElements) {
+            if (el.locked) continue;
             el[prop] = value;
         }
         this.app.renderer.markDirty();

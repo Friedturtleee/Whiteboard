@@ -285,15 +285,43 @@
 }
 
 .layer-item .layer-visibility {
+    border: 0;
+    padding: 0 2px;
+    background: transparent;
+    color: var(--text-secondary);
     cursor: pointer;
     opacity: 0.5;
     font-size: 14px;
+    line-height: 1;
 }
-.layer-item .layer-visibility:hover {
+.layer-item .layer-visibility:hover,
+.layer-item .layer-visibility:focus-visible {
     opacity: 1;
 }
 .layer-item .layer-visibility.hidden {
     opacity: 0.2;
+}
+.layer-item .layer-visibility:focus-visible {
+    outline: 1px solid var(--accent);
+    outline-offset: 2px;
+}
+.layer-item .layer-lock {
+    border: 0;
+    padding: 0 2px;
+    background: transparent;
+    color: var(--text-secondary);
+    cursor: pointer;
+    opacity: 0.5;
+    font-size: 12px;
+    line-height: 1;
+}
+.layer-item .layer-lock:hover,
+.layer-item .layer-lock:focus-visible {
+    opacity: 1;
+}
+.layer-item .layer-lock:focus-visible {
+    outline: 1px solid var(--accent);
+    outline-offset: 2px;
 }
 
 .layer-drag-handle {

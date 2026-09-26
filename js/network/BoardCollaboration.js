@@ -444,6 +444,7 @@ export class BoardCollaboration {
                 if (currentIndex >= 0) {
                     const current = this.app.elements[currentIndex];
                     if (remoteChangedIds.has(id)) {
+                        this._cancelTransformForElement(current);
                         this.app._dismissPendingDialogsForElement?.(current);
                         this.app._cancelInlineEditForElement?.(current);
                     }
@@ -466,6 +467,7 @@ export class BoardCollaboration {
             if (currentIndex >= 0 && this.app.elements[currentIndex].type === incoming.type) {
                 const current = this.app.elements[currentIndex];
                 if (remoteChangedIds.has(id)) {
+                    this._cancelTransformForElement(current);
                     this.app._dismissPendingDialogsForElement?.(current);
                     this.app._cancelInlineEditForElement?.(current);
                     if (this.app._textEditing === current) this.app._finishTextEditing(true, true);
@@ -475,6 +477,7 @@ export class BoardCollaboration {
                 if (currentIndex >= 0) {
                     const current = this.app.elements[currentIndex];
                     if (remoteChangedIds.has(id)) {
+                        this._cancelTransformForElement(current);
                         this.app._dismissPendingDialogsForElement?.(current);
                         this.app._cancelInlineEditForElement?.(current);
                     }
@@ -487,6 +490,8 @@ export class BoardCollaboration {
                 this.app.elements.push(incoming);
             }
         }
+        this.app.selectionManager.selectedElements = this.app.selectionManager.selectedElements
+            .filter(element => !element.locked && this.app.elements.includes(element));
         this.app.elements.sort((a, b) => (a.zIndex ?? 0) - (b.zIndex ?? 0));
         this.app.layerManager._reindex();
         this.app.propertyPanel.update();
@@ -496,14 +501,31 @@ export class BoardCollaboration {
         this.app.cloudBoards?.updateUndoControls();
     }
 
+    _cancelTransformForElement(element) {
+        const transform = this.app.transform;
+        if (!transform?.mode) return;
+        const affectsElement = transform.targetElement === element ||
+            transform.startPositions?.some(position => position.el === element);
+        if (affectsElement) {
+            // Restore the pre-gesture state before applying the remote snapshot.
+            // The remote update then becomes authoritative instead of a later
+            // pointermove writing stale local coordinates back to the document.
+            this.app._cancelPointerInteraction?.(this.app._activePointerId ?? null);
+        }
+    }
+
     undo() {
         if (this.role === 'viewer') return;
+        if (this.app.cloudBoards &&
+            !this.app.cloudBoards._flushPendingLocalChange(this)) return;
         this.undoManager.undo();
         this.app.cloudBoards?.updateUndoControls();
     }
 
     redo() {
         if (this.role === 'viewer') return;
+        if (this.app.cloudBoards &&
+            !this.app.cloudBoards._flushPendingLocalChange(this)) return;
         this.undoManager.redo();
         this.app.cloudBoards?.updateUndoControls();
     }

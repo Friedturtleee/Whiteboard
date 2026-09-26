@@ -15,6 +15,7 @@ export class Transform {
     }
 
     startEndpoint(wx, wy, epIndex, el) {
+        if (!el || el.locked) return false;
         this.mode = 'endpoint';
         this.epIndex = epIndex;
         this.targetElement = el;
@@ -34,16 +35,23 @@ export class Transform {
 
     startDrag(wx, wy) {
         const sel = this.app.selectionManager;
+        const movable = sel.selectedElements.filter(el => !el.locked);
+        if (movable.length === 0) {
+            this.mode = null;
+            this.startPositions = [];
+            return false;
+        }
         this.mode = 'drag';
         this.startX = wx;
         this.startY = wy;
-        this.startPositions = sel.selectedElements.map(el => ({
+        this.startPositions = movable.map(el => ({
             el, x: el.x, y: el.y,
             points: el.points ? el.points.map(p => ({ x: p.x, y: p.y })) : null
         }));
     }
 
     startResize(wx, wy, handleIndex, el) {
+        if (!el || el.locked) return false;
         this.mode = 'resize';
         this.handleIndex = handleIndex;
         this.startX = wx;
@@ -57,6 +65,7 @@ export class Transform {
     }
 
     startRotate(wx, wy, el) {
+        if (!el || el.locked) return false;
         this.mode = 'rotate';
         this.rotCenter = el.getRotationCenter();
         this.startRotation = el.rotation;

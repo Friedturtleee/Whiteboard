@@ -266,14 +266,19 @@ class App {
             try {
                 this._skipAutosave = true;  // prevent immediate re-save during import
                 await Serializer.importJSON(this, file);
-                localStorage.removeItem(this.autosaveKey); // clear stale cache
-                this._skipAutosave = false;
-                this._refreshUI();
-                this._toast('已匯入');
             } catch (err) {
                 this._skipAutosave = false;
                 this._toast('匯入失敗: ' + err.message);
+                e.target.value = '';
+                return;
             }
+            this._skipAutosave = false;
+            try { localStorage.removeItem(this.autosaveKey); } catch (err) {
+                console.warn('[Import autosave cleanup]', err);
+            }
+            this._refreshUI();
+            const saved = this._flushAutosave();
+            this._toast(saved ? '已匯入' : '已匯入，但自動儲存失敗，請立即匯出 JSON。');
             e.target.value = '';
         });
     }
@@ -696,10 +701,11 @@ class App {
             this.transform.mode || this.selectionManager.rubberBand || this._edgePreview ||
             this._tempRightClickTool;
         if (!hasActiveInteraction) {
-            if (this._activePointerId !== null) {
-                try { this.canvas.releasePointerCapture(this._activePointerId); } catch {}
+            const activePointerId = this._activePointerId;
+            this._activePointerId = null;
+            if (activePointerId !== null) {
+                try { this.canvas.releasePointerCapture(activePointerId); } catch {}
             }
-            if (pointerId === this._activePointerId) this._activePointerId = null;
             return;
         }
 
@@ -732,10 +738,11 @@ class App {
         if (this.selectionManager.rubberBand) this.selectionManager.rubberBand = null;
         this._edgePreview = null;
         this._snapPreview = null;
-        if (this._activePointerId !== null) {
-            try { this.canvas.releasePointerCapture(this._activePointerId); } catch {}
-        }
+        const activePointerId = this._activePointerId;
         this._activePointerId = null;
+        if (activePointerId !== null) {
+            try { this.canvas.releasePointerCapture(activePointerId); } catch {}
+        }
         this.layerManager._reindex();
         this._refreshUI();
     }
@@ -1181,6 +1188,7 @@ class App {
     }
 
     _deleteSelectedMatrixCells(el) {
+        if (!el || el.locked) return;
         const isEmpty = v => v == null || v === '' || v === '\u3000';
         if (!el.selectedCells || el.selectedCells.size === 0) return;
         const selectedKeys = [...el.selectedCells].filter(key => {
@@ -1275,6 +1283,7 @@ class App {
     }
 
     _deleteSelectedItems(el) {
+        if (!el || el.locked) return;
         if (!el.selectedIndices || el.selectedIndices.size === 0) return;
         
         const oldItems = [...el.items];
@@ -2506,7 +2515,10 @@ class App {
     _bindKeyboard() {
         document.addEventListener('keydown', e => {
             // Ignore when typing in inputs
-            if (e.target.tagName === 'INPUT' || e.target.tagName === 'TEXTAREA' || e.target.tagName === 'SELECT') return;
+            if (e.target.tagName === 'INPUT' || e.target.tagName === 'TEXTAREA' ||
+                e.target.tagName === 'SELECT' || e.target.isContentEditable) return;
+            if ((e.key === 'Delete' || e.key === 'Backspace') &&
+                e.target.closest?.('button, [role="button"], a')) return;
             if (this._pendingElementDialogElement) return;
             if (this.cloudBoards?.isReadOnly && e.key !== 'Escape') return;
 
@@ -2518,8 +2530,11 @@ class App {
             if (e.key === 'Delete' || e.key === 'Backspace') {
                 // First check if any data structure has selected cells/items
                 const dsEl = this.selectionManager.selectedElements.find(el =>
-                    (el.type === 'matrix' && el.selectedCells && el.selectedCells.size > 0) ||
-                    ((el.type === 'stack' || el.type === 'queue') && el.selectedIndices && el.selectedIndices.size > 0)
+                    !el.locked && (
+                        (el.type === 'matrix' && el.selectedCells && el.selectedCells.size > 0) ||
+                        ((el.type === 'stack' || el.type === 'queue') &&
+                            el.selectedIndices && el.selectedIndices.size > 0)
+                    )
                 );
                 if (dsEl) {
                     if (dsEl.type === 'matrix') this._deleteSelectedMatrixCells(dsEl);
@@ -2527,7 +2542,7 @@ class App {
                     return;
                 }
                 // Otherwise delete entire selected elements
-                const toRemove = this.selectionManager.selectedElements.slice();
+                const toRemove = this.selectionManager.selectedElements.filter(el => !el.locked);
                 if (toRemove.length) {
                     this.history.pushDelete(this, toRemove);
                     this.selectionManager.deleteSelected();
@@ -2585,7 +2600,7 @@ class App {
             if (ctrl && isCut) {
                 e.preventDefault();
                 this._copyToClipboard();
-                const toRemove = this.selectionManager.selectedElements.slice();
+                const toRemove = this.selectionManager.selectedElements.filter(el => !el.locked);
                 if (toRemove.length) {
                     this.history.pushDelete(this, toRemove);
                     this.selectionManager.deleteSelected();
@@ -2686,7 +2701,7 @@ class App {
         const SNAP_RADIUS = 24 / this.camera.zoom;
         let best = null, bestDist = Infinity;
         for (const el of this.elements) {
-            if (el === excludeEl) continue;
+            if (el === excludeEl || el.hidden) continue;
             if (!el.getConnectionPorts) continue;
             const ports = el.getConnectionPorts();
             for (const port of ports) {
@@ -2901,7 +2916,7 @@ class App {
         document.getElementById('ctx-delete')?.addEventListener('click', () => {
             const el = this._ctxTarget;
             this._hideContextMenu();
-            if (!el) return;
+            if (!el || el.locked) return;
             this.history.pushDelete(this, [el]);
             const idx = this.elements.indexOf(el);
             if (idx >= 0) this.elements.splice(idx, 1);
@@ -2978,7 +2993,7 @@ class App {
     // Duplicate
     // ═════════════════════════════════════════════════════
     _duplicateSelected() {
-        const sel = this.selectionManager.selectedElements;
+        const sel = this.selectionManager.selectedElements.filter(el => !el.locked);
         if (!sel.length) return;
         const newEls = [];
         const idMap = new Map();
@@ -3019,6 +3034,7 @@ class App {
     }
 
     _duplicateAndTransformMatrix(el, transformType) {
+        if (!el || el.locked) return;
         const data = JSON.parse(JSON.stringify(el.serialize()));
         delete data.id;
         data.x += 50;

@@ -18,6 +18,7 @@ export class CloudBoards {
         this.clerkUserId = null;
         this.clerkIdentityRevision = 0;
         this.modal = null;
+        this.panelRenderRevision = 0;
         this.activeBoard = null;
         this.activeUserId = null;
         this.connection = null;
@@ -246,6 +247,14 @@ export class CloudBoards {
     }
 
     async _renderPanel() {
+        const renderRevision = ++this.panelRenderRevision;
+        const modal = this.modal;
+        const identityRevision = this.clerkIdentityRevision;
+        let renderedUserId = null;
+        const isCurrentRender = () => this.panelRenderRevision === renderRevision &&
+            this.modal === modal && modal?.isConnected &&
+            this.clerkIdentityRevision === identityRevision &&
+            (!this.clerk || this.clerk.user?.id === renderedUserId);
         const list = document.getElementById('cloud-board-list');
         const identity = document.getElementById('cloud-identity');
         const errorBox = document.getElementById('cloud-error');
@@ -267,6 +276,8 @@ export class CloudBoards {
         if (saveButton) saveButton.disabled = false;
         list.replaceChildren(make('p', 'cloud-muted', '載入白板清單…'));
         const clerk = await this._loadClerk();
+        renderedUserId = clerk.user?.id || null;
+        if (!isCurrentRender()) return;
         if (signOutButton) signOutButton.hidden = !clerk.user;
         if (!clerk.user) {
             identity.textContent = '登入後可查看雲端白板。';
@@ -280,9 +291,11 @@ export class CloudBoards {
             const response = await this._api('/api/boards');
             boards = response.boards || [];
         } catch (error) {
+            if (!isCurrentRender()) return;
             if (!recoveryRows.length) throw error;
             errorBox.textContent = `雲端清單目前無法載入（${error.message}）；仍可下載下方本機草稿。`;
         }
+        if (!isCurrentRender()) return;
         if (!boards.length && !recoveryRows.length) {
             list.replaceChildren(make('p', 'cloud-muted', '還沒有雲端白板。可以先將目前白板另存上去。'));
             return;
@@ -302,7 +315,7 @@ export class CloudBoards {
             retry.addEventListener('click', async () => {
                 try {
                     await this._api(`/api/boards/${board.id}`, { method: 'DELETE' });
-                    try { localStorage.removeItem(this._cloudCacheKey(this.clerk?.user?.id || 'guest', board.id)); } catch {}
+                    this._removeCloudCacheUnlessRecovery(this.clerk?.user?.id || 'guest', board.id);
                     await this._renderPanel();
                 } catch (error) { this._showError(error); }
             });
@@ -392,10 +405,13 @@ export class CloudBoards {
         if (this.accountRecoveryPending) {
             throw new Error('請先匯出或處理舊帳號的復原草稿，再切換白板。');
         }
+        const requestedUserId = options.shareToken ? null : (this.clerk?.user?.id || null);
+        if (requestedUserId && this._hasCloudRecoveryDraft(requestedUserId, board.id)) {
+            throw new Error('這份白板有未同步復原草稿；請先在雲端面板下載 JSON 或清除草稿，再開啟雲端版本。');
+        }
         this.app._finishTextEditing();
         this.app._dismissPendingDialogs?.();
         this.app._flushAutosave?.();
-        const requestedUserId = options.shareToken ? null : (this.clerk?.user?.id || null);
         const identityRevision = this.clerkIdentityRevision;
         this.statusOverride = '';
         const seedData = options.seedData?.seedData ?? options.seedData ?? null;
@@ -487,6 +503,24 @@ export class CloudBoards {
         return `${this._cloudCacheKey(userId, boardId)}_recovery`;
     }
 
+    _hasCloudRecoveryDraft(userId, boardId) {
+        try {
+            return Boolean(localStorage.getItem(this._cloudRecoveryKey(userId, boardId)));
+        } catch {
+            throw new Error('無法檢查本機復原草稿；請允許此瀏覽器使用本機儲存後再開啟雲端白板。');
+        }
+    }
+
+    _removeCloudCacheUnlessRecovery(userId, boardId) {
+        try {
+            if (localStorage.getItem(this._cloudRecoveryKey(userId, boardId))) return false;
+            localStorage.removeItem(this._cloudCacheKey(userId, boardId));
+            return true;
+        } catch {
+            return false;
+        }
+    }
+
     _preserveRevokedDraft() {
         // A revoked connection may still have edits that were never acknowledged.
         // Keep those edits isolated to the account that opened the board and make
@@ -515,24 +549,28 @@ export class CloudBoards {
             for (let index = 0; index < localStorage.length; index++) {
                 const key = localStorage.key(index);
                 if (!key?.startsWith(prefix) || !key.endsWith('_recovery')) continue;
+                const boardId = key.slice(prefix.length, -'_recovery'.length);
+                if (!/^[a-f0-9]{32}$/i.test(boardId)) continue;
                 let marker;
-                try { marker = JSON.parse(localStorage.getItem(key)); } catch { continue; }
-                if (!/^[a-f0-9]{32}$/i.test(marker?.boardId) || typeof marker.title !== 'string') continue;
+                try { marker = JSON.parse(localStorage.getItem(key)); } catch { marker = null; }
+                const title = marker?.boardId === boardId && typeof marker.title === 'string'
+                    ? marker.title
+                    : '白板復原草稿';
                 const row = make('article', 'cloud-board-row');
                 const info = make('div', 'cloud-board-info');
                 info.append(
-                    make('strong', '', `未同步草稿：${marker.title}`),
+                    make('strong', '', `未同步草稿：${title}`),
                     make('span', 'cloud-muted', '此草稿只存在於這個瀏覽器；下載 JSON 後可匯入白板。')
                 );
                 const download = make('button', 'cloud-secondary', '下載草稿 JSON');
                 download.type = 'button';
-                download.addEventListener('click', () => this._downloadRecoveryDraft(userId, marker.boardId));
+                download.addEventListener('click', () => this._downloadRecoveryDraft(userId, boardId));
                 const discard = make('button', 'cloud-danger', '清除本機草稿');
                 discard.type = 'button';
                 discard.addEventListener('click', async () => {
-                    if (!confirm(`確定清除「${marker.title}」的未同步本機草稿？此操作無法復原。`)) return;
+                    if (!confirm(`確定清除「${title}」的未同步本機草稿？此操作無法復原。`)) return;
                     try {
-                        localStorage.removeItem(this._cloudCacheKey(userId, marker.boardId));
+                        localStorage.removeItem(this._cloudCacheKey(userId, boardId));
                         localStorage.removeItem(key);
                     } catch {}
                     try { await this._renderPanel(); } catch (error) { this._showError(error); }
@@ -731,6 +769,13 @@ export class CloudBoards {
         }, 180);
     }
 
+    _flushPendingLocalChange(connection) {
+        if (this.connection !== connection || this.isReadOnly || !this.syncTimer) return true;
+        clearTimeout(this.syncTimer);
+        this.syncTimer = null;
+        return connection.syncLocalState();
+    }
+
     renderStatus(extra = '') {
         this.statusOverride = extra;
         this._renderStatus();
@@ -830,13 +875,13 @@ export class CloudBoards {
             await this._api(`/api/boards/${board.id}`, { method: 'DELETE' });
         } catch (error) {
             if (error.cleanupPending) {
-                try { localStorage.removeItem(this._cloudCacheKey(this.clerk?.user?.id || 'guest', board.id)); } catch {}
+                this._removeCloudCacheUnlessRecovery(this.clerk?.user?.id || 'guest', board.id);
                 if (this.activeBoard?.id === board.id) await this.returnToLocal({ skipFlush: true });
                 await this._renderPanel();
             }
             throw error;
         }
-        try { localStorage.removeItem(this._cloudCacheKey(this.clerk?.user?.id || 'guest', board.id)); } catch {}
+        this._removeCloudCacheUnlessRecovery(this.clerk?.user?.id || 'guest', board.id);
         if (this.activeBoard?.id === board.id) await this.returnToLocal({ skipFlush: true });
         await this._renderPanel();
     }
@@ -910,14 +955,23 @@ export class CloudBoards {
         const params = fromFragment ? hashParams : queryParams;
         const boardId = params.get('board');
         const token = params.get('share');
-        if (!boardId || !token) return;
+        const hasShareParams = ['board', 'share'].some(key => queryParams.has(key) || hashParams.has(key));
+        const cleanShareParams = (clearFragment = false) => {
+            const cleanUrl = new URL(location.href);
+            cleanUrl.searchParams.delete('board');
+            cleanUrl.searchParams.delete('share');
+            if (clearFragment || hashParams.has('board') || hashParams.has('share')) cleanUrl.hash = '';
+            history.replaceState(history.state, '', `${cleanUrl.pathname}${cleanUrl.search}${cleanUrl.hash}`);
+        };
+        if (!boardId || !token) {
+            // A partial share URL can still contain a bearer token. Scrub it
+            // even when the pair is malformed or split across query and hash.
+            if (hasShareParams) cleanShareParams();
+            return;
+        }
         // A share token is a bearer credential. Remove it from the address bar
         // and browser history before making requests or loading further content.
-        const cleanUrl = new URL(location.href);
-        cleanUrl.searchParams.delete('board');
-        cleanUrl.searchParams.delete('share');
-        if (fromFragment) cleanUrl.hash = '';
-        history.replaceState(history.state, '', `${cleanUrl.pathname}${cleanUrl.search}${cleanUrl.hash}`);
+        cleanShareParams(fromFragment);
         if (!this._configured()) return;
         try {
             await this.openBoard({ id: boardId, role: 'viewer' }, null, { shareToken: token });

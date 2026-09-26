@@ -25,7 +25,7 @@ npm run test:browser
 - `js/core/`：共用模型與狀態管理（元素基底、選取、圖層、變形、歷史紀錄、序列化）。
 - `js/elements/`：一般形狀、文字、Markdown、筆跡、矩陣、Stack、Queue、Mermaid。
 - `js/tree/`、`js/graph/`：樹／圖的解析、版面配置、繪製與元素狀態。
-- `js/ui/`：工具列、屬性面板、圖層面板、輸入對話框、顏色選擇器。
+- `js/ui/`：工具列、屬性面板、圖層面板、輸入對話框、顏色選擇器。圖層面板可切換可見狀態、鎖定元素及調整堆疊順序；鎖定會取消該元素正在進行的編輯或變形，鎖定狀態也會隨白板儲存。
 - `css/`：`colors.css` 是設計 token；`main.css` 是整體基礎；`toolbar.css`、`panels.css` 是主要 UI；`markdown-dialog.css` 是 Markdown 編輯器。
 - `tests/regression.test.js`：Node 原生測試，放資料解析、模型、幾何與 undo/redo 回歸案例。
 - `test.js`：Puppeteer 瀏覽器 smoke/regression 測試。
@@ -84,7 +84,7 @@ index.html → App(js/app.js)
 - `GraphElement`：節點與邊資料；`GraphParser` 處理輸入，`GraphLayout` 配置節點，`GraphRenderer` 繪製。編輯圖時要檢查有向／無向、自環、平行邊與權重。
 - `PenElement`：自由筆跡幾何存在 `points`；移動／縮放 undo 必須同步點座標，而不只是 element bounds。
 - `MarkdownElement`：Marked/KaTeX/highlight 等瀏覽器全域函式庫負責轉換內容，再產生供 Canvas 繪製的影像；非同步 render 要防止較舊結果覆蓋最新編輯。Markdown 的畫布呈現背景透明，樣式主要由 CSS 管理。
-- `MermaidElement`：將序列化的 SVG 字串經 DOMParser 清除 script、事件屬性和外部資源後載入為圖片繪製；目前不呼叫 Mermaid runtime，也不支援 Markdown fenced `mermaid` code block。
+- `MermaidElement`：將序列化的 SVG 字串經 DOMParser 清除 script、事件屬性和外部資源後載入為圖片繪製；重載內容時保留白板儲存的縮放尺寸，較舊的非同步圖片也不會覆蓋新資料。目前不呼叫 Mermaid runtime，也不支援 Markdown fenced `mermaid` code block。
 
 ### 輸入佔位符規則
 
