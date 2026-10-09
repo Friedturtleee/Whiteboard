@@ -3,6 +3,7 @@ import assert from 'node:assert/strict';
 import { QueueElement } from '../js/elements/QueueElement.js';
 import { StackElement } from '../js/elements/StackElement.js';
 import { MatrixElement } from '../js/elements/MatrixElement.js';
+import { fitCanvasTextFontSize } from '../js/core/CanvasTextFit.js';
 import { TextElement } from '../js/elements/TextElement.js';
 import { PenElement } from '../js/elements/PenElement.js';
 import { Serializer } from '../js/core/Serializer.js';
@@ -34,6 +35,64 @@ test('array placeholders remain distinct from ordinary user data', () => {
     assert.equal(stack.setFromText(input), null);
     assert.deepEqual(queue.items, expected);
     assert.deepEqual(stack.items, expected);
+});
+
+test('long cell values shrink proportionally without changing cell widths', () => {
+    const ctx = {
+        font: '14px Consolas, monospace',
+        measureText(text) { return { width: String(text).length * 8 }; }
+    };
+    const shortSize = fitCanvasTextFontSize(ctx, '1', 14, 34, 34);
+    const longSize = fitCanvasTextFontSize(ctx, 'a very long value', 14, 34, 34);
+    assert.equal(shortSize, 14);
+    assert.ok(longSize < shortSize);
+    assert.ok(longSize > 0);
+});
+
+test('matrix, queue, and stack draw long values with smaller proportional fonts', () => {
+    const makeContext = () => {
+        const labels = [];
+        const fonts = [];
+        return {
+            labels,
+            save() { fonts.push(this.font); },
+            restore() { this.font = fonts.pop() ?? this.font; },
+            fillRect() {}, strokeRect() {}, beginPath() {},
+            moveTo() {}, lineTo() {}, stroke() {}, translate() {}, rotate() {},
+            measureText(text) {
+                const size = Number.parseFloat(this.font) || 14;
+                return { width: String(text).length * size * 0.6 };
+            },
+            fillText(text, x, y, maxWidth) {
+                labels.push({ text: String(text), font: this.font, maxWidth });
+            }
+        };
+    };
+    const assertFit = (element, shortText, longText) => {
+        const ctx = makeContext();
+        const originalSize = { width: element.width, height: element.height };
+        element.draw(ctx);
+        assert.deepEqual({ width: element.width, height: element.height }, originalSize);
+        const shortLabel = ctx.labels.find(label => label.text === shortText);
+        const longLabel = ctx.labels.find(label => label.text === longText);
+        assert.ok(shortLabel && longLabel);
+        assert.ok(Number.parseFloat(longLabel.font) < Number.parseFloat(shortLabel.font));
+        assert.equal(shortLabel.maxWidth, undefined);
+        assert.equal(longLabel.maxWidth, undefined);
+    };
+
+    const matrix = new MatrixElement();
+    matrix.data[0][0] = 'short';
+    matrix.data[0][1] = 'a value much longer than one cell';
+    assertFit(matrix, 'short', 'a value much longer than one cell');
+
+    const queue = new QueueElement();
+    queue.setFromText('short "a value much longer than one cell"');
+    assertFit(queue, 'short', 'a value much longer than one cell');
+
+    const stack = new StackElement();
+    stack.setFromText('short "a value much longer than one cell"');
+    assertFit(stack, 'short', 'a value much longer than one cell');
 });
 
 test('matrix placeholders preserve boundary cells and sentinel-like values', () => {
@@ -137,6 +196,22 @@ test('contest graph input stores optional weights on edges', () => {
     assert.ok([...graph.nodes.values()].every(node => node.nodeWeight === null));
 });
 
+test('contest graph input supports zero-based node IDs when selected', () => {
+    const input = '4 3\n0 1\n1 2 8\n2 3';
+    assert.match(GraphParser.parse(input).error, /range/);
+    const graph = new GraphElement();
+    assert.equal(graph.buildFromText(input, false, true), null);
+    assert.deepEqual([...graph.nodes.keys()], ['0', '1', '2', '3']);
+    assert.equal(graph.edges[1].w, '8');
+    assert.equal(graph.zeroBased, true);
+
+    const saved = graph.serialize();
+    const restored = GraphElement.fromData(saved);
+    restored.deserialize(saved);
+    assert.equal(restored.zeroBased, true);
+    assert.deepEqual([...restored.nodes.keys()], ['0', '1', '2', '3']);
+});
+
 test('contest tree input roots undirected weighted edges at node 1', () => {
     const input = '5\n2 1 7\n3 2 -2\n3 4\n5 4 0';
     const tree = new TreeElement();
@@ -218,6 +293,292 @@ test('a one-node graph is centered in its layout area', () => {
     const nodes = new Map([['1', { id: '1', x: 0, y: 0 }]]);
     GraphLayout.layout(nodes, [], { width: 360, height: 310 });
     assert.deepEqual({ x: nodes.get('1').x, y: nodes.get('1').y }, { x: 180, y: 155 });
+});
+
+test('graph layout repairs non-finite starting coordinates deterministically', () => {
+    const createNodes = () => new Map([
+        ['1', { id: '1', x: NaN, y: Infinity }],
+        ['2', { id: '2', x: 0, y: 0 }],
+        ['3', { id: '3', x: 0, y: 0 }]
+    ]);
+    const first = createNodes();
+    const second = createNodes();
+
+    GraphLayout.layout(first, [], { iterations: 0 });
+    GraphLayout.layout(second, [], { iterations: 0 });
+    const positions = map => [...map.values()].map(({ x, y }) => [x, y]);
+    assert.deepEqual(positions(first), positions(second));
+    assert.ok([...first.values()].every(node => Number.isFinite(node.x) && Number.isFinite(node.y)));
+    assert.ok(!GraphLayout.hasOverlaps(first, 48));
+});
+
+test('coincident graph nodes receive opposite deterministic separation vectors', () => {
+    const forward = GraphLayout._stableDirection(2, 5, 3);
+    const reverse = GraphLayout._stableDirection(5, 2, 3);
+    assert.deepEqual(reverse, forward.map(value => -value));
+});
+
+test('large graph nodes keep their full radius inside a minimum-size layout area', () => {
+    const graph = new GraphElement();
+    graph.nodeRadius = 100;
+    assert.equal(graph.buildFromText('2 1\n1 2'), null);
+
+    const nodes = [...graph.nodes.values()];
+    assert.ok(Math.hypot(nodes[0].x - nodes[1].x, nodes[0].y - nodes[1].y) >= 208);
+    for (const node of nodes) {
+        assert.ok(node.x - graph.nodeRadius + 20 >= 0);
+        assert.ok(node.y - graph.nodeRadius + 20 >= 0);
+        assert.ok(node.x + graph.nodeRadius + 20 <= graph.width);
+        assert.ok(node.y + graph.nodeRadius + 20 <= graph.height);
+    }
+});
+
+test('dense graph layouts expand their frame and keep node circles apart', () => {
+    const nodeCount = 50;
+    const input = [`${nodeCount} ${nodeCount - 1}`, ...Array.from(
+        { length: nodeCount - 1 }, (_, index) => `${index + 1} ${index + 2}`
+    )].join('\n');
+    const graph = new GraphElement();
+
+    assert.equal(graph.buildFromText(input), null);
+    assert.ok(graph.width > 400 || graph.height > 350);
+
+    const assertClearance = () => {
+        const nodes = [...graph.nodes.values()];
+        const minimumDistance = graph.nodeRadius * 2 + 6;
+        for (let first = 0; first < nodes.length; first++) {
+            for (let second = first + 1; second < nodes.length; second++) {
+                assert.ok(Math.hypot(
+                    nodes[first].x - nodes[second].x,
+                    nodes[first].y - nodes[second].y
+                ) >= minimumDistance - 1e-6);
+            }
+        }
+    };
+
+    assertClearance();
+    graph.onResizeStart();
+    graph.onResize(100, 100);
+    assert.ok(graph.width > 100 || graph.height > 100);
+    assertClearance();
+});
+
+test('maximum-size star graph layout separates all 500 nodes', () => {
+    const nodeCount = 500;
+    const hubId = 250;
+    const input = [`${nodeCount} ${nodeCount - 1}`, ...Array.from(
+        { length: nodeCount - 1 }, (_, index) => {
+            const targetId = index + 1 < hubId ? index + 1 : index + 2;
+            return `${hubId} ${targetId}`;
+        }
+    )].join('\n');
+    const graph = new GraphElement();
+
+    assert.equal(graph.buildFromText(input), null);
+    assert.equal(graph.nodes.size, nodeCount);
+    assert.ok(graph.width < 2000);
+    assert.ok(graph.height < 2000);
+    const hub = graph.nodes.get(String(hubId));
+    assert.ok(Math.hypot(
+        hub.x - (graph.width - 40) / 2,
+        hub.y - (graph.height - 40) / 2
+    ) <= graph.nodeRadius * 2 + 8);
+    const nodes = [...graph.nodes.values()];
+    const minimumDistance = graph.nodeRadius * 2 + 6;
+    for (let first = 0; first < nodes.length; first++) {
+        for (let second = first + 1; second < nodes.length; second++) {
+            assert.ok(Math.hypot(
+                nodes[first].x - nodes[second].x,
+                nodes[first].y - nodes[second].y
+            ) >= minimumDistance - 1e-6);
+        }
+    }
+
+    graph.onResizeStart();
+    graph.onResize(100, 100);
+    assert.ok(graph.width > 100 || graph.height > 100);
+    assert.ok(Math.hypot(
+        hub.x - (graph.width - 40) / 2,
+        hub.y - (graph.height - 40) / 2
+    ) <= graph.nodeRadius * 2 + 8);
+    assert.ok(!GraphLayout.hasOverlaps(graph.nodes, minimumDistance));
+});
+
+test('collision repair keeps a larger dense graph force-laid out without overlaps', () => {
+    const nodeCount = 120;
+    const nodes = new Map(Array.from({ length: nodeCount }, (_, index) => {
+        const id = String(index);
+        return [id, { id, x: 0, y: 0 }];
+    }));
+    const edges = [];
+    for (let first = 0; first < nodeCount; first++) {
+        for (let second = first + 1; second < nodeCount; second++) {
+            if ((first * 31 + second * 17) % 37 < 4) {
+                edges.push({ u: String(first), v: String(second) });
+            }
+        }
+    }
+
+    GraphLayout.layout(nodes, edges, { width: 400, height: 350, nodeRadius: 20 });
+
+    assert.ok(edges.length > nodeCount * 5);
+    assert.ok(!GraphLayout.hasOverlaps(nodes, 48));
+    assert.ok(new Set([...nodes.values()].map(node => Math.round(node.x * 1e6))).size > 110);
+});
+
+test('graph preview relayout uses the requested frame size rather than its previous auto expansion', () => {
+    const graph = new GraphElement();
+    const crowdedInput = ['50 49', ...Array.from(
+        { length: 49 }, (_, index) => `${index + 1} ${index + 2}`
+    )].join('\n');
+
+    assert.equal(graph.buildFromText(crowdedInput), null);
+    assert.ok(graph.width > 400 || graph.height > 350);
+    assert.equal(graph.buildFromText('2 1\n1 2'), null);
+    assert.equal(graph.width, 400);
+    assert.equal(graph.height, 350);
+
+    graph.onResizeStart();
+    graph.onResize(600, 500);
+    assert.equal(graph.buildFromText('2 1\n1 2'), null);
+    assert.equal(graph.width, 600);
+    assert.equal(graph.height, 500);
+});
+
+test('graph base frame size survives JSON restore and controls later relayouts', () => {
+    const graph = new GraphElement();
+    assert.equal(graph.buildFromText('2 1\n1 2'), null);
+    graph.onResizeStart();
+    graph.onResize(620, 480);
+
+    const app = {
+        elements: [],
+        camera: { x: 0, y: 0, zoom: 1 },
+        selectionManager: { clear() {} },
+        renderer: { markDirty() {} }
+    };
+    Serializer.loadJSONData(app, { elements: [graph.serialize()] });
+    const restored = app.elements[0];
+    assert.equal(restored.buildFromText('2 1\n1 2'), null);
+    assert.equal(restored.width, 620);
+    assert.equal(restored.height, 480);
+});
+
+test('graph resize undo and redo restore the relayout base size', () => {
+    const graph = new GraphElement();
+    const input = '3 2\n1 2\n2 3';
+    assert.equal(graph.buildFromText(input), null);
+    const history = new History({ renderer: { markDirty() {} } });
+    const fromBounds = { x: graph.x, y: graph.y, w: graph.width, h: graph.height };
+
+    graph.onResizeStart();
+    const fromState = graph.captureResizeState();
+    graph.width = 620;
+    graph.height = 480;
+    graph.onResize(620, 480);
+    const toBounds = { x: graph.x, y: graph.y, w: graph.width, h: graph.height };
+    const toState = graph.captureResizeState();
+    history.pushResize(graph, fromBounds, toBounds, null, null, null, fromState, toState);
+
+    assert.equal(graph.buildFromText(input), null);
+    history.undo();
+    assert.equal(graph.buildFromText(input), null);
+    assert.equal(graph.width, 400);
+    assert.equal(graph.height, 350);
+    history.redo();
+    assert.equal(graph.buildFromText(input), null);
+    assert.equal(graph.width, 620);
+    assert.equal(graph.height, 480);
+});
+
+test('tree layout enforces node clearance when requested spacing is too small', () => {
+    const root = {
+        value: 'root',
+        children: [
+            { value: 'left', children: [], parent: null },
+            { value: 'middle', children: [], parent: null },
+            { value: 'right', children: [], parent: null }
+        ]
+    };
+    for (const child of root.children) child.parent = root;
+
+    TreeLayout.layout(root, {
+        nodeRadius: 20,
+        nodeSpacingX: 1,
+        levelSpacingY: 1
+    });
+    const nodes = [root, ...root.children];
+    const minimumDistance = 46;
+    for (let first = 0; first < nodes.length; first++) {
+        for (let second = first + 1; second < nodes.length; second++) {
+            assert.ok(Math.hypot(
+                nodes[first].x - nodes[second].x,
+                nodes[first].y - nodes[second].y
+            ) >= minimumDistance - 1e-6);
+        }
+    }
+});
+
+test('tree resize keeps finite geometry when given non-finite bounds', () => {
+    const tree = new TreeElement();
+    assert.equal(tree.buildFromText('3\n1 2\n1 3'), null);
+    tree.onResizeStart();
+    tree.onResize(Number.NaN, Number.POSITIVE_INFINITY);
+
+    assert.ok(Number.isFinite(tree.nodeRadius));
+    assert.ok(Number.isFinite(tree.width) && Number.isFinite(tree.height));
+    const nodes = [tree.root, ...tree.root.children];
+    for (const node of nodes) assert.ok(Number.isFinite(node.x) && Number.isFinite(node.y));
+    const minimumDistance = tree.nodeRadius * 2 + 8;
+    for (let first = 0; first < nodes.length; first++) {
+        for (let second = first + 1; second < nodes.length; second++) {
+            assert.ok(Math.hypot(
+                nodes[first].x - nodes[second].x,
+                nodes[first].y - nodes[second].y
+            ) >= minimumDistance - 1e-6);
+        }
+    }
+});
+
+test('a long unary BST is laid out vertically instead of using one column per node', () => {
+    const tree = new TreeElement();
+    tree.treeType = 'bst';
+    const input = Array.from({ length: 200 }, (_, index) => String(index + 1)).join(' ');
+
+    assert.equal(tree.buildFromText(input, 'values'), null);
+    assert.ok(tree.width <= tree.nodeRadius * 2 + 20);
+    let node = tree.root;
+    let previousY = node.y;
+    let count = 1;
+    while (node.children[1]) {
+        node = node.children[1];
+        assert.equal(node.x, tree.root.x);
+        assert.ok(node.y - previousY >= tree.nodeRadius * 2 + 8);
+        previousY = node.y;
+        count++;
+    }
+    assert.equal(count, 200);
+});
+
+test('balanced BST layout stays compact while preserving in-order node order', () => {
+    const tree = new TreeElement();
+    tree.treeType = 'bst';
+    const values = [8, 4, 12, 2, 6, 10, 14, 1, 3, 5, 7, 9, 11, 13, 15];
+    assert.equal(tree.buildFromText(values.join(' '), 'values'), null);
+
+    const inOrder = [];
+    const visit = node => {
+        if (!node) return;
+        visit(node.children[0]);
+        inOrder.push(node);
+        visit(node.children[1]);
+    };
+    visit(tree.root);
+    assert.deepEqual(inOrder.map(node => Number(node.value)), [...values].sort((a, b) => a - b));
+    for (let index = 1; index < inOrder.length; index++) {
+        assert.ok(inOrder[index].x > inOrder[index - 1].x);
+    }
+    assert.ok(tree.width < 500);
 });
 
 test('graph selection bounds avoid scanning nodes and edges on hover', () => {
@@ -591,6 +952,14 @@ test('tree parsing limits input size and preserves the previous tree on invalid 
     assert.equal(tree.root, root);
     assert.equal(tree.inputText, previousText);
     assert.match(TreeParser.parseParentFormat(new Array(2001).fill('1')).error, /2000/);
+
+    const oversizedValues = Array.from({ length: 2001 }, (_, index) => String(index));
+    assert.match(tree.buildFromText(oversizedValues.join(' '), 'auto'), /2000/);
+    assert.equal(tree.root, root);
+    assert.equal(tree.inputText, previousText);
+    for (const build of [TreeParser.buildBST, TreeParser.buildAVL, TreeParser.buildRBTree]) {
+        assert.match(build(oversizedValues).error, /2000/);
+    }
 });
 
 test('tree layout visits deeper non-binary branches without dropping nodes', () => {
@@ -826,6 +1195,58 @@ test('graph JSON import normalizes mixed numeric and string node IDs', () => {
     assert.equal(graph.edges[0].v, '2');
     assert.ok(graph.nodes.has(graph.edges[0].u));
     assert.ok(graph.nodes.has(graph.edges[0].v));
+});
+
+test('graph JSON import repairs overlapping nodes and preserves separated positions', () => {
+    const app = {
+        elements: [],
+        camera: { x: 0, y: 0, zoom: 1 },
+        selectionManager: { clear() {} },
+        renderer: { markDirty() {} }
+    };
+    const savedNodes = [
+        { id: '1', x: 100, y: 100, label: '1' },
+        { id: '2', x: 100, y: 100, label: '2' },
+        { id: '3', x: 600, y: 160, label: '3' }
+    ];
+    Serializer.loadJSONData(app, {
+        elements: [{
+            type: 'graph', x: 0, y: 0, width: 400, height: 350,
+            graphNodes: savedNodes, edges: [{ u: '1', v: '2' }]
+        }]
+    });
+
+    const graph = app.elements[0];
+    const nodes = [...graph.nodes.values()];
+    const minimumDistance = graph.nodeRadius * 2 + 6;
+    for (let first = 0; first < nodes.length; first++) {
+        for (let second = first + 1; second < nodes.length; second++) {
+            assert.ok(Math.hypot(
+                nodes[first].x - nodes[second].x,
+                nodes[first].y - nodes[second].y
+            ) >= minimumDistance - 1e-6);
+        }
+    }
+    assert.deepEqual({ x: nodes[2].x, y: nodes[2].y }, { x: 600, y: 160 });
+    assert.ok(graph.width >= 664);
+});
+
+test('graph and tree JSON restore clamp invalid node radii before layout', () => {
+    const graph = new GraphElement();
+    assert.equal(graph.buildFromText('2 1\n1 2'), null);
+    const savedGraph = { ...graph.serialize(), nodeRadius: -10 };
+    const restoredGraph = GraphElement.fromData(savedGraph);
+    restoredGraph.deserialize(savedGraph);
+    assert.equal(restoredGraph.nodeRadius, 1);
+    assert.ok(!GraphLayout.hasOverlaps(restoredGraph.nodes, 10));
+
+    const tree = new TreeElement();
+    assert.equal(tree.buildFromText('2\n1 2'), null);
+    const savedTree = { ...tree.serialize(), nodeRadius: -10 };
+    const restoredTree = TreeElement.fromData(savedTree);
+    restoredTree.deserialize(savedTree);
+    assert.equal(restoredTree.nodeRadius, 8);
+    assert.ok(restoredTree.root.children[0].y - restoredTree.root.y >= 24);
 });
 
 test('JSON element records cannot shadow methods or change element prototypes', () => {
@@ -1295,6 +1716,33 @@ test('resizing a graph with minimal bounds keeps node coordinates finite', () =>
     for (const node of graph.nodes.values()) {
         assert.ok(Number.isFinite(node.x));
         assert.ok(Number.isFinite(node.y));
+    }
+});
+
+test('repeatedly shrinking a packed graph does not distort its frame aspect ratio', () => {
+    const graph = new GraphElement();
+    const input = ['500 499', ...Array.from({ length: 499 }, (_, index) => `1 ${index + 2}`)].join('\n');
+    assert.equal(graph.buildFromText(input), null);
+    const initialAspectRatio = graph.width / graph.height;
+    const app = { renderer: { markDirty() {} } };
+
+    for (let attempt = 0; attempt < 8; attempt++) {
+        const transform = new Transform(app);
+        const startX = graph.x + graph.width;
+        const startY = graph.y + graph.height;
+        const startWidth = graph.width;
+        const startHeight = graph.height;
+        transform.startResize(startX, startY, 2, graph);
+        for (let step = 1; step <= 4; step++) {
+            transform.update(
+                startX - startWidth * 0.92 * step / 4,
+                startY - startHeight * 0.92 * step / 4
+            );
+        }
+        transform.finish();
+        assert.ok(graph.width < 2000 && graph.height < 2000);
+        assert.ok(Math.abs(graph.width / graph.height - initialAspectRatio) < 0.08);
+        assert.equal(GraphLayout.hasOverlaps(graph.nodes, graph.nodeRadius * 2 + 8), false);
     }
 });
 

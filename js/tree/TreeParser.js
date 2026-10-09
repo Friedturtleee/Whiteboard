@@ -538,7 +538,11 @@ export class TreeParser {
      * Build a BST from a list of values.
      */
     static buildBST(values) {
+        if (!Array.isArray(values)) return { error: 'Tree values must be an array.' };
         if (values.length === 0) return null;
+        if (values.length > MAX_TREE_NODES) {
+            return { error: 'Tree values cannot exceed ' + MAX_TREE_NODES + ' nodes.' };
+        }
         if (!hasOnlyFiniteNumericValues(values)) {
             return { error: 'Tree values must be finite numbers.' };
         }
@@ -578,7 +582,11 @@ export class TreeParser {
      * Build an AVL tree from a list of values.
      */
     static buildAVL(values) {
+        if (!Array.isArray(values)) return { error: 'Tree values must be an array.' };
         if (values.length === 0) return null;
+        if (values.length > MAX_TREE_NODES) {
+            return { error: 'Tree values cannot exceed ' + MAX_TREE_NODES + ' nodes.' };
+        }
         if (!hasOnlyFiniteNumericValues(values)) {
             return { error: 'Tree values must be finite numbers.' };
         }
@@ -659,7 +667,11 @@ export class TreeParser {
      * Build a Red-Black tree from a list of values.
      */
     static buildRBTree(values) {
+        if (!Array.isArray(values)) return { error: 'Tree values must be an array.' };
         if (values.length === 0) return null;
+        if (values.length > MAX_TREE_NODES) {
+            return { error: 'Tree values cannot exceed ' + MAX_TREE_NODES + ' nodes.' };
+        }
         if (!hasOnlyFiniteNumericValues(values)) {
             return { error: 'Tree values must be finite numbers.' };
         }

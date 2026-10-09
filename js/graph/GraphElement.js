@@ -16,6 +16,8 @@ export class GraphElement extends Element {
         this.nodes = new Map();   // id → { id, x, y, label, nodeWeight }
         this.edges = [];          // [{ u, v, w?, directed }]
         this.nodeRadius = 20;
+        this._layoutBaseWidth = this.width;
+        this._layoutBaseHeight = this.height;
         this.inputText = '';
         this.label = 'Graph';
         this._draggingNode = null;
@@ -38,12 +40,17 @@ export class GraphElement extends Element {
         this.edges = result.edges;
         this._syncNextNodeId();
 
-        // Run force-directed layout
-        GraphLayout.layout(this.nodes, this.edges, {
-            width: this.width - 40,
-            height: this.height - 40,
+        // Run force-directed layout. Larger graphs need a larger drawing area
+        // so the spring layout does not compress every node against the frame.
+        const layoutSize = GraphLayout.layout(this.nodes, this.edges, {
+            width: this._layoutBaseWidth - 40,
+            height: this._layoutBaseHeight - 40,
+            aspectRatio: this._layoutBaseWidth / this._layoutBaseHeight,
+            nodeRadius: this.nodeRadius,
             iterations: 80
         });
+        this.width = layoutSize.width + 40;
+        this.height = layoutSize.height + 40;
 
         // Offset node positions so they are relative to element origin
         // (layout gives positions in 0..width-40 range)
@@ -214,11 +221,21 @@ export class GraphElement extends Element {
     }
 
     captureResizeState() {
-        return [...this.nodes.values()].map(node => ({ id: String(node.id), x: node.x, y: node.y }));
+        const state = [...this.nodes.values()].map(node => ({
+            id: String(node.id), x: node.x, y: node.y
+        }));
+        Object.defineProperty(state, 'layoutBaseSize', {
+            value: { width: this._layoutBaseWidth, height: this._layoutBaseHeight }
+        });
+        return state;
     }
 
     restoreResizeState(state) {
         if (!state) return;
+        if (state.layoutBaseSize) {
+            this._layoutBaseWidth = state.layoutBaseSize.width;
+            this._layoutBaseHeight = state.layoutBaseSize.height;
+        }
         for (const { id, node, x, y } of state) {
             const currentNode = id !== undefined ? this.nodes.get(String(id)) : node;
             if (!currentNode) continue;
@@ -231,25 +248,62 @@ export class GraphElement extends Element {
      * Scale node positions proportionally when the element bounding box is resized.
      */
     onResize(newW, newH) {
+        this._layoutBaseWidth = Number.isFinite(newW)
+            ? Math.max(40, newW)
+            : this.width;
+        this._layoutBaseHeight = Number.isFinite(newH)
+            ? Math.max(40, newH)
+            : this.height;
         const origW = this._origResizeW;
         const origH = this._origResizeH;
-        if (!origW || !origH || !this._origNodePos) return;
-        // Interior area = element minus 20px padding on each side
-        const scaleAxis = (nextSize, originalSize) => {
-            if (!Number.isFinite(nextSize) || !Number.isFinite(originalSize) || originalSize <= 0) return 1;
-            const ratio = originalSize > 40
-                ? (nextSize - 40) / (originalSize - 40)
-                : nextSize / originalSize;
-            return Number.isFinite(ratio) ? Math.max(0.1, ratio) : 1;
-        };
-        const sx = scaleAxis(newW, origW);
-        const sy = scaleAxis(newH, origH);
-        for (const [id, node] of this.nodes) {
-            const orig = this._origNodePos.get(id);
-            if (orig) {
-                node.x = orig.x * sx;
-                node.y = orig.y * sy;
+        let scaledPositionsOverlap = false;
+        if (origW && origH && this._origNodePos) {
+            // Interior area = element minus 20px padding on each side.
+            const scaleAxis = (nextSize, originalSize) => {
+                if (!Number.isFinite(nextSize) || !Number.isFinite(originalSize) || originalSize <= 0) return 1;
+                const ratio = originalSize > 40
+                    ? (nextSize - 40) / (originalSize - 40)
+                    : nextSize / originalSize;
+                return Number.isFinite(ratio) ? Math.max(0.1, ratio) : 1;
+            };
+            const sx = scaleAxis(newW, origW);
+            const sy = scaleAxis(newH, origH);
+            const scaledPositions = [...this.nodes].map(([id, node]) => {
+                const original = this._origNodePos.get(id);
+                return original
+                    ? { x: original.x * sx, y: original.y * sy }
+                    : { x: node.x, y: node.y };
+            });
+            scaledPositionsOverlap = GraphLayout.hasOverlaps(
+                scaledPositions,
+                this.nodeRadius * 2 + 8
+            );
+            for (const [id, node] of this.nodes) {
+                const orig = this._origNodePos.get(id);
+                if (orig) {
+                    node.x = orig.x * sx;
+                    node.y = orig.y * sy;
+                }
             }
+        }
+
+        // Resizing can compress fixed-size node circles into one another.
+        // Reflow them and let the element grow if the requested frame is too
+        // small to hold the graph at its minimum node spacing.
+        if (this.nodes.size > 0) {
+            const layoutSize = GraphLayout.layout(this.nodes, this.edges, {
+                width: this._layoutBaseWidth - 40,
+                height: this._layoutBaseHeight - 40,
+                aspectRatio: this._layoutBaseWidth / this._layoutBaseHeight,
+                nodeRadius: this.nodeRadius,
+                iterations: 0,
+                // Keep each pointer-move reflow bounded. If a large resize
+                // leaves unresolved collisions, GraphLayout uses its spaced
+                // grid fallback before returning, so nodes still stay clear.
+                maxCollisionPasses: scaledPositionsOverlap ? 40 : undefined
+            });
+            this.width = layoutSize.width + 40;
+            this.height = layoutSize.height + 40;
         }
     }
 
@@ -266,6 +320,8 @@ export class GraphElement extends Element {
             graphNodes: nodesArr,
             edges: this.edges,
             nodeRadius: this.nodeRadius,
+            _layoutBaseWidth: this._layoutBaseWidth,
+            _layoutBaseHeight: this._layoutBaseHeight,
             inputText: this.inputText,
             _nextNodeId: this._nextNodeId
         };
@@ -273,10 +329,23 @@ export class GraphElement extends Element {
 
     deserialize(data) {
         super.deserialize(data);
+        this._origResizeW = undefined;
+        this._origResizeH = undefined;
+        this._origNodePos = null;
         this.directed = data.directed || false;
         this.zeroBased = data.zeroBased || false;
         this.graphMode = data.graphMode || 'edge-list';
-        this.nodeRadius = data.nodeRadius || 20;
+        this.nodeRadius = Number.isFinite(data.nodeRadius)
+            ? Math.max(1, Math.min(200, data.nodeRadius))
+            : 20;
+        const savedBaseWidth = Number(data._layoutBaseWidth);
+        const savedBaseHeight = Number(data._layoutBaseHeight);
+        this._layoutBaseWidth = Number.isFinite(savedBaseWidth) && savedBaseWidth >= 40 && savedBaseWidth <= 1e7
+            ? savedBaseWidth
+            : this.width;
+        this._layoutBaseHeight = Number.isFinite(savedBaseHeight) && savedBaseHeight >= 40 && savedBaseHeight <= 1e7
+            ? savedBaseHeight
+            : this.height;
         this.inputText = data.inputText || '';
         this._nextNodeId = Number.isSafeInteger(data._nextNodeId) && data._nextNodeId >= 1
             ? data._nextNodeId
@@ -294,6 +363,31 @@ export class GraphElement extends Element {
             v: String(edge.v)
         }));
         this._syncNextNodeId();
+
+        // Older or externally authored boards may contain nodes at the same
+        // coordinates. Repair only those layouts so valid saved positions
+        // remain untouched during import.
+        const nodeList = [...this.nodes.values()];
+        const padding = this.nodeRadius + 4;
+        const contentWidth = this.width - 40;
+        const contentHeight = this.height - 40;
+        const hasOverlaps = GraphLayout.hasOverlaps(nodeList, this.nodeRadius * 2 + 8);
+        const hasNodesOutsideFrame = nodeList.some(node =>
+            node.x < padding || node.y < padding ||
+            node.x > contentWidth - padding || node.y > contentHeight - padding
+        );
+        if (hasOverlaps || hasNodesOutsideFrame) {
+            const layoutSize = GraphLayout.layout(this.nodes, this.edges, {
+                width: Math.max(1, this.width - 40),
+                height: Math.max(1, this.height - 40),
+                aspectRatio: this._layoutBaseWidth / this._layoutBaseHeight,
+                nodeRadius: this.nodeRadius,
+                iterations: 0,
+                preservePositions: true
+            });
+            this.width = Math.max(this.width, layoutSize.width + 40);
+            this.height = Math.max(this.height, layoutSize.height + 40);
+        }
         return this;
     }
 

@@ -3,6 +3,7 @@
  */
 import { Element } from '../core/Element.js';
 import { formatDataToken, splitDataTokens } from '../core/DataTokens.js';
+import { fitCanvasTextFontSize } from '../core/CanvasTextFit.js';
 
 const EMPTY_CELL = '\u3000';
 const isEmptyCell = value => value == null || value === '' || value === EMPTY_CELL;
@@ -132,14 +133,10 @@ export class QueueElement extends Element {
         const displayItems = items.slice(0, this.maxDisplay);
         const startX = x + 8; // 8px left padding
 
-        // Adaptive font size
-        const maxLen = Math.max(1, ...displayItems.map(v => String(v).length));
         const cellInnerW = cellWidth - 6;
         const cellInnerH = h - 16;
-        const fontByWidth = cellInnerW / (maxLen * 0.6);
-        const fontByHeight = cellInnerH * 0.5;
-        const adaptiveFontSize = Math.max(8, Math.min(fontByWidth, fontByHeight, 36));
-        ctx.font = `${adaptiveFontSize}px Consolas, monospace`;
+        const baseFontSize = Math.max(8, Math.min(this.fontSize, cellInnerW * 0.6, cellInnerH * 0.5, 36));
+        ctx.font = `${baseFontSize}px Consolas, monospace`;
 
         const slotsToDraw = Math.max(1, displayItems.length);
         for (let i = 0; i < slotsToDraw; i++) {
@@ -163,7 +160,14 @@ export class QueueElement extends Element {
             // Value (skip rendering the full-width space placeholder)
             if (i < displayItems.length && !isEmptyCell(displayItems[i])) {
                 ctx.fillStyle = this.getEffectiveColor(this.color);
-                ctx.fillText(String(displayItems[i]), cx, cy, cellInnerW);
+                const text = String(displayItems[i]);
+                const fittedFontSize = fitCanvasTextFontSize(
+                    ctx, text, baseFontSize, cellInnerW, cellInnerH
+                );
+                ctx.save();
+                ctx.font = `${fittedFontSize}px Consolas, monospace`;
+                ctx.fillText(text, cx, cy);
+                ctx.restore();
             }
 
             // Cell selection highlight

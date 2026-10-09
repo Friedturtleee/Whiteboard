@@ -3,6 +3,7 @@
  */
 import { Element } from '../core/Element.js';
 import { formatDataToken, splitDataTokens } from '../core/DataTokens.js';
+import { fitCanvasTextFontSize } from '../core/CanvasTextFit.js';
 
 const EMPTY_CELL = '\u3000';
 const isEmptyCell = value => value == null || value === '' || value === EMPTY_CELL;
@@ -321,9 +322,14 @@ export class MatrixElement extends Element {
                 if (!isEmptyCell(val)) {
                     ctx.fillStyle = this.getEffectiveColor(this.color);
                     ctx.save();
+                    const text = String(val);
+                    const fittedFontSize = fitCanvasTextFontSize(
+                        ctx, text, this.fontSize, cellSize - 8, cellSize - 8
+                    );
+                    ctx.font = `${fittedFontSize}px Consolas, monospace`;
                     ctx.translate(cx + cellSize / 2, cy + cellSize / 2);
                     ctx.rotate(snappedTextAngle - rotation);
-                    ctx.fillText(String(val), 0, 0, cellSize - 4);
+                    ctx.fillText(text, 0, 0);
                     ctx.restore();
                 }
 

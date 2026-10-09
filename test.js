@@ -603,9 +603,69 @@ try {
             element.rotation = Math.PI / 18;
             element.draw(ctx, { zoom: 1 });
         }
-        return elements.map(element => element.type);
+        const stressGraph = new GraphElement();
+        const graphNodeCount = 500;
+        const graphInput = [
+            `${graphNodeCount} ${graphNodeCount - 1}`,
+            ...Array.from({ length: graphNodeCount - 1 }, (_, index) => `1 ${index + 2}`)
+        ].join('\n');
+        const stressGraphError = stressGraph.buildFromText(graphInput);
+        if (stressGraphError) throw new Error(stressGraphError);
+        const stressGraphNodes = [...stressGraph.nodes.values()];
+        let graphMinimumDistance = Infinity;
+        for (let first = 0; first < stressGraphNodes.length; first++) {
+            for (let second = first + 1; second < stressGraphNodes.length; second++) {
+                graphMinimumDistance = Math.min(graphMinimumDistance, Math.hypot(
+                    stressGraphNodes[first].x - stressGraphNodes[second].x,
+                    stressGraphNodes[first].y - stressGraphNodes[second].y
+                ));
+            }
+        }
+        stressGraph.draw(ctx, { zoom: 1 });
+
+        const stressTree = new TreeElement();
+        const treeNodeCount = 2000;
+        const treeInput = [String(treeNodeCount), ...Array.from(
+            { length: treeNodeCount - 1 }, (_, index) => `${index + 1} ${index + 2}`
+        )].join('\n');
+        const stressTreeError = stressTree.buildFromText(treeInput);
+        if (stressTreeError) throw new Error(stressTreeError);
+        stressTree.draw(ctx, { zoom: 1 });
+
+        const stressEulerTree = new TreeElement();
+        stressEulerTree.treeType = 'euler';
+        const stressEulerError = stressEulerTree.buildFromText(treeInput);
+        if (stressEulerError) throw new Error(stressEulerError);
+        stressEulerTree.draw(ctx, { zoom: 1 });
+
+        return {
+            elements: elements.map(element => element.type),
+            stressGraph: {
+                nodes: stressGraph.nodes.size,
+                minDistance: graphMinimumDistance,
+                minimumAllowed: stressGraph.nodeRadius * 2 + 8
+            },
+            stressTree: { width: stressTree.width, nodes: treeNodeCount },
+            stressEulerTree: {
+                nodes: treeNodeCount,
+                rootTin: stressEulerTree.root.meta.tin,
+                rootTout: stressEulerTree.root.meta.tout
+            }
+        };
     });
-    if (rendered.length !== 10) throw new Error('Not all representative element types rendered.');
+    if (rendered.elements.length !== 10) throw new Error('Not all representative element types rendered.');
+    if (rendered.stressGraph.nodes !== 500 ||
+        rendered.stressGraph.minDistance < rendered.stressGraph.minimumAllowed - 1e-6) {
+        throw new Error('Maximum-size graph layout overlaps nodes: ' + JSON.stringify(rendered.stressGraph));
+    }
+    if (rendered.stressTree.nodes !== 2000 || rendered.stressTree.width > 100) {
+        throw new Error('Maximum-depth tree layout failed to compact: ' + JSON.stringify(rendered.stressTree));
+    }
+    if (rendered.stressEulerTree.nodes !== 2000 || rendered.stressEulerTree.rootTin !== 1 ||
+        rendered.stressEulerTree.rootTout !== 4000) {
+        throw new Error('Maximum-depth Euler tree failed to build and render: ' +
+            JSON.stringify(rendered.stressEulerTree));
+    }
     const markdownSecurity = await page.evaluate(async () => {
         const { MarkdownElement } = await import('/js/elements/MarkdownElement.js');
         const preview = document.createElement('div');
@@ -1428,8 +1488,15 @@ try {
         app._showGraphDialog(graph);
         dialog = document.querySelector('.modal-overlay');
         textarea = dialog?.querySelector('textarea');
+        const largePreviewInput = ['80 79', ...Array.from(
+            { length: 79 }, (_, index) => `1 ${index + 2}`
+        )].join('\n');
+        textarea.value = largePreviewInput;
+        app.textInputDialog.flushPreview();
+        const largePreviewExpandsGraph = graph.width > 400 || graph.height > 350;
         textarea.value = '4 5\n1 2\n2 3 7\n3 4 2\n4 1\n1 3 5';
         app.textInputDialog.flushPreview();
+        const smallerPreviewRestoresBaseFrame = graph.width === 400 && graph.height === 350;
         const graphPreview = graph.nodes.size === 4 && graph.edges.length === 5 &&
             graph.edges[1].w === '7' && graph.edges[4].w === '5';
         dialog.querySelector('.modal-actions .btn-primary').click();
@@ -1437,6 +1504,25 @@ try {
             graph.edges[2].w === '2';
         app.elements.splice(app.elements.indexOf(graph), 1);
         app.history.clear();
+
+        const zeroBasedGraph = new GraphElement(120, 120);
+        app.elements.push(zeroBasedGraph);
+        app._showGraphDialog(zeroBasedGraph);
+        dialog = document.querySelector('.modal-overlay');
+        textarea = dialog?.querySelector('textarea');
+        textarea.value = '4 3\n0 1\n1 2 8\n2 3';
+        const zeroBasedCheckbox = dialog.querySelector('#dialog-zerobased');
+        zeroBasedCheckbox.checked = true;
+        zeroBasedCheckbox.dispatchEvent(new Event('change', { bubbles: true }));
+        app.textInputDialog.flushPreview();
+        const zeroBasedGraphPreview = zeroBasedGraph.nodes.has('0') &&
+            zeroBasedGraph.nodes.has('3') && zeroBasedGraph.edges[1].w === '8';
+        dialog.querySelector('.modal-actions .btn-primary').click();
+        const zeroBasedGraphConfirmed = zeroBasedGraph.zeroBased &&
+            zeroBasedGraph.nodes.size === 4 && zeroBasedGraph.edges.length === 3;
+        app.elements.splice(app.elements.indexOf(zeroBasedGraph), 1);
+        app.history.clear();
+
         app.layerManager._reindex();
         app.renderer.markDirty();
         return {
@@ -1444,11 +1530,72 @@ try {
             rootedModePreview, modeOnlyChangeRecorded,
             modeUndoRestoresAuto, modeRedoRestoresRooted, typeSelectorDefaultsToCurrent,
             treeTypePreviewWorks, treeTypeConfirmWorks, treeTypeUndoWorks,
-            graphPreview, graphConfirmed
+            largePreviewExpandsGraph, smallerPreviewRestoresBaseFrame,
+            graphPreview, graphConfirmed, zeroBasedGraphPreview, zeroBasedGraphConfirmed
         };
     });
     if (Object.values(contestInputDialogs).some(value => !value)) {
         throw new Error('CF/AtCoder tree/graph input dialogs failed: ' + JSON.stringify(contestInputDialogs));
+    }
+    const batchMatrixInput = await page.evaluate(async () => {
+        const { MatrixElement } = await import('/js/elements/MatrixElement.js');
+        const app = window.__whiteboard;
+        const matrix = new MatrixElement(100, 100);
+        matrix.setFromText('1 2 3\n4 5 6');
+        app.elements.push(matrix);
+        app.layerManager._reindex();
+        app.selectionManager.clear();
+        app.selectionManager.select(matrix);
+
+        const clickCell = (row, col, modifiers = {}) => {
+            const point = matrix.toWorldPoint(
+                matrix.x + 10 + (col + 0.5) * matrix.cellSize,
+                matrix.y + 10 + (row + 0.5) * matrix.cellSize
+            );
+            app._handleSelectDown(point.x, point.y, {
+                ctrlKey: false, metaKey: false, shiftKey: false, ...modifiers
+            });
+        };
+        clickCell(0, 0);
+        clickCell(0, 2, { ctrlKey: true });
+        const CtrlMultiSelectionWorks = matrix.selectedCells.size === 2 &&
+            matrix.selectedCells.has('0,0') && matrix.selectedCells.has('0,2');
+        document.dispatchEvent(new KeyboardEvent('keydown', {
+            key: 'Enter', bubbles: true, cancelable: true
+        }));
+        let dialog = document.querySelector('.modal-overlay');
+        const EnterOpensBatchEditor = Boolean(dialog);
+        dialog.querySelector('textarea').value = 'alpha beta';
+        dialog.querySelector('.modal-actions .btn-primary').click();
+        const selectedCellsReceiveOrderedValues = matrix.data[0][0] === 'alpha' &&
+            matrix.data[0][2] === 'beta' && matrix.data[1][0] === '4';
+        app.history.undo();
+        const batchUndoRestoresValues = matrix.data[0][0] === '1' && matrix.data[0][2] === '3';
+        app.history.redo();
+        const batchRedoRestoresValues = matrix.data[0][0] === 'alpha' && matrix.data[0][2] === 'beta';
+
+        matrix.selectedCells = new Set(['0,0', '0,1', '1,2']);
+        document.dispatchEvent(new KeyboardEvent('keydown', {
+            key: 'Enter', bubbles: true, cancelable: true
+        }));
+        dialog = document.querySelector('.modal-overlay');
+        dialog.querySelector('textarea').value = 'same';
+        dialog.querySelector('.modal-actions .btn-primary').click();
+        const singleValueFillsAllSelectedCells = matrix.data[0][0] === 'same' &&
+            matrix.data[0][1] === 'same' && matrix.data[1][2] === 'same';
+
+        app.elements.splice(app.elements.indexOf(matrix), 1);
+        app.selectionManager.clear();
+        app.layerManager._reindex();
+        app.history.clear();
+        app.renderer.markDirty();
+        return {
+            CtrlMultiSelectionWorks, EnterOpensBatchEditor, selectedCellsReceiveOrderedValues,
+            batchUndoRestoresValues, batchRedoRestoresValues, singleValueFillsAllSelectedCells
+        };
+    });
+    if (Object.values(batchMatrixInput).some(value => !value)) {
+        throw new Error('Matrix batch input failed: ' + JSON.stringify(batchMatrixInput));
     }
     const rotatedGraphEdgePreview = await page.evaluate(async () => {
         const { GraphElement } = await import('/js/graph/GraphElement.js');

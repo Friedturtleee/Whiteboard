@@ -15,7 +15,7 @@ import { LayerManager } from './core/LayerManager.js';
 import { Transform } from './core/Transform.js';
 import { History } from './core/History.js';
 import { Serializer } from './core/Serializer.js';
-import { formatDataToken } from './core/DataTokens.js';
+import { formatDataToken, splitDataTokens } from './core/DataTokens.js';
 
 // ── Elements ────────────────────────────────────────────
 import { ShapeElement } from './elements/ShapeElement.js';
@@ -1320,6 +1320,59 @@ class App {
             this.selectionManager.selectedElements = this.selectionManager.selectedElements.filter(e => e !== el);
         }
         this.renderer.markDirty();
+    }
+
+    _editSelectedMatrixCells(el) {
+        if (!el || el.type !== 'matrix' || el.locked || this.cloudBoards?.isReadOnly ||
+            !el.selectedCells || el.selectedCells.size < 2) return;
+
+        const cells = [...el.selectedCells]
+            .map(key => String(key).split(',').map(Number))
+            .filter(([row, col]) => Number.isInteger(row) && Number.isInteger(col) &&
+                row >= 0 && row < el.rows && col >= 0 && col < el.cols && el.data[row]?.[col] !== undefined)
+            .sort(([rowA, colA], [rowB, colB]) => rowA - rowB || colA - colB);
+        if (cells.length < 2) return;
+
+        this.textInputDialog.show({
+            element: el,
+            title: `批次輸入 ${cells.length} 個矩陣格`,
+            placeholder: `依列、欄順序輸入 ${cells.length} 個值（空格或換行分隔）。\n只輸入一個值會套用到全部選取格；含空白的值請加雙引號。\n例：1 2 3`,
+            onConfirm: text => {
+                if (text.length > MAX_DATA_STRUCTURE_INPUT_LENGTH) {
+                    this._toast('批次輸入不可超過 1 MB。', 4000);
+                    return;
+                }
+                const values = splitDataTokens(text, { multiline: true });
+                if (values.length !== 1 && values.length !== cells.length) {
+                    this._toast(`請輸入 1 個值（套用全部），或剛好 ${cells.length} 個值。`, 4000);
+                    return;
+                }
+
+                const oldData = el.data.map(row => [...row]);
+                const newData = oldData.map(row => [...row]);
+                cells.forEach(([row, col], index) => {
+                    newData[row][col] = values.length === 1 ? values[0] : values[index];
+                });
+                const changed = cells.some(([row, col]) => oldData[row][col] !== newData[row][col]);
+                if (!changed) return;
+                const newText = newData.map(row => row.map(formatDataToken).join(' ')).join('\n');
+                if (newText.length > MAX_DATA_STRUCTURE_INPUT_LENGTH) {
+                    this._toast('資料總輸入不可超過 1 MB，已保留原值。', 4000);
+                    return;
+                }
+                const applyData = data => {
+                    el.data = data.map(row => [...row]);
+                    el.updateTextFromData();
+                    this.renderer.markDirty();
+                };
+                applyData(newData);
+                this.history.push({
+                    description: 'Batch Edit Matrix Cells',
+                    undo: () => applyData(oldData),
+                    redo: () => applyData(newData)
+                });
+            }
+        });
     }
 
     _deleteSelectedItems(el) {
@@ -2753,6 +2806,16 @@ class App {
             const ctrl = e.ctrlKey || e.metaKey;
 
 
+            if (e.key === 'Enter') {
+                const matrix = this.selectionManager.selectedElements.find(el =>
+                    el.type === 'matrix' && !el.locked && el.selectedCells?.size > 1
+                );
+                if (matrix) {
+                    e.preventDefault();
+                    this._editSelectedMatrixCells(matrix);
+                    return;
+                }
+            }
 
             // ── Delete ─────────────────────────────
             if (e.key === 'Delete' || e.key === 'Backspace') {

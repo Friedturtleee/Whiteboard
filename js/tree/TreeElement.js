@@ -91,6 +91,7 @@ export class TreeElement extends Element {
     _layoutTree() {
         if (!this.root) return;
         TreeLayout.layout(this.root, {
+            nodeRadius: this.nodeRadius,
             nodeSpacingX: this.nodeRadius * 2.5,
             levelSpacingY: this.nodeRadius * 3.5,
             startX: 0,
@@ -319,10 +320,16 @@ export class TreeElement extends Element {
         const origW = this._origResizeW || this.width;
         const origH = this._origResizeH || this.height;
         const origR = this._origNodeRadius ?? this.nodeRadius;
-        const scaleW = newW / origW;
-        const scaleH = newH / origH;
+        const safeOrigR = Number.isFinite(origR) ? origR : 18;
+        const scaleW = Number.isFinite(newW) && Number.isFinite(origW) && origW > 0
+            ? newW / origW
+            : 1;
+        const scaleH = Number.isFinite(newH) && Number.isFinite(origH) && origH > 0
+            ? newH / origH
+            : 1;
         const scale = Math.min(scaleW, scaleH);
-        this.nodeRadius = Math.max(8, Math.min(40, Math.round(origR * scale)));
+        const scaledRadius = safeOrigR * (Number.isFinite(scale) ? scale : 1);
+        this.nodeRadius = Math.max(8, Math.min(40, Math.round(scaledRadius)));
         this._layoutTree();
     }
 
@@ -481,7 +488,9 @@ export class TreeElement extends Element {
             throw new TypeError('Saved tree edge-weight overrides are invalid.');
         }
         this.treeType = data.treeType || 'tree';
-        this.nodeRadius = data.nodeRadius || 18;
+        this.nodeRadius = Number.isFinite(data.nodeRadius)
+            ? Math.max(8, Math.min(40, data.nodeRadius))
+            : 18;
         this.inputText = data.inputText || '';
         this.inputMode = data.inputMode || 'auto';
         if (!['auto', 'rooted', 'parent', 'edge', 'values'].includes(this.inputMode)) {
