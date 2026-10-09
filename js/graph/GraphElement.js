@@ -75,10 +75,13 @@ export class GraphElement extends Element {
     }
 
     _syncNextNodeId() {
-        const numericIds = [...this.nodes.keys()]
-            .map(id => Number(id))
-            .filter(id => Number.isSafeInteger(id) && id >= 0);
-        const maxNodeId = numericIds.length ? Math.max(...numericIds) : -1;
+        let maxNodeId = -1;
+        for (const key of this.nodes.keys()) {
+            const id = Number(key);
+            if (Number.isSafeInteger(id) && id >= 0 && id > maxNodeId) {
+                maxNodeId = id;
+            }
+        }
         const nextFromNodes = maxNodeId >= Number.MAX_SAFE_INTEGER ? 1 : maxNodeId + 1;
         const savedNextId = Number.isSafeInteger(this._nextNodeId) && this._nextNodeId >= 1
             ? this._nextNodeId
@@ -203,6 +206,42 @@ export class GraphElement extends Element {
         return ports;
     }
 
+    findNearestConnectionPort(wx, wy, maxDistance = Infinity) {
+        if (this.nodes.size === 0) {
+            return super.findNearestConnectionPort(wx, wy, maxDistance);
+        }
+        const maxDistanceSquared = maxDistance * maxDistance;
+        let nearest = null;
+        let nearestDistanceSquared = maxDistanceSquared;
+        const rotation = this.rotation || 0;
+        const cos = rotation ? Math.cos(rotation) : 1;
+        const sin = rotation ? Math.sin(rotation) : 0;
+        const centerX = this.x + this.width / 2;
+        const centerY = this.y + this.height / 2;
+        for (const [id, node] of this.nodes) {
+            const localX = this.x + 20 + node.x;
+            const localY = this.y + 20 + node.y;
+            const dxFromCenter = localX - centerX;
+            const dyFromCenter = localY - centerY;
+            const x = rotation
+                ? centerX + dxFromCenter * cos - dyFromCenter * sin
+                : localX;
+            const y = rotation
+                ? centerY + dxFromCenter * sin + dyFromCenter * cos
+                : localY;
+            const dx = wx - x;
+            const dy = wy - y;
+            const distanceSquared = dx * dx + dy * dy;
+            if (distanceSquared < nearestDistanceSquared) {
+                nearestDistanceSquared = distanceSquared;
+                nearest = { id: `node_${id}`, x, y };
+            }
+        }
+        return nearest
+            ? { ...nearest, distance: Math.sqrt(nearestDistanceSquared) }
+            : null;
+    }
+
     moveNodes(dx, dy) {
         // This is called when the whole element is dragged — no need to move internal nodes
         // since they are drawn relative to (this.x, this.y)
@@ -256,7 +295,6 @@ export class GraphElement extends Element {
             : this.height;
         const origW = this._origResizeW;
         const origH = this._origResizeH;
-        let scaledPositionsOverlap = false;
         if (origW && origH && this._origNodePos) {
             // Interior area = element minus 20px padding on each side.
             const scaleAxis = (nextSize, originalSize) => {
@@ -268,16 +306,6 @@ export class GraphElement extends Element {
             };
             const sx = scaleAxis(newW, origW);
             const sy = scaleAxis(newH, origH);
-            const scaledPositions = [...this.nodes].map(([id, node]) => {
-                const original = this._origNodePos.get(id);
-                return original
-                    ? { x: original.x * sx, y: original.y * sy }
-                    : { x: node.x, y: node.y };
-            });
-            scaledPositionsOverlap = GraphLayout.hasOverlaps(
-                scaledPositions,
-                this.nodeRadius * 2 + 8
-            );
             for (const [id, node] of this.nodes) {
                 const orig = this._origNodePos.get(id);
                 if (orig) {
@@ -297,10 +325,10 @@ export class GraphElement extends Element {
                 aspectRatio: this._layoutBaseWidth / this._layoutBaseHeight,
                 nodeRadius: this.nodeRadius,
                 iterations: 0,
-                // Keep each pointer-move reflow bounded. If a large resize
-                // leaves unresolved collisions, GraphLayout uses its spaced
-                // grid fallback before returning, so nodes still stay clear.
-                maxCollisionPasses: scaledPositionsOverlap ? 40 : undefined
+                // The collision scan exits after one pass when scaled
+                // positions stay clear. If they overlap, bound pointer-move
+                // repair work and let the grid fallback separate any remaining nodes.
+                maxCollisionPasses: 40
             });
             this.width = layoutSize.width + 40;
             this.height = layoutSize.height + 40;
@@ -383,6 +411,10 @@ export class GraphElement extends Element {
                 aspectRatio: this._layoutBaseWidth / this._layoutBaseHeight,
                 nodeRadius: this.nodeRadius,
                 iterations: 0,
+                // Imported overlaps are often fully collapsed nodes. Bound
+                // the repair work and use the spaced grid fallback if 40
+                // local passes cannot separate the imported positions.
+                maxCollisionPasses: 40,
                 preservePositions: true
             });
             this.width = Math.max(this.width, layoutSize.width + 40);

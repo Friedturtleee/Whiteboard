@@ -1,6 +1,6 @@
 export class TreeLayout {
     static layout(root, options = {}) {
-        if (!root) return;
+        if (!root || root.value === null) return;
         const nodeRadius = Math.max(1, options.nodeRadius || 18);
         const minimumSpacing = nodeRadius * 2 + 8;
         const spacingX = Math.max(options.nodeSpacingX || 40, minimumSpacing);
@@ -12,44 +12,75 @@ export class TreeLayout {
         // child span. Unlike a plain in-order index, this keeps unary chains
         // vertical and avoids reserving a full column for every node.
         let leafX = startX;
-        const visited = new Set();
-        function postOrder(node, depth) {
-            if (!node || node.value === null || visited.has(node)) return;
-            visited.add(node);
-            const children = (node.children || []).filter(child =>
-                child && child.value !== null
-            );
-            for (const child of children) postOrder(child, depth + 1);
+        const visited = new Set([root]);
+        const stack = [{
+            node: root,
+            depth: 0,
+            nextChildIndex: 0,
+            firstChild: null,
+            lastChild: null
+        }];
 
-            if (children.length) {
-                node.x = (children[0].x + children[children.length - 1].x) / 2;
+        // Iterative postorder avoids call-stack overflow for imported chains
+        // and skips per-node filtered child arrays.
+        while (stack.length) {
+            const frame = stack[stack.length - 1];
+            const children = frame.node.children || [];
+            let child = null;
+            while (frame.nextChildIndex < children.length) {
+                const candidate = children[frame.nextChildIndex++];
+                if (candidate && candidate.value !== null) {
+                    child = candidate;
+                    break;
+                }
+            }
+
+            if (child) {
+                if (!frame.firstChild) frame.firstChild = child;
+                frame.lastChild = child;
+                if (!visited.has(child)) {
+                    visited.add(child);
+                    stack.push({
+                        node: child,
+                        depth: frame.depth + 1,
+                        nextChildIndex: 0,
+                        firstChild: null,
+                        lastChild: null
+                    });
+                }
+                continue;
+            }
+
+            if (frame.firstChild) {
+                frame.node.x = (frame.firstChild.x + frame.lastChild.x) / 2;
             } else {
-                node.x = leafX;
+                frame.node.x = leafX;
                 leafX += spacingX;
             }
-            node.y = startY + depth * spacingY;
+            frame.node.y = startY + frame.depth * spacingY;
+            stack.pop();
         }
-        postOrder(root, 0);
     }
 
     static getBounds(root) {
         if (!root || root.value === null) return { x: 0, y: 0, w: 0, h: 0 };
         let minX = Infinity, minY = Infinity, maxX = -Infinity, maxY = -Infinity;
         const visited = new Set();
-        function walk(node) {
-            if (!node || node.value === null || visited.has(node)) return;
+        const stack = [root];
+        while (stack.length) {
+            const node = stack.pop();
+            if (!node || node.value === null || visited.has(node)) continue;
             visited.add(node);
             if (node.x < minX) minX = node.x;
             if (node.x > maxX) maxX = node.x;
             if (node.y < minY) minY = node.y;
             if (node.y > maxY) maxY = node.y;
             if (node.children) {
-                for (const child of node.children) {
-                    walk(child);
+                for (let index = node.children.length - 1; index >= 0; index--) {
+                    stack.push(node.children[index]);
                 }
             }
         }
-        walk(root);
         if (minX === Infinity) return { x: 0, y: 0, w: 0, h: 0 };
         return {
             x: minX,

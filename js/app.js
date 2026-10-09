@@ -2993,14 +2993,11 @@ class App {
         let best = null, bestDist = Infinity;
         for (const el of this.elements) {
             if (el === excludeEl || el.hidden) continue;
-            if (!el.getConnectionPorts) continue;
-            const ports = el.getConnectionPorts();
-            for (const port of ports) {
-                const d = Math.hypot(wx - port.x, wy - port.y);
-                if (d < SNAP_RADIUS && d < bestDist) {
-                    bestDist = d;
-                    best = { x: port.x, y: port.y, elementId: el.id, portId: port.id };
-                }
+            if (!el.findNearestConnectionPort) continue;
+            const port = el.findNearestConnectionPort(wx, wy, SNAP_RADIUS);
+            if (port && port.distance < bestDist) {
+                bestDist = port.distance;
+                best = { x: port.x, y: port.y, elementId: el.id, portId: port.id };
             }
         }
         return best;

@@ -1,25 +1,125 @@
 /**
  * GraphRenderer — draws graph nodes and edges on canvas.
  */
-function createBidirectionalEdgeSet(edges, directed) {
-    if (!directed && !edges.some(edge => edge.directed)) return null;
-    const edgeSet = new Set();
-    for (const edge of edges) {
-        edgeSet.add(getDirectedEdgeKey(edge.u, edge.v));
+const edgeMetadataCache = new WeakMap();
+const edgeLabelWidthCaches = new WeakMap();
+
+function getEdgeLabelWidthCache(ctx) {
+    let cache = edgeLabelWidthCaches.get(ctx);
+    if (!cache) {
+        cache = new Map();
+        edgeLabelWidthCaches.set(ctx, cache);
     }
-    return edgeSet;
+    return cache;
+}
+
+function getEdgeMetadata(nodes, edges, directed) {
+    const cached = edgeMetadataCache.get(edges);
+    if (cached && cached.nodes === nodes && cached.directed === directed &&
+        cached.sources.length === edges.length && cached.nodeRefs.length === nodes.size) {
+        let isCurrent = true;
+        let nodeIndex = 0;
+        for (const [id, node] of nodes) {
+            if (cached.nodeKeys[nodeIndex] !== id || cached.nodeRefs[nodeIndex] !== node) {
+                isCurrent = false;
+                break;
+            }
+            nodeIndex++;
+        }
+        for (let index = 0; index < edges.length; index++) {
+            if (!isCurrent) break;
+            const edge = edges[index];
+            if (cached.sources[index] !== edge.u ||
+                cached.targets[index] !== edge.v || cached.edgeDirections[index] !== edge.directed) {
+                isCurrent = false;
+                break;
+            }
+        }
+        if (isCurrent) return cached;
+    }
+
+    const laneCounts = new Map();
+    const groupKeys = new Array(edges.length);
+    const sourceNodes = new Array(edges.length);
+    const targetNodes = new Array(edges.length);
+    const edgeOrientations = new Int8Array(edges.length);
+    const nodeKeys = [];
+    const nodeRefs = [];
+    for (const [id, node] of nodes) {
+        nodeKeys.push(id);
+        nodeRefs.push(node);
+    }
+    let hasDirectedEdges = directed;
+    for (let index = 0; index < edges.length; index++) {
+        const edge = edges[index];
+        sourceNodes[index] = nodes.get(edge.u);
+        targetNodes[index] = nodes.get(edge.v);
+        const source = String(edge.u);
+        const target = String(edge.v);
+        edgeOrientations[index] = source <= target ? 1 : -1;
+        const key = getEdgeGroupKey(edge, directed, source, target);
+        groupKeys[index] = key;
+        laneCounts.set(key, (laneCounts.get(key) || 0) + 1);
+        if (edge.directed) hasDirectedEdges = true;
+    }
+
+    const edgeOffsets = new Float64Array(edges.length);
+    const edgeLaneIndices = new Uint32Array(edges.length);
+    const laneIndices = new Map();
+    for (let index = 0; index < edges.length; index++) {
+        const key = groupKeys[index];
+        const laneIndex = laneIndices.get(key) || 0;
+        edgeLaneIndices[index] = laneIndex;
+        edgeOffsets[index] = (laneIndex - (laneCounts.get(key) - 1) / 2) * 8;
+        laneIndices.set(key, laneIndex + 1);
+    }
+
+    let edgeSet = null;
+    if (hasDirectedEdges) {
+        edgeSet = new Set();
+        for (const edge of edges) edgeSet.add(getDirectedEdgeKey(edge.u, edge.v));
+    }
+    const edgeHasReverse = new Uint8Array(edges.length);
+    if (edgeSet) {
+        for (let index = 0; index < edges.length; index++) {
+            const edge = edges[index];
+            if ((edge.directed || directed) &&
+                edgeSet.has(getDirectedEdgeKey(edge.v, edge.u))) {
+                edgeHasReverse[index] = 1;
+            }
+        }
+    }
+
+    const metadata = {
+        nodes,
+        directed,
+        nodeKeys,
+        nodeRefs,
+        sourceNodes,
+        targetNodes,
+        edgeOffsets,
+        edgeLaneIndices,
+        edgeOrientations,
+        edgeHasReverse,
+        sources: edges.map(edge => edge.u),
+        targets: edges.map(edge => edge.v),
+        edgeDirections: edges.map(edge => edge.directed)
+    };
+    edgeMetadataCache.set(edges, metadata);
+    return metadata;
 }
 
 function getDirectedEdgeKey(u, v) {
-    return JSON.stringify([String(u), String(v)]);
+    const source = String(u);
+    const target = String(v);
+    return `${source.length}:${source}${target.length}:${target}`;
 }
 
-function getEdgeGroupKey(edge, directed) {
+function getEdgeGroupKey(edge, directed, source = String(edge.u), target = String(edge.v)) {
     const isDirected = edge.directed || directed;
-    const [u, v] = isDirected
-        ? [String(edge.u), String(edge.v)]
-        : [String(edge.u), String(edge.v)].sort();
-    return JSON.stringify([isDirected, u, v]);
+    const u = isDirected || source <= target ? source : target;
+    const v = isDirected || source <= target ? target : source;
+    return `${isDirected ? 'd' : 'u'}${u.length}:${u}${v.length}:${v}`;
 }
 
 export class GraphRenderer {
@@ -38,31 +138,23 @@ export class GraphRenderer {
         const opacity = opts.opacity ?? 1;
         const directed = opts.directed || false;
 
-        // Undirected graphs do not need reciprocal-edge lookups. Avoid an
-        // edge-key set for the common case and for large contest inputs.
-        const edgeSet = createBidirectionalEdgeSet(edges, directed);
-        const edgeGroups = new Map();
-        edges.forEach((edge, index) => {
-            const key = getEdgeGroupKey(edge, directed);
-            if (!edgeGroups.has(key)) edgeGroups.set(key, []);
-            edgeGroups.get(key).push(index);
-        });
-        const edgeOffsets = new Array(edges.length).fill(0);
-        const edgeLaneIndices = new Array(edges.length).fill(0);
-        for (const indices of edgeGroups.values()) {
-            indices.forEach((edgeIndex, laneIndex) => {
-                edgeOffsets[edgeIndex] = (laneIndex - (indices.length - 1) / 2) * 8;
-                edgeLaneIndices[edgeIndex] = laneIndex;
-            });
-        }
+        // Endpoint groups only change when the edge array or its endpoints
+        // change. Reuse lane offsets and resolved node references across
+        // redraws and hit tests while detecting in-place topology edits.
+        const edgeMetadata = getEdgeMetadata(nodes, edges, directed);
+        const {
+            edgeOffsets, edgeLaneIndices, edgeOrientations, edgeHasReverse,
+            sourceNodes, targetNodes
+        } = edgeMetadata;
+        const edgeLabelWidths = getEdgeLabelWidthCache(ctx);
 
         ctx.globalAlpha = opacity;
 
         // Draw edges
         for (let edgeIndex = 0; edgeIndex < edges.length; edgeIndex++) {
             const e = edges[edgeIndex];
-            const u = nodes.get(e.u);
-            const v = nodes.get(e.v);
+            const u = sourceNodes[edgeIndex];
+            const v = targetNodes[edgeIndex];
             if (!u || !v) continue;
 
             const edgeColor = e.selected ? 'hsl(210, 80%, 60%)' : color;
@@ -103,8 +195,7 @@ export class GraphRenderer {
             const x2 = v.x + ox, y2 = v.y + oy;
 
             // Check if there is also a reverse edge (bidirectional pair)
-            const hasBidirectional = isDirected &&
-                edgeSet?.has(getDirectedEdgeKey(e.v, e.u));
+            const hasBidirectional = isDirected && edgeHasReverse[edgeIndex] === 1;
 
             if (isDirected) {
                 const angle = Math.atan2(y2 - y1, x2 - x1);
@@ -136,19 +227,25 @@ export class GraphRenderer {
                 ctx.lineTo(ex - headLen * Math.cos(angle + 0.35), ey - headLen * Math.sin(angle + 0.35));
                 ctx.stroke();
 
-                GraphRenderer._drawEdgeLabel(ctx, e, (sx + ex) / 2, (sy + ey) / 2, color, edgeAlpha);
+                GraphRenderer._drawEdgeLabel(
+                    ctx, e, (sx + ex) / 2, (sy + ey) / 2, color, edgeAlpha, edgeLabelWidths
+                );
             } else {
-                const length = Math.hypot(x2 - x1, y2 - y1);
-                const orientation = String(e.u) <= String(e.v) ? 1 : -1;
+                const dx = x2 - x1;
+                const dy = y2 - y1;
+                const length = Math.sqrt(dx * dx + dy * dy);
+                const orientation = edgeOrientations[edgeIndex];
                 const offset = edgeOffsets[edgeIndex] * orientation;
-                const perpX = length ? -(y2 - y1) / length * offset : 0;
-                const perpY = length ? (x2 - x1) / length * offset : 0;
+                const perpX = length ? -dy / length * offset : 0;
+                const perpY = length ? dx / length * offset : 0;
                 ctx.beginPath();
                 ctx.moveTo(x1 + perpX, y1 + perpY);
                 ctx.lineTo(x2 + perpX, y2 + perpY);
                 ctx.stroke();
-                GraphRenderer._drawEdgeLabel(ctx, e, (x1 + x2) / 2 + perpX,
-                    (y1 + y2) / 2 + perpY, color, edgeAlpha);
+                GraphRenderer._drawEdgeLabel(
+                    ctx, e, (x1 + x2) / 2 + perpX, (y1 + y2) / 2 + perpY,
+                    color, edgeAlpha, edgeLabelWidths
+                );
             }
 
             ctx.globalAlpha = opacity;
@@ -192,14 +289,21 @@ export class GraphRenderer {
         ctx.globalAlpha = 1;
     }
 
-    static _drawEdgeLabel(ctx, edge, x, y, color, alpha) {
+    static _drawEdgeLabel(ctx, edge, x, y, color, alpha, widthCache = null) {
         if (edge.w == null || edge.w === '') return;
         const label = String(edge.w);
         ctx.save();
         ctx.globalAlpha = alpha;
         ctx.font = '10px Consolas, monospace';
         const paddingX = 4;
-        const width = ctx.measureText(label).width + paddingX * 2;
+        let textWidth = widthCache?.get(label);
+        if (textWidth === undefined) {
+            textWidth = ctx.measureText(label).width;
+            // Contest graphs often repeat a small set of edge weights. Keep
+            // this context-local and bounded so unique labels do not accumulate.
+            if (widthCache && widthCache.size < 256) widthCache.set(label, textWidth);
+        }
+        const width = textWidth + paddingX * 2;
         ctx.fillStyle = 'rgba(30, 30, 30, 0.92)';
         ctx.fillRect(x - width / 2, y - 9, width, 18);
         ctx.strokeStyle = color;
@@ -220,10 +324,13 @@ export class GraphRenderer {
         const r = opts.nodeRadius || 20;
         const ox = opts.offsetX || 0;
         const oy = opts.offsetY || 0;
+        if (r < 0) return null;
+        const radiusSquared = r * r;
 
-        for (const [id, node] of nodes) {
-            const dist = Math.hypot(wx - (node.x + ox), wy - (node.y + oy));
-            if (dist <= r) return node;
+        for (const node of nodes.values()) {
+            const dx = wx - (node.x + ox);
+            const dy = wy - (node.y + oy);
+            if (dx * dx + dy * dy <= radiusSquared) return node;
         }
         return null;
     }
@@ -238,34 +345,34 @@ export class GraphRenderer {
         const ox = opts.offsetX || 0;
         const oy = opts.offsetY || 0;
         const tol = opts.tolerance || 12;
+        if (tol < 0) return null;
         const directed = opts.directed || false;
 
-        const edgeSet = createBidirectionalEdgeSet(edges, directed);
-        const laneCounts = new Map();
-        for (const edge of edges) {
-            const key = getEdgeGroupKey(edge, directed);
-            laneCounts.set(key, (laneCounts.get(key) || 0) + 1);
-        }
-        const laneIndices = new Map();
+        const edgeMetadata = getEdgeMetadata(nodes, edges, directed);
+        const {
+            edgeOffsets, edgeLaneIndices, edgeOrientations, edgeHasReverse,
+            sourceNodes, targetNodes
+        } = edgeMetadata;
         let closestEdge = null;
         let closestDistance = tol;
 
-        for (const e of edges) {
-            const u = nodes.get(e.u);
-            const v = nodes.get(e.v);
+        for (let edgeIndex = 0; edgeIndex < edges.length; edgeIndex++) {
+            const e = edges[edgeIndex];
+            const u = sourceNodes[edgeIndex];
+            const v = targetNodes[edgeIndex];
             if (!u || !v) continue;
 
-            const groupKey = getEdgeGroupKey(e, directed);
-            const laneIndex = laneIndices.get(groupKey) || 0;
-            laneIndices.set(groupKey, laneIndex + 1);
-            const laneOffset = (laneIndex - (laneCounts.get(groupKey) - 1) / 2) * 8;
+            const laneIndex = edgeLaneIndices[edgeIndex];
+            const laneOffset = edgeOffsets[edgeIndex];
 
             // Self-loop: hit-test its loop circle
             if (e.u === e.v) {
                 const loopR = r * 0.75 + laneIndex * 8;
                 const lx = u.x + ox;
                 const ly = u.y + oy - r - loopR;
-                const distance = Math.abs(Math.hypot(wx - lx, wy - ly) - loopR);
+                const loopDx = wx - lx;
+                const loopDy = wy - ly;
+                const distance = Math.abs(Math.sqrt(loopDx * loopDx + loopDy * loopDy) - loopR);
                 if (distance < closestDistance) {
                     closestEdge = e;
                     closestDistance = distance;
@@ -276,14 +383,20 @@ export class GraphRenderer {
 
             const x1 = u.x + ox, y1 = u.y + oy;
             const x2 = v.x + ox, y2 = v.y + oy;
-            const angle = Math.atan2(y2 - y1, x2 - x1);
-
             const isDirected = e.directed || directed;
-            const hasBidirectional = isDirected &&
-                edgeSet?.has(getDirectedEdgeKey(e.v, e.u));
-            const OFFSET = (hasBidirectional ? 10 : 0) + laneOffset;
-            const orientation = String(e.u) <= String(e.v) ? 1 : -1;
-            const offset = isDirected ? OFFSET : laneOffset * orientation;
+            const hasBidirectional = isDirected && edgeHasReverse[edgeIndex] === 1;
+            const orientation = edgeOrientations[edgeIndex];
+            const laneOffsetWithReverse = (hasBidirectional ? 10 : 0) + laneOffset;
+            const offset = isDirected ? laneOffsetWithReverse : laneOffset * orientation;
+            const boundsPadding = r + Math.abs(offset) + tol;
+            if (wx < Math.min(x1, x2) - boundsPadding ||
+                wx > Math.max(x1, x2) + boundsPadding ||
+                wy < Math.min(y1, y2) - boundsPadding ||
+                wy > Math.max(y1, y2) + boundsPadding) {
+                continue;
+            }
+
+            const angle = Math.atan2(y2 - y1, x2 - x1);
             const perpX = -Math.sin(angle) * offset;
             const perpY =  Math.cos(angle) * offset;
 
@@ -292,22 +405,30 @@ export class GraphRenderer {
             const ex = x2 - r * Math.cos(angle) + perpX;
             const ey = y2 - r * Math.sin(angle) + perpY;
 
-            const distance = _ptSegDist(wx, wy, sx, sy, ex, ey);
-            if (distance < closestDistance) {
+            const distanceSquared = _ptSegDistSquared(wx, wy, sx, sy, ex, ey);
+            if (distanceSquared < closestDistance * closestDistance) {
                 closestEdge = e;
-                closestDistance = distance;
-                if (distance === 0) return e;
+                closestDistance = Math.sqrt(distanceSquared);
+                if (distanceSquared === 0) return e;
             }
         }
         return closestEdge;
     }
 }
 
-function _ptSegDist(px, py, x1, y1, x2, y2) {
+function _ptSegDistSquared(px, py, x1, y1, x2, y2) {
     const dx = x2 - x1, dy = y2 - y1;
     const lenSq = dx * dx + dy * dy;
-    if (lenSq === 0) return Math.hypot(px - x1, py - y1);
+    if (lenSq === 0) {
+        const dx = px - x1;
+        const dy = py - y1;
+        return dx * dx + dy * dy;
+    }
     let t = ((px - x1) * dx + (py - y1) * dy) / lenSq;
     t = Math.max(0, Math.min(1, t));
-    return Math.hypot(px - (x1 + t * dx), py - (y1 + t * dy));
+    const nearestX = x1 + t * dx;
+    const nearestY = y1 + t * dy;
+    const offsetX = px - nearestX;
+    const offsetY = py - nearestY;
+    return offsetX * offsetX + offsetY * offsetY;
 }

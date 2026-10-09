@@ -24,6 +24,8 @@
 export const MAX_TREE_NODES = 2000;
 export const MAX_TREE_INPUT_LENGTH = 1000000;
 const MAX_TREE_EDGE_ROWS = MAX_TREE_NODES * 2;
+const NON_NEGATIVE_INTEGER_TOKEN = /^\d+$/;
+const SIGNED_INTEGER_TOKEN = /^-?\d+$/;
 
 function hasOnlyFiniteNumericValues(values) {
     return Array.isArray(values) && values.every(value =>
@@ -55,7 +57,7 @@ export class TreeParser {
         // edges. Root the visual tree at the first ID (0 or 1), regardless of
         // edge direction.
         // The explicit rooted parser remains available for older saved input.
-        if (tokenCounts[0] === 1 && /^\d+$/.test(lines[0]) &&
+        if (tokenCounts[0] === 1 && NON_NEGATIVE_INTEGER_TOKEN.test(lines[0]) &&
             (lines.length === 1 || tokenCounts.slice(1).some(count => count >= 2))) {
             return TreeParser.parseContestFormat(lines);
         }
@@ -68,7 +70,7 @@ export class TreeParser {
 
         // All lines have exactly 1 token → parent array format
         if (tokenCounts.every(c => c === 1)) {
-            const allInts = lines.every(l => /^-?\d+$/.test(l));
+            const allInts = lines.every(l => SIGNED_INTEGER_TOKEN.test(l));
             if (allInts) {
                 return TreeParser.parseParentFormat(lines);
             }
@@ -101,7 +103,7 @@ export class TreeParser {
 
         const header = String(lines[0]).trim();
         const n = Number(header);
-        if (!/^\d+$/.test(header) || !Number.isSafeInteger(n) || n <= 0) {
+        if (!NON_NEGATIVE_INTEGER_TOKEN.test(header) || !Number.isSafeInteger(n) || n <= 0) {
             return invalid('第一行應為正整數節點數 n。');
         }
         if (n > MAX_TREE_NODES) {
@@ -114,10 +116,15 @@ export class TreeParser {
         // AtCoder inputs sometimes number vertices from 0. Since vertex 0
         // cannot occur in a valid 1-based tree, use it as an unambiguous base
         // marker and otherwise keep the conventional 1-based root.
-        const startId = lines.slice(1).some(line =>
-            String(line).trim().split(/\s+/).slice(0, 2)
-                .some(token => /^\d+$/.test(token) && Number(token) === 0)
-        ) ? 0 : 1;
+        let startId = 1;
+        for (let lineIndex = 1; lineIndex < lines.length; lineIndex++) {
+            const parts = String(lines[lineIndex]).trim().split(/\s+/);
+            if ((NON_NEGATIVE_INTEGER_TOKEN.test(parts[0]) && Number(parts[0]) === 0) ||
+                (NON_NEGATIVE_INTEGER_TOKEN.test(parts[1]) && Number(parts[1]) === 0)) {
+                startId = 0;
+                break;
+            }
+        }
         const nodes = new Map();
         const adjacency = new Map();
         const seenEdges = new Set();
@@ -133,7 +140,8 @@ export class TreeParser {
             if (parts.length < 2 || parts.length > 3) {
                 return invalid('第 ' + (i + 1) + ' 行格式應為：節點 u 節點 v [邊權重]。');
             }
-            if (!/^\d+$/.test(parts[0]) || !/^\d+$/.test(parts[1])) {
+            if (!NON_NEGATIVE_INTEGER_TOKEN.test(parts[0]) ||
+                !NON_NEGATIVE_INTEGER_TOKEN.test(parts[1])) {
                 return invalid('第 ' + (i + 1) + ' 行的節點編號必須是非負整數。');
             }
             const uNumber = Number(parts[0]);
@@ -149,7 +157,9 @@ export class TreeParser {
             }
             const u = String(uNumber);
             const v = String(vNumber);
-            const edgeKey = JSON.stringify([u, v].sort((a, b) => Number(a) - Number(b)));
+            const lowId = uNumber < vNumber ? u : v;
+            const highId = uNumber < vNumber ? v : u;
+            const edgeKey = lowId + ',' + highId;
             if (seenEdges.has(edgeKey)) {
                 return invalid('樹的邊不可重複。');
             }
@@ -210,7 +220,7 @@ export class TreeParser {
 
         const header = String(lines[0]).trim();
         const n = Number(header);
-        if (!/^\d+$/.test(header) || !Number.isSafeInteger(n) || n <= 0) {
+        if (!NON_NEGATIVE_INTEGER_TOKEN.test(header) || !Number.isSafeInteger(n) || n <= 0) {
             return invalid('第一行應為正整數節點數 n。');
         }
         if (n > MAX_TREE_NODES) {
@@ -243,7 +253,8 @@ export class TreeParser {
             const parentKey = parts[0];
             const childKey = parts[1];
             const weight = parts.length >= 3 ? parts[2] : null;
-            if (!/^\d+$/.test(parentKey) || !/^\d+$/.test(childKey)) {
+            if (!NON_NEGATIVE_INTEGER_TOKEN.test(parentKey) ||
+                !NON_NEGATIVE_INTEGER_TOKEN.test(childKey)) {
                 return invalid('第 ' + (i + 1) + ' 行的節點編號必須是正整數。');
             }
             const parentId = Number(parentKey);
@@ -323,7 +334,7 @@ export class TreeParser {
         }
         const parents = lines.map(line => {
             const token = String(line).trim();
-            if (!/^-?\d+$/.test(token)) return NaN;
+            if (!SIGNED_INTEGER_TOKEN.test(token)) return NaN;
             const value = Number(token);
             return Number.isSafeInteger(value) ? value : NaN;
         });
@@ -387,12 +398,15 @@ export class TreeParser {
         // Validate connectivity
         if (root) {
             const visited = new Set();
-            const walk = (nd) => {
-                if (!nd || visited.has(nd.value)) return;
-                visited.add(nd.value);
-                for (const c of nd.children) walk(c);
-            };
-            walk(root);
+            const pending = [root];
+            while (pending.length) {
+                const node = pending.pop();
+                if (!node || visited.has(node.value)) continue;
+                visited.add(node.value);
+                for (let index = node.children.length - 1; index >= 0; index--) {
+                    pending.push(node.children[index]);
+                }
+            }
             if (visited.size < nodes.size) {
                 errors.push(`有 ${nodes.size - visited.size} 個節點無法從根到達`);
             }
@@ -447,7 +461,9 @@ export class TreeParser {
                 return invalid('第 ' + (i + 1) + ' 行的邊權重必須是有限數值。');
             }
             if (u === v) return invalid('第 ' + (i + 1) + ' 行不能是自我連結。');
-            const edgeKey = JSON.stringify([u, v].sort());
+            const lowId = u <= v ? u : v;
+            const highId = u <= v ? v : u;
+            const edgeKey = `${lowId.length}:${lowId}${highId.length}:${highId}`;
             if (seenEdges.has(edgeKey)) {
                 const previousWeight = seenEdges.get(edgeKey);
                 const sameWeight = previousWeight === null
@@ -521,16 +537,36 @@ export class TreeParser {
         if (!root) return [];
         let timer = 1;
         const tour = [];
-        const dfs = (node) => {
-            if (!node) return;
-            node.meta.tin = timer++;
-            tour.push(node.value);
-            for (const child of node.children.filter(c => c != null)) {
-                dfs(child);
+        const visited = new Set([root]);
+        const stack = [{ node: root, nextChildIndex: 0, entered: false }];
+        while (stack.length) {
+            const frame = stack[stack.length - 1];
+            const node = frame.node;
+            if (!frame.entered) {
+                node.meta ||= {};
+                node.meta.tin = timer++;
+                tour.push(node.value);
+                frame.entered = true;
             }
+
+            const children = node.children || [];
+            let child = null;
+            while (frame.nextChildIndex < children.length) {
+                const candidate = children[frame.nextChildIndex++];
+                if (candidate && !visited.has(candidate)) {
+                    child = candidate;
+                    break;
+                }
+            }
+            if (child) {
+                visited.add(child);
+                stack.push({ node: child, nextChildIndex: 0, entered: false });
+                continue;
+            }
+
             node.meta.tout = timer++;
-        };
-        dfs(root);
+            stack.pop();
+        }
         return tour;
     }
 

@@ -11,6 +11,8 @@
  */
 const MAX_GRAPH_NODES = 500;
 const MAX_GRAPH_EDGES = 100000;
+const NON_NEGATIVE_INTEGER_TOKEN = /^\d+$/;
+const SIGNED_INTEGER_TOKEN = /^-?\d+$/;
 
 export class GraphParser {
     static parse(text, directed = false, zeroBased = false, graphMode = 'edge-list') {
@@ -28,7 +30,7 @@ export class GraphParser {
     }
 
     static _nonNegativeInteger(token, field, lineNumber) {
-        if (!/^\d+$/.test(token)) {
+        if (!NON_NEGATIVE_INTEGER_TOKEN.test(token)) {
             return { error: 'Line ' + lineNumber + ': ' + field + ' must be a non-negative integer.' };
         }
         const value = Number(token);
@@ -56,11 +58,10 @@ export class GraphParser {
             return { error: 'Graph header exceeds the supported size (N <= 500, M <= 100000).' };
         }
 
-        const edgeLines = lines.slice(1);
-        if (edgeLines.length !== m) {
+        if (lines.length - 1 !== m) {
             return {
                 error: 'Header declares ' + m + ' edges, but found ' +
-                    edgeLines.length + ' non-empty edge row(s).'
+                    (lines.length - 1) + ' non-empty edge row(s).'
             };
         }
 
@@ -72,24 +73,24 @@ export class GraphParser {
             nodes.set(id, { id, x: 0, y: 0, label: id, nodeWeight: null });
         }
 
-        for (let i = 0; i < edgeLines.length; i++) {
-            const parts = edgeLines[i].split(/\s+/);
+        for (let i = 1; i < lines.length; i++) {
+            const parts = lines[i].split(/\s+/);
             if (parts.length < 2 || parts.length > 3) {
-                return { error: 'Line ' + (i + 2) + ': edge row must be \"u v [edge-weight]\".' };
+                return { error: 'Line ' + (i + 1) + ': edge row must be \"u v [edge-weight]\".' };
             }
             const uToken = parts[0];
             const vToken = parts[1];
             const weight = parts.length === 3 ? parts[2] : null;
-            if (!/^-?\d+$/.test(uToken) || !Number.isSafeInteger(Number(uToken)) ||
-                !/^-?\d+$/.test(vToken) || !Number.isSafeInteger(Number(vToken))) {
-                return { error: 'Line ' + (i + 2) + ': node IDs must be safe integers.' };
-            }
             const uNumber = Number(uToken);
             const vNumber = Number(vToken);
+            if (!SIGNED_INTEGER_TOKEN.test(uToken) || !Number.isSafeInteger(uNumber) ||
+                !SIGNED_INTEGER_TOKEN.test(vToken) || !Number.isSafeInteger(vNumber)) {
+                return { error: 'Line ' + (i + 1) + ': node IDs must be safe integers.' };
+            }
             if (uNumber < start || uNumber >= start + n ||
                 vNumber < start || vNumber >= start + n) {
                 return {
-                    error: 'Line ' + (i + 2) + ': node IDs must be within the declared range ' +
+                    error: 'Line ' + (i + 1) + ': node IDs must be within the declared range ' +
                         start + ' to ' + (start + n - 1) + '.'
                 };
             }
@@ -98,7 +99,7 @@ export class GraphParser {
 
             if (weight !== null) {
                 if (weight.trim() === '' || !Number.isFinite(Number(weight))) {
-                    return { error: 'Line ' + (i + 2) + ': edge weight must be a finite number.' };
+                    return { error: 'Line ' + (i + 1) + ': edge weight must be a finite number.' };
                 }
             }
             edges.push({ u, v, w: weight, directed });
@@ -108,10 +109,9 @@ export class GraphParser {
     }
 
     static _parseAdjList(text, directed, zeroBased) {
-        const rawLines = text.split(/\r?\n/).map(line => line.trim());
-        const firstContentIndex = rawLines.findIndex(Boolean);
-        const lines = rawLines.slice(firstContentIndex);
-        const header = lines[0].split(/\s+/);
+        const lines = text.split(/\r?\n/).map(line => line.trim());
+        const firstContentIndex = lines.findIndex(Boolean);
+        const header = lines[firstContentIndex].split(/\s+/);
         if (header.length !== 1) {
             return { error: 'Adjacency-list header must contain exactly N.' };
         }
@@ -123,9 +123,16 @@ export class GraphParser {
             return { error: 'Graph header exceeds the supported size (N <= 500).' };
         }
 
-        const rows = lines.slice(1);
-        if (rows.length < n || rows.slice(0, n).some(line => !line) ||
-            rows.slice(n).some(line => line)) {
+        const rowStart = firstContentIndex + 1;
+        const availableRows = lines.length - rowStart;
+        let invalidRows = availableRows < n;
+        for (let row = 0; !invalidRows && row < n; row++) {
+            if (!lines[rowStart + row]) invalidRows = true;
+        }
+        for (let index = rowStart + n; !invalidRows && index < lines.length; index++) {
+            if (lines[index]) invalidRows = true;
+        }
+        if (invalidRows) {
             return { error: 'Adjacency-list input must contain exactly ' + n + ' non-empty row(s).' };
         }
 
@@ -140,7 +147,7 @@ export class GraphParser {
         }
 
         for (let row = 0; row < n; row++) {
-            const parts = rows[row].split(/\s+/);
+            const parts = lines[rowStart + row].split(/\s+/);
             const lineNumber = row + 2;
             const degreeResult = GraphParser._nonNegativeInteger(parts[0], 'degree', lineNumber);
             if (degreeResult.error) return degreeResult;
@@ -158,11 +165,12 @@ export class GraphParser {
             }
 
             const nodeId = String(start + row);
-            for (const neighbor of parts.slice(1)) {
-                if (!/^-?\d+$/.test(neighbor) || !Number.isSafeInteger(Number(neighbor))) {
+            for (let partIndex = 1; partIndex < parts.length; partIndex++) {
+                const neighbor = parts[partIndex];
+                const neighborNumber = Number(neighbor);
+                if (!SIGNED_INTEGER_TOKEN.test(neighbor) || !Number.isSafeInteger(neighborNumber)) {
                     return { error: 'Line ' + lineNumber + ': neighbor IDs must be safe integers.' };
                 }
-                const neighborNumber = Number(neighbor);
                 if (neighborNumber < start || neighborNumber >= start + n) {
                     return {
                         error: 'Line ' + lineNumber + ': neighbor IDs must be within the declared range ' +
@@ -175,12 +183,16 @@ export class GraphParser {
                     continue;
                 }
 
-                const [u, v] = [nodeId, neighborId].sort();
-                const key = JSON.stringify([u, v]);
-                if (!undirectedPairs.has(key)) {
-                    undirectedPairs.set(key, { u, v, forward: 0, reverse: 0 });
+                // IDs are canonical safe-integer strings, so a comma is an
+                // unambiguous separator and lexical ordering matches Array#sort.
+                const u = nodeId < neighborId ? nodeId : neighborId;
+                const v = nodeId < neighborId ? neighborId : nodeId;
+                const key = u + ',' + v;
+                let pair = undirectedPairs.get(key);
+                if (!pair) {
+                    pair = { u, v, forward: 0, reverse: 0 };
+                    undirectedPairs.set(key, pair);
                 }
-                const pair = undirectedPairs.get(key);
                 if (u === v || nodeId === u) pair.forward++;
                 else pair.reverse++;
             }

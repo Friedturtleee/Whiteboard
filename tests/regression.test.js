@@ -12,6 +12,7 @@ import { History } from '../js/core/History.js';
 import { SelectionManager } from '../js/core/SelectionManager.js';
 import { Transform } from '../js/core/Transform.js';
 import { HitTest } from '../js/canvas/HitTest.js';
+import { Renderer } from '../js/canvas/Renderer.js';
 import { ShapeElement } from '../js/elements/ShapeElement.js';
 import { GraphElement } from '../js/graph/GraphElement.js';
 import { GraphParser } from '../js/graph/GraphParser.js';
@@ -286,6 +287,59 @@ test('parallel graph edges do not distort force-directed node positions', () => 
     assert.deepEqual(
         [...parallelEdgeLayout.values()].map(({ x, y }) => [x, y]),
         [...singleEdgeLayout.values()].map(({ x, y }) => [x, y])
+    );
+});
+
+test('graph layout refreshes cached topology after in-place edge edits', () => {
+    const makeNodes = () => new Map(Array.from({ length: 5 }, (_, index) => {
+        const id = String(index + 1);
+        return [id, { id, x: 0, y: 0 }];
+    }));
+    const nodes = makeNodes();
+    const edges = Array.from({ length: 4 }, (_, index) => ({
+        u: '1', v: String(index + 2)
+    }));
+    const options = { width: 100, height: 100, nodeRadius: 10, iterations: 0, maxCollisionPasses: 0 };
+
+    GraphLayout.layout(nodes, edges, options);
+    edges[0].u = '1'; edges[0].v = '2';
+    edges[1].u = '2'; edges[1].v = '3';
+    edges[2].u = '3'; edges[2].v = '4';
+    edges[3].u = '4'; edges[3].v = '5';
+    for (const node of nodes.values()) { node.x = 0; node.y = 0; }
+    GraphLayout.layout(nodes, edges, options);
+
+    const freshNodes = makeNodes();
+    GraphLayout.layout(freshNodes, edges.map(edge => ({ ...edge })), options);
+    assert.deepEqual(
+        [...nodes.values()].map(({ x, y }) => [x, y]),
+        [...freshNodes.values()].map(({ x, y }) => [x, y])
+    );
+});
+
+test('graph layout refreshes cached node indices after map reordering', () => {
+    const makeNodes = () => new Map(Array.from({ length: 5 }, (_, index) => {
+        const id = String(index + 1);
+        return [id, { id, x: 0, y: 0 }];
+    }));
+    const nodes = makeNodes();
+    const edges = Array.from({ length: 4 }, (_, index) => ({
+        u: '1', v: String(index + 2)
+    }));
+    const options = { width: 100, height: 100, nodeRadius: 10, iterations: 0, maxCollisionPasses: 0 };
+    GraphLayout.layout(nodes, edges, options);
+
+    const secondNode = nodes.get('2');
+    nodes.delete('2');
+    nodes.set('2', secondNode);
+    for (const node of nodes.values()) { node.x = 0; node.y = 0; }
+    GraphLayout.layout(nodes, edges, options);
+
+    const freshNodes = new Map([...nodes].map(([id, node]) => [id, { ...node, x: 0, y: 0 }]));
+    GraphLayout.layout(freshNodes, edges.map(edge => ({ ...edge })), options);
+    assert.deepEqual(
+        [...nodes.values()].map(({ x, y }) => [x, y]),
+        [...freshNodes.values()].map(({ x, y }) => [x, y])
     );
 });
 
@@ -814,6 +868,108 @@ test('parallel undirected graph edges render on distinct lanes', () => {
     assert.equal(GraphRenderer.hitTestEdge(loopNodes, loopEdges, 0, -41, {
         nodeRadius: 10
     }), loopEdges[1]);
+});
+
+test('graph rendering measures repeated edge-weight labels once per frame', () => {
+    let measureCalls = 0;
+    const ctx = {
+        beginPath() {}, moveTo() {}, lineTo() {}, arc() {}, stroke() {}, fill() {},
+        fillRect() {}, strokeRect() {}, fillText() {}, save() {}, restore() {},
+        measureText() { measureCalls++; return { width: 10 }; }
+    };
+    const nodes = new Map([
+        ['1', { id: '1', x: 0, y: 0, label: '1' }],
+        ['2', { id: '2', x: 100, y: 0, label: '2' }]
+    ]);
+    const edges = [
+        { u: '1', v: '2', w: '7' },
+        { u: '2', v: '1', w: '7' },
+        { u: '1', v: '2', w: '8' }
+    ];
+
+    GraphRenderer.draw(ctx, nodes, edges);
+    assert.equal(measureCalls, 2);
+});
+
+test('graph edge lane metadata refreshes after in-place endpoint changes', () => {
+    const nodes = new Map([
+        ['1', { id: '1', x: 0, y: 0, label: '1' }],
+        ['2', { id: '2', x: 100, y: 0, label: '2' }],
+        ['3', { id: '3', x: 0, y: 100, label: '3' }]
+    ]);
+    const edges = [
+        { u: '1', v: '2', directed: false },
+        { u: '1', v: '2', directed: false }
+    ];
+
+    assert.equal(GraphRenderer.hitTestEdge(nodes, edges, 50, -4, { nodeRadius: 10 }), edges[0]);
+    edges[0].v = '3';
+    assert.equal(GraphRenderer.hitTestEdge(nodes, edges, 0, 50, { nodeRadius: 10 }), edges[0]);
+    assert.equal(GraphRenderer.hitTestEdge(nodes, edges, 50, 0, { nodeRadius: 10 }), edges[1]);
+
+    edges[0].directed = true;
+    assert.equal(GraphRenderer.hitTestEdge(nodes, edges, 5, 50, {
+        nodeRadius: 10, directed: true
+    }), edges[0]);
+});
+
+test('connection drag rendering does not rebuild unused port arrays', () => {
+    const renderer = new Renderer({}, {}, { zoom: 1 }, null, {
+        elements: [{ getConnectionPorts() { throw new Error('unused port enumeration'); } }],
+        transform: { mode: 'endpoint', targetElement: null }
+    });
+    assert.doesNotThrow(() => renderer._drawConnectionPortHints({}));
+});
+
+test('deep tree drawing and hit tests use iterative traversal', () => {
+    const root = { value: '0', x: 0, y: 0, children: [], meta: {} };
+    let current = root;
+    for (let index = 1; index < 2000; index++) {
+        const child = {
+            value: String(index), x: 0, y: index * 50,
+            children: [], parent: current, meta: {}
+        };
+        current.children.push(child);
+        current = child;
+    }
+    let drawnNodes = 0;
+    const ctx = {
+        globalAlpha: 1, save() {}, restore() {}, beginPath() {}, arc() {},
+        moveTo() {}, lineTo() {}, stroke() {}, fill() {},
+        fillText() { drawnNodes++; }
+    };
+
+    assert.doesNotThrow(() => TreeRenderer.draw(ctx, root));
+    assert.equal(drawnNodes, 2000);
+    assert.equal(TreeRenderer.hitTestNode(root, 0, 1999 * 50, { nodeRadius: 18 }), current);
+    assert.equal(TreeRenderer.hitTestEdge(root, 100000, 100000, { nodeRadius: 18 }), false);
+    assert.equal(TreeRenderer.hitTestEdgeNode(root, 100000, 100000, { nodeRadius: 18 }), null);
+});
+
+test('deep tree layout and Euler timestamps avoid recursive stack limits', () => {
+    const nodeCount = 15000;
+    const root = { value: '0', children: [], meta: {} };
+    let current = root;
+    for (let index = 1; index < nodeCount; index++) {
+        const child = { value: String(index), children: [], meta: {} };
+        current.children.push(child);
+        child.parent = current;
+        current = child;
+    }
+
+    assert.doesNotThrow(() => TreeLayout.layout(root));
+    assert.deepEqual(TreeLayout.getBounds(root), {
+        x: 0,
+        y: 0,
+        w: 0,
+        h: (nodeCount - 1) * 60
+    });
+    const tour = TreeParser.computeEulerTour(root);
+    assert.equal(tour.length, nodeCount);
+    assert.equal(root.meta.tin, 1);
+    assert.equal(current.meta.tin, nodeCount);
+    assert.equal(current.meta.tout, nodeCount + 1);
+    assert.equal(root.meta.tout, nodeCount * 2);
 });
 
 test('reciprocal directed graph edges keep their offset lanes and hit tests', () => {
@@ -1519,15 +1675,11 @@ test('resize history restores graph and tree positions after their nodes are reb
     history.pushResize(tree, treeBounds, treeResizedBounds, null, null, null, treeBefore, treeAfter);
     assert.equal(tree.buildFromText(treeInput, 'rooted'), null);
     history.undo();
-    assert.deepEqual(treeBefore.nodePositions.map(({ path, x, y }) => {
-        const node = tree.getNodeAtPath(path);
-        return { x: node.x, y: node.y };
-    }), treeBefore.nodePositions.map(({ x, y }) => ({ x, y })));
+    assert.deepEqual(tree.captureResizeState().nodePositions.map(({ x, y }) => ({ x, y })),
+        treeBefore.nodePositions.map(({ x, y }) => ({ x, y })));
     history.redo();
-    assert.deepEqual(treeAfter.nodePositions.map(({ path, x, y }) => {
-        const node = tree.getNodeAtPath(path);
-        return { x: node.x, y: node.y };
-    }), treeAfter.nodePositions.map(({ x, y }) => ({ x, y })));
+    assert.deepEqual(tree.captureResizeState().nodePositions.map(({ x, y }) => ({ x, y })),
+        treeAfter.nodePositions.map(({ x, y }) => ({ x, y })));
 
     const graph = new GraphElement();
     const graphInput = '3 2\n1 2\n2 3';
@@ -1704,6 +1856,41 @@ test('tree connection ports stay stable after renaming nodes and survive JSON im
     Serializer.loadJSONData(app, { elements: [tree.serialize(), line.serialize()] });
     assert.deepEqual(app.elements[1].connections.p1,
         { elementId: tree.id, portId: 'node_2' });
+});
+
+test('graph and tree nearest-port queries match their rendered port positions', () => {
+    const graph = new GraphElement(40, 30);
+    assert.equal(graph.buildFromText('4 3\n1 2\n2 3\n3 4'), null);
+    graph.rotation = 0.37;
+    const graphPort = graph.getConnectionPorts()[2];
+    assert.deepEqual(
+        graph.findNearestConnectionPort(graphPort.x, graphPort.y, 1),
+        { ...graphPort, distance: 0 }
+    );
+    assert.equal(graph.findNearestConnectionPort(graphPort.x, graphPort.y, 0), null);
+
+    const tree = new TreeElement(250, 60);
+    tree.treeType = 'bst';
+    assert.equal(tree.buildFromText('10 10 10', 'values'), null);
+    tree.rotation = -0.41;
+    const treePort = tree.getConnectionPorts()[2];
+    assert.deepEqual(
+        tree.findNearestConnectionPort(treePort.x, treePort.y, 1),
+        { ...treePort, distance: 0 }
+    );
+    assert.equal(tree.findNearestConnectionPort(treePort.x, treePort.y, 0), null);
+});
+
+test('base nearest-port queries match ordered ports for rotated custom bounds', () => {
+    const queue = new QueueElement(120, 80);
+    queue.setFromText('front back');
+    queue.rotation = 0.53;
+    for (const port of queue.getConnectionPorts()) {
+        assert.deepEqual(
+            queue.findNearestConnectionPort(port.x, port.y, 1),
+            { ...port, distance: 0 }
+        );
+    }
 });
 
 test('resizing a graph with minimal bounds keeps node coordinates finite', () => {

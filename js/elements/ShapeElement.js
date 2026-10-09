@@ -107,8 +107,9 @@ export class ShapeElement extends Element {
 
     containsPoint(wx, wy, camera) {
         if (this.shapeType === 'line' || this.shapeType === 'arrow') {
-            const { HitTest } = this.constructor._hitTestModule || {};
             const tol = 6 / (camera?.zoom || 1);
+            if (tol <= 0) return false;
+            const tolSquared = tol * tol;
             let lx = wx, ly = wy;
             if (this.rotation) {
                 const cx = this.x + this.width / 2, cy = this.y + this.height / 2;
@@ -117,8 +118,16 @@ export class ShapeElement extends Element {
                 lx = cx + dx * cos - dy * sin;
                 ly = cy + dx * sin + dy * cos;
             }
-            const dist = _pointToSegDist(lx, ly, this.x, this.y, this.x + this.width, this.y + this.height);
-            return dist < tol;
+            const x2 = this.x + this.width;
+            const y2 = this.y + this.height;
+            if (lx < Math.min(this.x, x2) - tol || lx > Math.max(this.x, x2) + tol ||
+                ly < Math.min(this.y, y2) - tol || ly > Math.max(this.y, y2) + tol) {
+                return false;
+            }
+            const distanceSquared = _pointToSegDistSquared(
+                lx, ly, this.x, this.y, x2, y2
+            );
+            return distanceSquared < tolSquared;
         }
         if (this.shapeType === 'circle' || this.shapeType === 'ellipse') {
             const b = this.getBounds();
@@ -196,11 +205,17 @@ export class ShapeElement extends Element {
     }
 }
 
-function _pointToSegDist(px, py, x1, y1, x2, y2) {
+function _pointToSegDistSquared(px, py, x1, y1, x2, y2) {
     const dx = x2 - x1, dy = y2 - y1;
     const lenSq = dx * dx + dy * dy;
-    if (lenSq === 0) return Math.hypot(px - x1, py - y1);
+    if (lenSq === 0) {
+        const offsetX = px - x1;
+        const offsetY = py - y1;
+        return offsetX * offsetX + offsetY * offsetY;
+    }
     let t = ((px - x1) * dx + (py - y1) * dy) / lenSq;
     t = Math.max(0, Math.min(1, t));
-    return Math.hypot(px - (x1 + t * dx), py - (y1 + t * dy));
+    const offsetX = px - (x1 + t * dx);
+    const offsetY = py - (y1 + t * dy);
+    return offsetX * offsetX + offsetY * offsetY;
 }

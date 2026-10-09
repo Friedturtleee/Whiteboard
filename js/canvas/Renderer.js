@@ -214,16 +214,6 @@ export class Renderer {
      */
     _drawConnectionPortHints(ctx) {
         const { camera, app } = this;
-        const draggingEl = app.transform.targetElement;
-
-        for (const el of app.elements) {
-            if (el === draggingEl) continue;
-            if (!el.getConnectionPorts) continue;
-            const ports = el.getConnectionPorts();
-            if (!ports || ports.length === 0) continue;
-
-            // Port hint circles are hidden (transparent); only the snap target is shown
-        }
 
         // Highlight the snapped port (if any)
         if (app._snapPreview) {

@@ -6,6 +6,86 @@
  * spring layout while preventing dense inputs from collapsing into the canvas
  * boundaries or leaving nodes on top of each other.
  */
+const topologyCache = new WeakMap();
+
+function getGraphTopology(nodes, nodesArr, edges) {
+    const cached = topologyCache.get(edges);
+    if (cached && cached.nodeRefs.length === nodesArr.length &&
+        cached.edgeSources.length === edges.length) {
+        let isCurrent = true;
+        let nodeIndex = 0;
+        for (const [id, node] of nodes) {
+            if (cached.nodeKeys[nodeIndex] !== id || cached.nodeRefs[nodeIndex] !== node) {
+                isCurrent = false;
+                break;
+            }
+            nodeIndex++;
+        }
+        if (isCurrent) {
+            for (let index = 0; index < edges.length; index++) {
+                const edge = edges[index];
+                if (cached.edgeSources[index] !== edge.u || cached.edgeTargets[index] !== edge.v) {
+                    isCurrent = false;
+                    break;
+                }
+            }
+        }
+        if (isCurrent) return cached;
+    }
+
+    const nodeIndex = new Map();
+    for (let index = 0; index < nodesArr.length; index++) {
+        nodeIndex.set(nodesArr[index], index);
+    }
+    const nodeKeys = [];
+    const nodeRefs = [];
+    for (const [id, node] of nodes) {
+        nodeKeys.push(id);
+        nodeRefs.push(node);
+    }
+
+    const attractionFirstIndexes = [];
+    const attractionSecondIndexes = [];
+    const seenPairs = new Set();
+    for (const edge of edges) {
+        if (edge.u === edge.v) continue;
+        const first = nodes.get(edge.u);
+        const second = nodes.get(edge.v);
+        if (!first || !second) continue;
+        const firstIndex = nodeIndex.get(first);
+        const secondIndex = nodeIndex.get(second);
+        if (firstIndex === undefined || secondIndex === undefined) continue;
+        const source = String(edge.u);
+        const target = String(edge.v);
+        const lowId = source <= target ? source : target;
+        const highId = source <= target ? target : source;
+        const key = `${lowId.length}:${lowId}${highId.length}:${highId}`;
+        if (seenPairs.has(key)) continue;
+        seenPairs.add(key);
+        attractionFirstIndexes.push(firstIndex);
+        attractionSecondIndexes.push(secondIndex);
+    }
+    const degrees = new Uint32Array(nodesArr.length);
+    for (let edgeIndex = 0; edgeIndex < attractionFirstIndexes.length; edgeIndex++) {
+        degrees[attractionFirstIndexes[edgeIndex]]++;
+        degrees[attractionSecondIndexes[edgeIndex]]++;
+    }
+    const placementOrder = Array.from({ length: nodesArr.length }, (_, index) => index)
+        .sort((first, second) => degrees[second] - degrees[first] || first - second);
+    const metadata = {
+        nodeKeys,
+        nodeRefs,
+        edgeSources: edges.map(edge => edge.u),
+        edgeTargets: edges.map(edge => edge.v),
+        attractionFirstIndexes: Uint32Array.from(attractionFirstIndexes),
+        attractionSecondIndexes: Uint32Array.from(attractionSecondIndexes),
+        degrees,
+        placementOrder
+    };
+    topologyCache.set(edges, metadata);
+    return metadata;
+}
+
 export class GraphLayout {
     static layout(nodes, edges = [], options = {}) {
         const requestedWidth = Number.isFinite(options.width)
@@ -17,7 +97,6 @@ export class GraphLayout {
         if (nodes.size === 0) return { width: requestedWidth, height: requestedHeight };
 
         const nodesArr = Array.from(nodes.values());
-        const nodeIndex = new Map(nodesArr.map((node, index) => [node, index]));
         const nodeRadius = Number.isFinite(options.nodeRadius)
             ? Math.max(1, options.nodeRadius)
             : 20;
@@ -35,32 +114,28 @@ export class GraphLayout {
         const width = dimensions.width;
         const height = dimensions.height;
 
-        const attractionEdges = [];
-        const seenPairs = new Set();
-        for (const edge of edges) {
-            if (!nodes.has(edge.u) || !nodes.has(edge.v) || edge.u === edge.v) continue;
-            const [u, v] = [String(edge.u), String(edge.v)].sort();
-            const key = JSON.stringify([u, v]);
-            if (seenPairs.has(key)) continue;
-            seenPairs.add(key);
-            attractionEdges.push(edge);
+        if (nodesArr.length === 1) {
+            const node = nodesArr[0];
+            node.x = width / 2;
+            node.y = height / 2;
+            node.vx = 0;
+            node.vy = 0;
+            return { width, height };
         }
-        const degrees = new Array(nodesArr.length).fill(0);
-        for (const edge of attractionEdges) {
-            const firstIndex = nodeIndex.get(nodes.get(edge.u));
-            const secondIndex = nodeIndex.get(nodes.get(edge.v));
-            if (firstIndex !== undefined) degrees[firstIndex]++;
-            if (secondIndex !== undefined) degrees[secondIndex]++;
-        }
-        const placementOrder = nodesArr.map((_, index) => index).sort((first, second) =>
-            degrees[second] - degrees[first] || first - second
-        );
+
+        const topology = getGraphTopology(nodes, nodesArr, edges);
+        const {
+            attractionFirstIndexes,
+            attractionSecondIndexes,
+            degrees,
+            placementOrder
+        } = topology;
 
         // Keep interactive previews responsive on dense/parallel-edge inputs.
         // Parallel edges still render individually, but only one attraction
         // force per endpoint pair is needed for the layout.
         const repulsionPairs = nodesArr.length * (nodesArr.length - 1) / 2;
-        const estimatedWorkPerIteration = repulsionPairs + attractionEdges.length;
+        const estimatedWorkPerIteration = repulsionPairs + attractionFirstIndexes.length;
         const workBudget = Number.isFinite(options.workBudget) && options.workBudget > 0
             ? options.workBudget
             : 6000000;
@@ -74,15 +149,6 @@ export class GraphLayout {
                 ? Math.max(0, Math.floor(Number(options.iterations)))
                 : 80;
         const iterations = Math.min(requestedIterations, budgetedIterations);
-
-        if (nodesArr.length === 1) {
-            const node = nodesArr[0];
-            node.x = width / 2;
-            node.y = height / 2;
-            node.vx = 0;
-            node.vy = 0;
-            return { width, height };
-        }
 
         const grid = GraphLayout._makeInitialGrid(nodesArr.length, width, height, minDistance);
         for (let gridIndex = 0; gridIndex < nodesArr.length; gridIndex++) {
@@ -117,7 +183,7 @@ export class GraphLayout {
                     if (dx === 0 && dy === 0) {
                         [dx, dy] = GraphLayout._stableDirection(a, b, 0.01);
                     }
-                    const distance = Math.hypot(dx, dy) || 0.1;
+                    const distance = Math.sqrt(dx * dx + dy * dy) || 0.1;
                     const force = repel(distance);
                     const fx = (dx / distance) * force;
                     const fy = (dy / distance) * force;
@@ -129,18 +195,17 @@ export class GraphLayout {
             }
 
             // Attraction
-            for (const edge of attractionEdges) {
-                const first = nodes.get(edge.u);
-                const second = nodes.get(edge.v);
-                if (!first || !second) continue;
+            for (let edgeIndex = 0; edgeIndex < attractionFirstIndexes.length; edgeIndex++) {
+                const firstIndex = attractionFirstIndexes[edgeIndex];
+                const secondIndex = attractionSecondIndexes[edgeIndex];
+                const first = nodesArr[firstIndex];
+                const second = nodesArr[secondIndex];
                 let dx = first.x - second.x;
                 let dy = first.y - second.y;
                 if (dx === 0 && dy === 0) {
-                    const firstIndex = nodeIndex.get(first);
-                    const secondIndex = nodeIndex.get(second);
                     [dx, dy] = GraphLayout._stableDirection(firstIndex, secondIndex, 0.01);
                 }
-                const distance = Math.hypot(dx, dy) || 0.1;
+                const distance = Math.sqrt(dx * dx + dy * dy) || 0.1;
                 const force = attract(distance);
                 const fx = (dx / distance) * force;
                 const fy = (dy / distance) * force;
@@ -153,7 +218,7 @@ export class GraphLayout {
             // Apply forces. The working area has enough capacity for the nodes;
             // clamping here keeps the spring simulation stable.
             for (const node of nodesArr) {
-                const magnitude = Math.hypot(node.vx, node.vy) || 1;
+                const magnitude = Math.sqrt(node.vx * node.vx + node.vy * node.vy) || 1;
                 const displacement = Math.min(magnitude, temperature);
                 node.x += (node.vx / magnitude) * displacement;
                 node.y += (node.vy / magnitude) * displacement;
@@ -238,29 +303,48 @@ export class GraphLayout {
         const passes = Number.isFinite(requestedPasses)
             ? Math.max(0, Math.floor(requestedPasses))
             : Math.min(1000, Math.max(40, nodes.length * 2));
+        const cellXs = new Int32Array(nodes.length);
+        const cellYs = new Int32Array(nodes.length);
+        const mobilities = new Float64Array(nodes.length);
+        for (let index = 0; index < nodes.length; index++) {
+            mobilities[index] = degrees ? 1 / (1 + degrees[index]) : 1;
+        }
 
         for (let pass = 0; pass < passes; pass++) {
             const buckets = new Map();
-            const nodeCells = new Array(nodes.length);
-            const cellOf = node => ({
-                x: Math.floor(node.x / cellSize),
-                y: Math.floor(node.y / cellSize)
-            });
             for (let index = 0; index < nodes.length; index++) {
-                const cell = cellOf(nodes[index]);
-                nodeCells[index] = cell;
-                const key = `${cell.x},${cell.y}`;
-                if (!buckets.has(key)) buckets.set(key, []);
-                buckets.get(key).push(index);
+                const node = nodes[index];
+                const cellX = Math.floor(node.x / cellSize);
+                const cellY = Math.floor(node.y / cellSize);
+                cellXs[index] = cellX;
+                cellYs[index] = cellY;
+                let row = buckets.get(cellX);
+                if (!row) {
+                    row = new Map();
+                    buckets.set(cellX, row);
+                }
+                let bucket = row.get(cellY);
+                if (!bucket) {
+                    bucket = [];
+                    row.set(cellY, bucket);
+                }
+                bucket.push(index);
             }
 
             let resolvedAny = false;
             for (let firstIndex = 0; firstIndex < nodes.length; firstIndex++) {
                 const first = nodes[firstIndex];
-                const cell = nodeCells[firstIndex];
+                const cellX = cellXs[firstIndex];
+                const cellY = cellYs[firstIndex];
+                const leftRow = buckets.get(cellX - 1);
+                const centerRow = buckets.get(cellX);
+                const rightRow = buckets.get(cellX + 1);
                 for (let offsetY = -1; offsetY <= 1; offsetY++) {
                     for (let offsetX = -1; offsetX <= 1; offsetX++) {
-                        const neighbors = buckets.get(`${cell.x + offsetX},${cell.y + offsetY}`);
+                        const row = offsetX === -1
+                            ? leftRow
+                            : offsetX === 0 ? centerRow : rightRow;
+                        const neighbors = row?.get(cellY + offsetY);
                         if (!neighbors) continue;
                         for (const secondIndex of neighbors) {
                             if (secondIndex <= firstIndex) continue;
@@ -279,8 +363,8 @@ export class GraphLayout {
                             // faster. High-degree nodes get less mobility so
                             // collision repair keeps graph hubs near the center.
                             const correction = (minDistance - distance + 0.01) * 1.2;
-                            const firstMobility = degrees ? 1 / (1 + degrees[firstIndex]) : 1;
-                            const secondMobility = degrees ? 1 / (1 + degrees[secondIndex]) : 1;
+                            const firstMobility = mobilities[firstIndex];
+                            const secondMobility = mobilities[secondIndex];
                             const mobilityTotal = firstMobility + secondMobility;
                             const firstPush = correction * firstMobility / mobilityTotal;
                             const secondPush = correction * secondMobility / mobilityTotal;

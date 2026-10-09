@@ -8,6 +8,17 @@ import { MAX_TREE_INPUT_LENGTH, MAX_TREE_NODES, TreeParser } from './TreeParser.
 import { TreeLayout } from './TreeLayout.js';
 import { TreeRenderer } from './TreeRenderer.js';
 
+const resizeStateNodeRefs = new WeakMap();
+
+function getResizeShapePart(node) {
+    const children = node.children || [];
+    let part = `${children.length}:`;
+    for (let index = 0; index < children.length; index++) {
+        if (children[index]) part += `${index},`;
+    }
+    return part;
+}
+
 export class TreeElement extends Element {
     constructor(x = 0, y = 0) {
         super('tree', x, y, 300, 200);
@@ -20,7 +31,8 @@ export class TreeElement extends Element {
         this.hasWeights = false;
         this._nodeValueOverrides = {};
         this._edgeWeightOverrides = {};
-        this._nodePortIdsByPath = new Map();
+        this._nodePortIdsByNode = new Map();
+        this._nextDynamicNodePortId = 0;
         this._draggingNode = null;
     }
 
@@ -74,7 +86,8 @@ export class TreeElement extends Element {
         if (!result?.root) return input.trim() ? '無法建立樹，請檢查輸入格式。' : null;
 
         this.root = result.root;
-        this._nodePortIdsByPath = this._captureNodePortIds(this.root);
+        this._nextDynamicNodePortId = 0;
+        this._nodePortIdsByNode = this._captureNodePortIds(this.root);
         this.inputText = input;
         this.inputMode = mode;
         this.hasWeights = result.hasWeights || false;
@@ -222,43 +235,129 @@ export class TreeElement extends Element {
         const ports = [];
         const { offsetX, offsetY } = this._getCurrentOffsets();
         const visited = new Set();
-        const usedPortIds = new Set();
-        const pending = [{ node: this.root, path: 'r' }];
+        const pending = [this.root];
         while (pending.length) {
-            const { node, path } = pending.pop();
+            const node = pending.pop();
             if (!node || node.value === null || visited.has(node)) continue;
             visited.add(node);
             const point = this.toWorldPoint(offsetX + node.x, offsetY + node.y);
-            const legacyId = `node_${node.value}`;
-            const id = this._nodePortIdsByPath.get(path) ||
-                (usedPortIds.has(legacyId) ? `tree@${path}` : legacyId);
-            usedPortIds.add(id);
+            const id = this._getNodePortId(node);
             ports.push({ id, x: point.x, y: point.y });
             for (let index = (node.children?.length || 0) - 1; index >= 0; index--) {
-                pending.push({ node: node.children[index], path: `${path}.${index}` });
+                pending.push(node.children[index]);
             }
         }
         return ports;
     }
 
+    findNearestConnectionPort(wx, wy, maxDistance = Infinity) {
+        if (!this.root) {
+            return super.findNearestConnectionPort(wx, wy, maxDistance);
+        }
+        const maxDistanceSquared = maxDistance * maxDistance;
+        let nearest = null;
+        let nearestDistanceSquared = maxDistanceSquared;
+        const { offsetX, offsetY } = this._getCurrentOffsets();
+        const rotation = this.rotation || 0;
+        const cos = rotation ? Math.cos(rotation) : 1;
+        const sin = rotation ? Math.sin(rotation) : 0;
+        const centerX = this.x + this.width / 2;
+        const centerY = this.y + this.height / 2;
+        const visited = new Set();
+        const pending = [this.root];
+        while (pending.length) {
+            const node = pending.pop();
+            if (!node || node.value === null || visited.has(node)) continue;
+            visited.add(node);
+            const localX = offsetX + node.x;
+            const localY = offsetY + node.y;
+            const dxFromCenter = localX - centerX;
+            const dyFromCenter = localY - centerY;
+            const x = rotation
+                ? centerX + dxFromCenter * cos - dyFromCenter * sin
+                : localX;
+            const y = rotation
+                ? centerY + dxFromCenter * sin + dyFromCenter * cos
+                : localY;
+            const id = this._getNodePortId(node);
+
+            const dx = wx - x;
+            const dy = wy - y;
+            const distanceSquared = dx * dx + dy * dy;
+            if (distanceSquared < nearestDistanceSquared) {
+                nearestDistanceSquared = distanceSquared;
+                nearest = { id, x, y };
+            }
+            for (let index = (node.children?.length || 0) - 1; index >= 0; index--) {
+                pending.push(node.children[index]);
+            }
+        }
+        return nearest
+            ? { ...nearest, distance: Math.sqrt(nearestDistanceSquared) }
+            : null;
+    }
+
     _captureNodePortIds(root) {
-        const idsByPath = new Map();
+        const idsByNode = new Map();
         const usedPortIds = new Set();
         const pending = root ? [{ node: root, path: 'r' }] : [];
         const visited = new Set();
         while (pending.length) {
-            const { node, path } = pending.pop();
+            const { node, path: savedPath } = pending.pop();
             if (!node || node.value === null || visited.has(node)) continue;
             visited.add(node);
             const legacyId = `node_${node.value}`;
-            const id = usedPortIds.has(legacyId) ? `tree@${path}` : legacyId;
+            const duplicate = usedPortIds.has(legacyId);
+            let path = savedPath;
+            if (duplicate && !path) path = this._getPathFromParentChain(node, root);
+            const id = duplicate
+                ? `tree@${path ?? `dynamic-${this._nextDynamicNodePortId++}`}`
+                : legacyId;
             usedPortIds.add(id);
-            idsByPath.set(path, id);
+            idsByNode.set(node, id);
+            const children = node.children || [];
             for (let index = (node.children?.length || 0) - 1; index >= 0; index--) {
-                pending.push({ node: node.children[index], path: `${path}.${index}` });
+                const child = children[index];
+                if (!child) continue;
+                let childPath = null;
+                if (usedPortIds.has(`node_${child.value}`)) {
+                    if (!path) path = this._getPathFromParentChain(node, root);
+                    if (path) childPath = `${path}.${index}`;
+                }
+                pending.push({ node: child, path: childPath });
             }
         }
-        return idsByPath;
+        return idsByNode;
+    }
+
+    _getPathFromParentChain(targetNode, root = this.root) {
+        if (!targetNode || !root) return null;
+        if (targetNode === root) return 'r';
+        const reversedIndices = [];
+        const seen = new Set();
+        let node = targetNode;
+        while (node && node !== root && !seen.has(node)) {
+            seen.add(node);
+            const parent = node.parent;
+            const index = parent?.children?.indexOf(node) ?? -1;
+            if (index < 0) return null;
+            reversedIndices.push(index);
+            node = parent;
+        }
+        if (node !== root) return null;
+        reversedIndices.reverse();
+        return `r${reversedIndices.map(index => `.${index}`).join('')}`;
+    }
+
+    _getNodePortId(node) {
+        let id = this._nodePortIdsByNode.get(node);
+        if (id) return id;
+
+        // Nodes added after the input was parsed have no stable path. Give
+        // them an object-backed ID so a later rename or traversal keeps it.
+        id = `tree@dynamic-${this._nextDynamicNodePortId++}`;
+        this._nodePortIdsByNode.set(node, id);
+        return id;
     }
 
     moveNodes(dx, dy) {
@@ -276,32 +375,108 @@ export class TreeElement extends Element {
 
     captureResizeState() {
         const nodePositions = [];
+        const nodeRefs = [];
+        const treeShape = [];
+        const pending = this.root ? [this.root] : [];
+        const visited = new Set();
+        while (pending.length) {
+            const node = pending.pop();
+            if (!node || visited.has(node)) continue;
+            visited.add(node);
+            nodePositions.push({ x: node.x, y: node.y });
+            nodeRefs.push(node);
+            const children = node.children || [];
+            treeShape.push(getResizeShapePart(node));
+            for (let index = 0; index < children.length; index++) {
+                if (children[index]) pending.push(children[index]);
+            }
+        }
+        const state = {
+            nodeRadius: this.nodeRadius,
+            nodePositions,
+            treeShape: treeShape.join('|'),
+            relOffsetX: this._relOffsetX,
+            relOffsetY: this._relOffsetY,
+            offsetX: this._offsetX,
+            offsetY: this._offsetY
+        };
+        resizeStateNodeRefs.set(state, { root: this.root, nodes: nodeRefs });
+        return state;
+    }
+
+    restoreResizeState(state) {
+        if (!state) return;
+        this.nodeRadius = state.nodeRadius;
+        const nodeRefs = resizeStateNodeRefs.get(state);
+        if (nodeRefs?.root === this.root &&
+            nodeRefs.nodes.length === (state.nodePositions || []).length) {
+            for (let index = 0; index < nodeRefs.nodes.length; index++) {
+                const { x, y } = state.nodePositions[index];
+                nodeRefs.nodes[index].x = x;
+                nodeRefs.nodes[index].y = y;
+            }
+            this._relOffsetX = state.relOffsetX;
+            this._relOffsetY = state.relOffsetY;
+            this._offsetX = state.offsetX;
+            this._offsetY = state.offsetY;
+            return;
+        }
+
+        if (typeof state.treeShape === 'string') {
+            const currentNodes = [];
+            const currentShape = [];
+            const pending = this.root ? [this.root] : [];
+            const visited = new Set();
+            while (pending.length) {
+                const node = pending.pop();
+                if (!node || visited.has(node)) continue;
+                visited.add(node);
+                currentNodes.push(node);
+                currentShape.push(getResizeShapePart(node));
+                const children = node.children || [];
+                for (let index = 0; index < children.length; index++) {
+                    if (children[index]) pending.push(children[index]);
+                }
+            }
+            if (currentNodes.length === (state.nodePositions || []).length &&
+                currentShape.join('|') === state.treeShape) {
+                for (let index = 0; index < currentNodes.length; index++) {
+                    const { x, y } = state.nodePositions[index];
+                    currentNodes[index].x = x;
+                    currentNodes[index].y = y;
+                }
+                this._relOffsetX = state.relOffsetX;
+                this._relOffsetY = state.relOffsetY;
+                this._offsetX = state.offsetX;
+                this._offsetY = state.offsetY;
+                return;
+            }
+            if (!(state.nodePositions || []).some(position => position.path)) {
+                this._relOffsetX = state.relOffsetX;
+                this._relOffsetY = state.relOffsetY;
+                this._offsetX = state.offsetX;
+                this._offsetY = state.offsetY;
+                return;
+            }
+        }
+
+        const nodeByPath = new Map();
         const pending = this.root ? [{ node: this.root, path: 'r' }] : [];
         const visited = new Set();
         while (pending.length) {
             const { node, path } = pending.pop();
             if (!node || visited.has(node)) continue;
             visited.add(node);
-            nodePositions.push({ path, x: node.x, y: node.y });
-            (node.children || []).forEach((child, index) => {
-                if (child) pending.push({ node: child, path: `${path}.${index}` });
-            });
+            nodeByPath.set(path, node);
+            const children = node.children || [];
+            for (let index = children.length - 1; index >= 0; index--) {
+                if (children[index]) {
+                    pending.push({ node: children[index], path: `${path}.${index}` });
+                }
+            }
         }
-        return {
-            nodeRadius: this.nodeRadius,
-            nodePositions,
-            relOffsetX: this._relOffsetX,
-            relOffsetY: this._relOffsetY,
-            offsetX: this._offsetX,
-            offsetY: this._offsetY
-        };
-    }
-
-    restoreResizeState(state) {
-        if (!state) return;
-        this.nodeRadius = state.nodeRadius;
         for (const { node, path, x, y } of state.nodePositions || []) {
-            const currentNode = path ? this.getNodeAtPath(path) : node;
+            const currentNode = path ? nodeByPath.get(path) : node;
             if (!currentNode) continue;
             currentNode.x = x;
             currentNode.y = y;
@@ -335,26 +510,17 @@ export class TreeElement extends Element {
 
     setNodeValue(targetNode, value) {
         if (!this.root || !targetNode) return false;
-        const pending = [{ node: this.root, path: 'r' }];
-        const visited = new Set();
-        while (pending.length) {
-            const { node, path } = pending.pop();
-            if (!node || visited.has(node)) continue;
-            visited.add(node);
-            if (node === targetNode) {
-                node.value = value;
-                this._nodeValueOverrides[path] = value;
-                return true;
-            }
-            (node.children || []).forEach((child, index) => {
-                if (child) pending.push({ node: child, path: `${path}.${index}` });
-            });
-        }
-        return false;
+        const path = this.getNodePath(targetNode);
+        if (path === null) return false;
+        targetNode.value = value;
+        this._nodeValueOverrides[path] = value;
+        return true;
     }
 
     getNodePath(targetNode) {
         if (!this.root || !targetNode) return null;
+        const parentPath = this._getPathFromParentChain(targetNode);
+        if (parentPath !== null) return parentPath;
         const pending = [{ node: this.root, path: 'r' }];
         const visited = new Set();
         while (pending.length) {
@@ -381,32 +547,20 @@ export class TreeElement extends Element {
 
     setEdgeWeight(targetNode, value) {
         if (!this.root || !targetNode) return false;
-        const pending = [{ node: this.root, path: 'r' }];
-        const visited = new Set();
-        while (pending.length) {
-            const { node, path } = pending.pop();
-            if (!node || visited.has(node)) continue;
-            visited.add(node);
-            if (node === targetNode) {
-                if (path === 'r') return false;
-                const weight = String(value ?? '').trim();
-                if (weight && !Number.isFinite(Number(weight))) return false;
-                node.meta ||= {};
-                if (weight) {
-                    node.meta.edgeWeight = weight;
-                    this._edgeWeightOverrides[path] = weight;
-                } else {
-                    delete node.meta.edgeWeight;
-                    this._edgeWeightOverrides[path] = null;
-                }
-                this.hasWeights = true;
-                return true;
-            }
-            (node.children || []).forEach((child, index) => {
-                if (child) pending.push({ node: child, path: `${path}.${index}` });
-            });
+        const path = this.getNodePath(targetNode);
+        if (path === null || path === 'r') return false;
+        const weight = String(value ?? '').trim();
+        if (weight && !Number.isFinite(Number(weight))) return false;
+        targetNode.meta ||= {};
+        if (weight) {
+            targetNode.meta.edgeWeight = weight;
+            this._edgeWeightOverrides[path] = weight;
+        } else {
+            delete targetNode.meta.edgeWeight;
+            this._edgeWeightOverrides[path] = null;
         }
-        return false;
+        this.hasWeights = true;
+        return true;
     }
 
     _restoreNodeValueOverrides(overrides) {
@@ -476,7 +630,8 @@ export class TreeElement extends Element {
         // Reused elements (especially those updated by remote sync) must not
         // keep nodes or offsets from an older snapshot when the source is empty.
         this.root = null;
-        this._nodePortIdsByPath = new Map();
+        this._nodePortIdsByNode = new Map();
+        this._nextDynamicNodePortId = 0;
         this._offsetX = undefined;
         this._offsetY = undefined;
         const nodeValueOverrides = data.nodeValueOverrides || {};

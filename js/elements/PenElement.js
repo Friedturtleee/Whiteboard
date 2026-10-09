@@ -97,6 +97,8 @@ export class PenElement extends Element {
 
     containsPoint(wx, wy, camera) {
         const tol = Math.max(this.strokeWidth / 2 + 3, 6) / (camera?.zoom || 1);
+        if (tol <= 0) return false;
+        const tolSquared = tol * tol;
         let lx = wx, ly = wy;
         if (this.rotation) {
             const cx = this.x + this.width / 2;
@@ -106,10 +108,19 @@ export class PenElement extends Element {
             lx = cx + dx * cos - dy * sin;
             ly = cy + dx * sin + dy * cos;
         }
+        const minX = Math.min(this.x, this.x + this.width) - tol;
+        const maxX = Math.max(this.x, this.x + this.width) + tol;
+        const minY = Math.min(this.y, this.y + this.height) - tol;
+        const maxY = Math.max(this.y, this.y + this.height) + tol;
+        if (lx < minX || lx > maxX || ly < minY || ly > maxY) return false;
         for (let i = 0; i < this.points.length - 1; i++) {
             const p1 = this.points[i];
             const p2 = this.points[i + 1];
-            if (_ptSegDist(lx, ly, p1.x, p1.y, p2.x, p2.y) < tol) return true;
+            if (lx < Math.min(p1.x, p2.x) - tol || lx > Math.max(p1.x, p2.x) + tol ||
+                ly < Math.min(p1.y, p2.y) - tol || ly > Math.max(p1.y, p2.y) + tol) {
+                continue;
+            }
+            if (_ptSegDistSquared(lx, ly, p1.x, p1.y, p2.x, p2.y) < tolSquared) return true;
         }
         return false;
     }
@@ -142,24 +153,25 @@ export class PenElement extends Element {
 }
 
 // ── Helpers ─────────────────────────────────────────────────────────────────
-function _ptSegDist(px, py, x1, y1, x2, y2) {
+function _ptSegDistSquared(px, py, x1, y1, x2, y2) {
     const dx = x2 - x1, dy = y2 - y1;
     const lenSq = dx * dx + dy * dy;
-    if (lenSq === 0) return Math.hypot(px - x1, py - y1);
+    if (lenSq === 0) {
+        const offsetX = px - x1;
+        const offsetY = py - y1;
+        return offsetX * offsetX + offsetY * offsetY;
+    }
     let t = ((px - x1) * dx + (py - y1) * dy) / lenSq;
     t = Math.max(0, Math.min(1, t));
-    return Math.hypot(px - (x1 + t * dx), py - (y1 + t * dy));
-}
-
-function _ptLinDist(p, p1, p2) {
-    const num = Math.abs((p2.y - p1.y)*p.x - (p2.x - p1.x)*p.y + p2.x*p1.y - p2.y*p1.x);
-    const den = Math.hypot(p2.y - p1.y, p2.x - p1.x);
-    if (den === 0) return Math.hypot(p.x - p1.x, p.y - p1.y);
-    return num / den;
+    const offsetX = px - (x1 + t * dx);
+    const offsetY = py - (y1 + t * dy);
+    return offsetX * offsetX + offsetY * offsetY;
 }
 
 function _douglasPeucker(points, epsilon) {
     if (points.length <= 2) return points;
+    if (epsilon < 0) return points.slice();
+    const epsilonSquared = epsilon * epsilon;
     const keep = new Uint8Array(points.length);
     keep[0] = 1;
     keep[points.length - 1] = 1;
@@ -167,12 +179,26 @@ function _douglasPeucker(points, epsilon) {
 
     while (ranges.length) {
         const [start, end] = ranges.pop();
-        let maxDistance = epsilon;
+        const first = points[start];
+        const last = points[end];
+        const dx = last.x - first.x;
+        const dy = last.y - first.y;
+        const lengthSquared = dx * dx + dy * dy;
+        let maxDistanceSquared = epsilonSquared;
         let index = -1;
         for (let i = start + 1; i < end; i++) {
-            const distance = _ptLinDist(points[i], points[start], points[end]);
-            if (distance > maxDistance) {
-                maxDistance = distance;
+            const point = points[i];
+            let distanceSquared;
+            if (lengthSquared === 0) {
+                const offsetX = point.x - first.x;
+                const offsetY = point.y - first.y;
+                distanceSquared = offsetX * offsetX + offsetY * offsetY;
+            } else {
+                const cross = Math.abs(dy * point.x - dx * point.y + last.x * first.y - last.y * first.x);
+                distanceSquared = cross * cross / lengthSquared;
+            }
+            if (distanceSquared > maxDistanceSquared) {
+                maxDistanceSquared = distanceSquared;
                 index = i;
             }
         }

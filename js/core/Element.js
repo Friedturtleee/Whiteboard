@@ -94,6 +94,52 @@ export class Element {
         ].map(port => ({ ...port, ...this.toWorldPoint(port.x, port.y) }));
     }
 
+    /** Return the closest port in range without requiring callers to scan the full port list. */
+    findNearestConnectionPort(wx, wy, maxDistance = Infinity) {
+        const maxDistanceSquared = maxDistance * maxDistance;
+        let nearest = null;
+        let nearestDistanceSquared = maxDistanceSquared;
+        const bounds = this.getBounds();
+        const centerX = bounds.x + bounds.w / 2;
+        const centerY = bounds.y + bounds.h / 2;
+        const rotation = this.rotation || 0;
+        const cos = rotation ? Math.cos(rotation) : 1;
+        const sin = rotation ? Math.sin(rotation) : 0;
+        const rotationCenterX = this.x + this.width / 2;
+        const rotationCenterY = this.y + this.height / 2;
+
+        // Keep the same port order as getConnectionPorts so equal-distance
+        // ties resolve to the same port, without allocating five port objects.
+        for (let index = 0; index < 5; index++) {
+            let id, localX, localY;
+            switch (index) {
+                case 0: id = 'center'; localX = centerX; localY = centerY; break;
+                case 1: id = 'top'; localX = centerX; localY = bounds.y; break;
+                case 2: id = 'right'; localX = bounds.x + bounds.w; localY = centerY; break;
+                case 3: id = 'bottom'; localX = centerX; localY = bounds.y + bounds.h; break;
+                default: id = 'left'; localX = bounds.x; localY = centerY; break;
+            }
+            const dxFromCenter = localX - rotationCenterX;
+            const dyFromCenter = localY - rotationCenterY;
+            const x = rotation
+                ? rotationCenterX + dxFromCenter * cos - dyFromCenter * sin
+                : localX;
+            const y = rotation
+                ? rotationCenterY + dxFromCenter * sin + dyFromCenter * cos
+                : localY;
+            const dx = wx - x;
+            const dy = wy - y;
+            const distanceSquared = dx * dx + dy * dy;
+            if (distanceSquared < nearestDistanceSquared) {
+                nearestDistanceSquared = distanceSquared;
+                nearest = { id, x, y };
+            }
+        }
+        return nearest
+            ? { ...nearest, distance: Math.sqrt(nearestDistanceSquared) }
+            : null;
+    }
+
     /** Point-in-element test (world coords). Override for non-rect shapes. */
     containsPoint(wx, wy, camera) {
         const b = this.getBounds();
