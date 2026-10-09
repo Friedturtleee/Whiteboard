@@ -1,6 +1,27 @@
 /**
  * GraphRenderer — draws graph nodes and edges on canvas.
  */
+function createBidirectionalEdgeSet(edges, directed) {
+    if (!directed && !edges.some(edge => edge.directed)) return null;
+    const edgeSet = new Set();
+    for (const edge of edges) {
+        edgeSet.add(getDirectedEdgeKey(edge.u, edge.v));
+    }
+    return edgeSet;
+}
+
+function getDirectedEdgeKey(u, v) {
+    return JSON.stringify([String(u), String(v)]);
+}
+
+function getEdgeGroupKey(edge, directed) {
+    const isDirected = edge.directed || directed;
+    const [u, v] = isDirected
+        ? [String(edge.u), String(edge.v)]
+        : [String(edge.u), String(edge.v)].sort();
+    return JSON.stringify([isDirected, u, v]);
+}
+
 export class GraphRenderer {
     /**
      * Draw the entire graph.
@@ -17,15 +38,12 @@ export class GraphRenderer {
         const opacity = opts.opacity ?? 1;
         const directed = opts.directed || false;
 
-        // Build a set of directed pairs for bidirectional detection
-        const edgeSet = new Set(edges.map(e => String(e.u) + '->' + String(e.v)));
+        // Undirected graphs do not need reciprocal-edge lookups. Avoid an
+        // edge-key set for the common case and for large contest inputs.
+        const edgeSet = createBidirectionalEdgeSet(edges, directed);
         const edgeGroups = new Map();
         edges.forEach((edge, index) => {
-            const isDirected = edge.directed || directed;
-            const [u, v] = isDirected
-                ? [String(edge.u), String(edge.v)]
-                : [String(edge.u), String(edge.v)].sort();
-            const key = JSON.stringify([isDirected, u, v]);
+            const key = getEdgeGroupKey(edge, directed);
             if (!edgeGroups.has(key)) edgeGroups.set(key, []);
             edgeGroups.get(key).push(index);
         });
@@ -86,7 +104,7 @@ export class GraphRenderer {
 
             // Check if there is also a reverse edge (bidirectional pair)
             const hasBidirectional = isDirected &&
-                edgeSet.has(String(e.v) + '->' + String(e.u));
+                edgeSet?.has(getDirectedEdgeKey(e.v, e.u));
 
             if (isDirected) {
                 const angle = Math.atan2(y2 - y1, x2 - x1);
@@ -222,20 +240,37 @@ export class GraphRenderer {
         const tol = opts.tolerance || 12;
         const directed = opts.directed || false;
 
-        // Same edgeSet as draw() for bidirectional detection
-        const edgeSet = new Set(edges.map(e => String(e.u) + '->' + String(e.v)));
+        const edgeSet = createBidirectionalEdgeSet(edges, directed);
+        const laneCounts = new Map();
+        for (const edge of edges) {
+            const key = getEdgeGroupKey(edge, directed);
+            laneCounts.set(key, (laneCounts.get(key) || 0) + 1);
+        }
+        const laneIndices = new Map();
+        let closestEdge = null;
+        let closestDistance = tol;
 
         for (const e of edges) {
             const u = nodes.get(e.u);
             const v = nodes.get(e.v);
             if (!u || !v) continue;
 
+            const groupKey = getEdgeGroupKey(e, directed);
+            const laneIndex = laneIndices.get(groupKey) || 0;
+            laneIndices.set(groupKey, laneIndex + 1);
+            const laneOffset = (laneIndex - (laneCounts.get(groupKey) - 1) / 2) * 8;
+
             // Self-loop: hit-test its loop circle
             if (e.u === e.v) {
-                const loopR = r * 0.75;
+                const loopR = r * 0.75 + laneIndex * 8;
                 const lx = u.x + ox;
                 const ly = u.y + oy - r - loopR;
-                if (Math.abs(Math.hypot(wx - lx, wy - ly) - loopR) < tol) return e;
+                const distance = Math.abs(Math.hypot(wx - lx, wy - ly) - loopR);
+                if (distance < closestDistance) {
+                    closestEdge = e;
+                    closestDistance = distance;
+                    if (distance === 0) return e;
+                }
                 continue;
             }
 
@@ -245,19 +280,26 @@ export class GraphRenderer {
 
             const isDirected = e.directed || directed;
             const hasBidirectional = isDirected &&
-                edgeSet.has(String(e.v) + '->' + String(e.u));
-            const OFFSET = hasBidirectional ? 10 : 0;
-            const perpX = -Math.sin(angle) * OFFSET;
-            const perpY =  Math.cos(angle) * OFFSET;
+                edgeSet?.has(getDirectedEdgeKey(e.v, e.u));
+            const OFFSET = (hasBidirectional ? 10 : 0) + laneOffset;
+            const orientation = String(e.u) <= String(e.v) ? 1 : -1;
+            const offset = isDirected ? OFFSET : laneOffset * orientation;
+            const perpX = -Math.sin(angle) * offset;
+            const perpY =  Math.cos(angle) * offset;
 
             const sx = x1 + r * Math.cos(angle) + perpX;
             const sy = y1 + r * Math.sin(angle) + perpY;
             const ex = x2 - r * Math.cos(angle) + perpX;
             const ey = y2 - r * Math.sin(angle) + perpY;
 
-            if (_ptSegDist(wx, wy, sx, sy, ex, ey) < tol) return e;
+            const distance = _ptSegDist(wx, wy, sx, sy, ex, ey);
+            if (distance < closestDistance) {
+                closestEdge = e;
+                closestDistance = distance;
+                if (distance === 0) return e;
+            }
         }
-        return null;
+        return closestEdge;
     }
 }
 

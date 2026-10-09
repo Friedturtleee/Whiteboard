@@ -461,7 +461,9 @@ export class BoardCollaboration {
                 elements: [], camera: { x: 0, y: 0, zoom: 1 },
                 history: { clear() {} }, selectionManager: { clear() {} }, renderer: { markDirty() {} }
             };
-            Serializer.loadJSONData(scratch, { elements: [data] });
+            Serializer.loadJSONData(scratch, { elements: [data] }, {
+                preserveExternalConnections: true
+            });
             const incoming = scratch.elements[0];
             if (!incoming) continue;
             if (currentIndex >= 0 && this.app.elements[currentIndex].type === incoming.type) {

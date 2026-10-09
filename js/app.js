@@ -15,6 +15,7 @@ import { LayerManager } from './core/LayerManager.js';
 import { Transform } from './core/Transform.js';
 import { History } from './core/History.js';
 import { Serializer } from './core/Serializer.js';
+import { formatDataToken } from './core/DataTokens.js';
 
 // ── Elements ────────────────────────────────────────────
 import { ShapeElement } from './elements/ShapeElement.js';
@@ -39,6 +40,20 @@ const isEmptyDataStructureInput = value => {
     const text = String(value ?? '');
     return !text.includes('\u3000') && text.trim() === '';
 };
+const MAX_DATA_STRUCTURE_INPUT_LENGTH = 1_000_000;
+
+function inlineDataInputLength(element, index, value) {
+    if (element.type === 'matrix') {
+        return element.data
+            .map((row, rowIndex) => row.map((item, colIndex) => formatDataToken(
+                rowIndex === index.row && colIndex === index.col ? value : item
+            )).join(' '))
+            .join('\n').length;
+    }
+    return element.items.map((item, itemIndex) => formatDataToken(
+        itemIndex === index ? value : item
+    )).join(' ').length;
+}
 
 // ═════════════════════════════════════════════════════════
 // Application Singleton
@@ -375,7 +390,7 @@ class App {
 
         // ── Drawing tools: shapes / lines / arrows ─
         if (['rectangle', 'circle', 'line', 'arrow'].includes(tool)) {
-            this._startCreating(tool, wx, wy);
+            this._startCreating(tool, wx, wy, sx, sy);
             return;
         }
 
@@ -394,7 +409,7 @@ class App {
 
         // ── Data structures: drag to size ──
         if (['matrix', 'stack', 'queue'].includes(tool)) {
-            this._startCreating(tool, wx, wy);
+            this._startCreating(tool, wx, wy, sx, sy);
             return;
         }
 
@@ -554,7 +569,8 @@ class App {
 
         // ── Finish creating shape ──────────────────
         if (this._isCreating && this._creatingElement) {
-            this._finishCreating(e.shiftKey);
+            const { sx, sy } = this._screenPos(e);
+            this._finishCreating(wx, wy, e.shiftKey, sx, sy);
             return;
         }
 
@@ -795,6 +811,15 @@ class App {
                     return;
                 }
             }
+            // Stack and queue cells can be edited in place without reopening
+            // the full data input dialog.
+            if ((hit.type === 'stack' || hit.type === 'queue') && hit.hitTestItem) {
+                const index = hit.hitTestItem(wx, wy);
+                if (index >= 0) {
+                    this._editSequenceItem(hit, index);
+                    return;
+                }
+            }
             this._showDataStructureDialog(hit);
             return;
         }
@@ -917,11 +942,15 @@ class App {
                 if (node) {
                     if (e.altKey) {
                         // Start edge creation
+                        const source = hit.toWorldPoint(
+                            hit.x + 20 + node.x,
+                            hit.y + 20 + node.y
+                        );
                         this._edgePreview = {
                             graphElement: hit,
                             sourceNode: node,
-                            x1: hit.x + 20 + node.x,
-                            y1: hit.y + 20 + node.y,
+                            x1: source.x,
+                            y1: source.y,
                             x2: wx, y2: wy
                         };
                         return;
@@ -988,9 +1017,12 @@ class App {
     // ═════════════════════════════════════════════════════
     // Shape Creation (rectangle / circle / line / arrow / matrix / stack / queue / tree / graph)
     // ═════════════════════════════════════════════════════
-    _startCreating(tool, wx, wy) {
+    _startCreating(tool, wx, wy, screenX = null, screenY = null) {
         this._isCreating = true;
-        this._createStart = { wx, wy };
+        const screenStart = Number.isFinite(screenX) && Number.isFinite(screenY)
+            ? { x: screenX, y: screenY }
+            : this.camera.worldToScreen(wx, wy);
+        this._createStart = { wx, wy, sx: screenStart.x, sy: screenStart.y };
         this._creatingTool = tool;
 
         // Build a preview ghost element
@@ -1089,14 +1121,21 @@ class App {
         this.renderer.markDirty();
     }
 
-    _finishCreating(shiftKey = false) {
+    _finishCreating(endWx, endWy, shiftKey = false, screenX = null, screenY = null) {
         const el = this._creatingElement;
         const tool = this._creatingTool;
         const startWx = this._createStart.wx;
         const startWy = this._createStart.wy;
 
-        // Determine if this was a point-click (tiny drag) or real drag
-        const isDrag = Math.abs(el.width) > 8 || Math.abs(el.height) > 8;
+        // Preview elements have minimum/default dimensions before the pointer
+        // moves, so their bounds cannot distinguish a click from a drag.
+        const screenEnd = Number.isFinite(screenX) && Number.isFinite(screenY)
+            ? { x: screenX, y: screenY }
+            : this.camera.worldToScreen(endWx, endWy);
+        const isDrag = Math.hypot(
+            screenEnd.x - this._createStart.sx,
+            screenEnd.y - this._createStart.sy
+        ) > 8;
 
         if (!isDrag) {
             // Point click: use default sizes
@@ -1120,6 +1159,7 @@ class App {
                 el.x = startWx; el.y = startWy;
                 el.width = 400; el.height = 350;
             } else {
+                el.x = startWx; el.y = startWy;
                 el.width = 120; el.height = 80;
             }
         }
@@ -1431,6 +1471,7 @@ class App {
         overlay.style.textDecoration = el.isUnderline ? 'underline' : 'none';
 
         overlay.value = el.text;
+        overlay.maxLength = MAX_DATA_STRUCTURE_INPUT_LENGTH;
         overlay.focus();
         overlay.select();
 
@@ -1439,6 +1480,9 @@ class App {
 
         this._textInputHandler = () => {
             if (this._textEditing) {
+                if (overlay.value.length > MAX_DATA_STRUCTURE_INPUT_LENGTH) {
+                    overlay.value = overlay.value.slice(0, MAX_DATA_STRUCTURE_INPUT_LENGTH);
+                }
                 this._textEditing.text = overlay.value;
                 this._textEditing.autoSize(this.ctx);
                 
@@ -1454,6 +1498,13 @@ class App {
         overlay.addEventListener('input', this._textInputHandler);
 
         overlay.onblur = () => this._finishTextEditing();
+        overlay.onkeydown = event => {
+            if (event.key !== 'Escape') return;
+            event.preventDefault();
+            event.stopPropagation();
+            this._finishTextEditing(true);
+            overlay.blur();
+        };
     }
 
     _finishTextEditing(cancel = false, preserveEmptyElement = false) {
@@ -1510,8 +1561,11 @@ class App {
 
         overlay.style.display = 'none';
         overlay.onblur = null;
+        overlay.onkeydown = null;
+        if (document.activeElement === overlay) overlay.blur();
         el.isEditing = false;
         this._textEditing = null;
+        this._textInputHandler = null;
 
         if (!preserveEmptyElement && !el.text.trim() && el.type === 'text') {
             this._deleteElement(el);
@@ -1548,8 +1602,8 @@ class App {
     _showDataStructureDialog(el, isNew = false) {
         const typeLabel = { matrix: '矩陣', stack: '堆疊', queue: '佇列' }[el.type] || el.type;
         const placeholder = el.type === 'matrix'
-            ? '輸入矩陣，每行一列，數值以空格分隔\n例：\n1 2 3\n4 5 6\n\n或輸入維度建立空矩陣，例：3*5'
-            : '輸入數值，以空格或換行分隔\n例：1 2 3 4 5';
+            ? '輸入矩陣，每行一列，數值以空格分隔；含空白的單格可用雙引號\n例：\n1 2 3\n4 5 6\n"two words" 8\n\n或輸入維度建立空矩陣，例：3*5'
+            : '輸入數值，以空格或換行分隔；含空白的單一值可用雙引號\n例：1 2 3 4 5';
         const oldText = el.inputText || '';
         const oldInputIsEmpty = isEmptyDataStructureInput(oldText);
         const originalState = JSON.parse(JSON.stringify(el.serialize()));
@@ -1646,27 +1700,34 @@ class App {
     _showTreeDialog(el, isNew = false) {
         const originalText = el.inputText || '';
         const originalType = el.treeType;
+        const originalMode = el.inputMode || 'auto';
         const originalState = JSON.parse(JSON.stringify(el.serialize()));
         const originalIndex = this.elements.indexOf(el);
         const restoreOriginal = () => this._restoreElementSnapshot(el, originalState, originalIndex);
         this.textInputDialog.show({
             element: el,
             title: '編輯樹',
-            placeholder: '邊列表格式（首行節點數，其後每行：父 子）\n或層序數值列表',
+            placeholder: '競程格式：第一行 N，接著 N-1 行無向邊 u v（節點編號可用 1 到 N，或 0 到 N-1）\n例：\n4\n2 1\n2 3\n4 2\n\n加權樹可輸入 u v w',
             defaultText: originalText,
-            showTypeSelect: false,
+            showTypeSelect: true,
             types: [
+                { value: 'tree', label: '一般樹', selected: el.treeType === 'tree' },
                 { value: 'binary', label: '二元樹', selected: el.treeType === 'binary' },
                 { value: 'bst', label: 'BST', selected: el.treeType === 'bst' },
                 { value: 'avl', label: 'AVL', selected: el.treeType === 'avl' },
-                { value: 'rb', label: '紅黑樹', selected: el.treeType === 'rb' }
+                { value: 'rb', label: '紅黑樹', selected: el.treeType === 'rb' },
+                ...(el.treeType === 'red-black'
+                    ? [{ value: 'red-black', label: '紅黑樹（舊版）', selected: true }]
+                    : []),
+                { value: 'euler', label: 'Euler Tour', selected: el.treeType === 'euler' }
             ],
-            showModeSelect: false,
+            showModeSelect: true,
+            mode: el.inputMode || 'auto',
             onInput: (text, type, mode) => {
                 if (!text.trim()) return;
                 const prevType = el.treeType;
                 if (type) el.treeType = type;
-                el.buildFromText(text, 'rooted');
+                el.buildFromText(text, mode || 'auto');
                 if (!type) el.treeType = prevType;
                 this.renderer.markDirty();
             },
@@ -1684,7 +1745,7 @@ class App {
             },
             onConfirm: (text, type, mode) => {
                 if (type) el.treeType = type;
-                const error = el.buildFromText(text, 'rooted');
+                const error = el.buildFromText(text, mode || 'auto');
                 if (!text.trim() || (el.width === 0 && el.height === 0)) {
                     if (isNew) {
                         this._discardPendingElementCreation(el);
@@ -1714,7 +1775,8 @@ class App {
                     return;
                 }
                 this.toolbar.setTool('select');
-                if (originalText !== text || originalType !== el.treeType) {
+                if (originalText !== text || originalType !== el.treeType ||
+                    originalMode !== el.inputMode) {
                     const newState = JSON.parse(JSON.stringify(el.serialize()));
                     this.history.push({
                         description: 'Edit Tree',
@@ -1754,7 +1816,7 @@ class App {
         this.textInputDialog.show({
             element: el,
             title: '編輯圖',
-            placeholder: '第一行: N M (節點數 邊數)\n之後每行: u v [w]\n例：\n4 5\n1 2\n2 3 7\n3 4\n4 1\n1 3',
+            placeholder: '第一行: N M (節點數、邊數)\n之後每行: u v [邊權重]\n例：\n4 5\n1 2\n2 3 7\n3 4 2\n4 1\n1 3 5',
             defaultText: originalText,
             showDirectedCheckbox: true,
             showZeroBasedCheckbox: true,
@@ -1835,9 +1897,11 @@ class App {
     _editMatrixCell(matrixEl, row, col) {
         if (this._inlineEdit) this._inlineEdit.finish();
         const pad = 10;
-        const cellWorldX = matrixEl.x + pad + col * matrixEl.cellSize;
-        const cellWorldY = matrixEl.y + pad + row * matrixEl.cellSize;
-        const cellScreen = this.camera.worldToScreen(cellWorldX, cellWorldY);
+        const cellCenter = matrixEl.toWorldPoint(
+            matrixEl.x + pad + (col + 0.5) * matrixEl.cellSize,
+            matrixEl.y + pad + (row + 0.5) * matrixEl.cellSize
+        );
+        const cellScreen = this.camera.worldToScreen(cellCenter.x, cellCenter.y);
         const cellSizeScreen = matrixEl.cellSize * this.camera.zoom;
 
         const overlay = document.getElementById('text-edit-overlay');
@@ -1849,8 +1913,9 @@ class App {
         // Style to match the matrix cell exactly (no visible "floating" box)
         const cellColor = matrixEl.color || '#e0e0e0';
         overlay.style.display = 'block';
-        overlay.style.left = cellScreen.x + 'px';
-        overlay.style.top = cellScreen.y + 'px';
+        const canvasRect = this.canvas.getBoundingClientRect();
+        overlay.style.left = `${canvasRect.left + cellScreen.x - cellSizeScreen / 2}px`;
+        overlay.style.top = `${canvasRect.top + cellScreen.y - cellSizeScreen / 2}px`;
         overlay.style.width = cellSizeScreen + 'px';
         overlay.style.height = cellSizeScreen + 'px';
         overlay.style.fontSize = (matrixEl.fontSize * this.camera.zoom) + 'px';
@@ -1862,6 +1927,9 @@ class App {
         overlay.style.fontFamily = 'Consolas, monospace';
         overlay.style.border = `1.5px solid ${cellColor}`;
         overlay.style.boxSizing = 'border-box';
+        overlay.style.transformOrigin = 'center center';
+        overlay.style.transform = matrixEl.rotation ? `rotate(${matrixEl.rotation}rad)` : 'none';
+        overlay.maxLength = MAX_DATA_STRUCTURE_INPUT_LENGTH;
         // Strip full-width space sentinel when entering edit mode
         const rawVal = String(matrixEl.data[row]?.[col] ?? '');
         overlay.value = (rawVal === '' || rawVal === '\u3000') ? '' : rawVal;
@@ -1879,6 +1947,8 @@ class App {
             overlay.style.border = '';
             overlay.style.boxSizing = '';
             overlay.style.textAlign = '';
+            overlay.style.transformOrigin = '';
+            overlay.style.transform = '';
         };
 
         let finished = false;
@@ -1886,11 +1956,17 @@ class App {
             if (finished) return;
             finished = true;
             if (this._inlineEdit?.overlay === overlay) this._inlineEdit = null;
-            const editedValue = overlay.value.trim();
+            const editedValue = overlay.value;
             const originalValue = oldValue == null || oldValue === '\u3000'
                 ? ''
-                : String(oldValue).trim();
-            const newValue = cancelled || originalValue === editedValue ? oldValue : editedValue;
+                : String(oldValue);
+            let newValue = cancelled || originalValue === editedValue ? oldValue : editedValue;
+            if (newValue !== oldValue && inlineDataInputLength(
+                matrixEl, { row, col }, newValue
+            ) > MAX_DATA_STRUCTURE_INPUT_LENGTH) {
+                this._toast('資料總輸入不可超過 1 MB，已保留原值。', 4000);
+                newValue = oldValue;
+            }
             if (matrixEl.data[row]) {
                 matrixEl.data[row][col] = newValue;
                 if (matrixEl.updateTextFromData) matrixEl.updateTextFromData();
@@ -1923,7 +1999,9 @@ class App {
             cancel: () => finishEdit(true)
         };
 
-        overlay.onblur = finishEdit;
+        // The browser passes a FocusEvent to onblur; do not let it be treated
+        // as the boolean cancellation flag accepted by finishEdit.
+        overlay.onblur = () => finishEdit(false);
         overlay.onkeydown = (e) => {
             if (e.key === 'Enter') { e.preventDefault(); overlay.blur(); }
             if (e.key === 'Escape') { e.preventDefault(); finishEdit(true); }
@@ -1937,6 +2015,141 @@ class App {
                 if (nextCol < 0) { nextCol = matrixEl.cols - 1; nextRow--; }
                 if (nextRow >= 0 && nextRow < matrixEl.rows) {
                     this._editMatrixCell(matrixEl, nextRow, nextCol);
+                }
+            }
+        };
+    }
+
+    // ═════════════════════════════════════════════════════
+    // Stack / Queue Item Inline Edit
+    // ═════════════════════════════════════════════════════
+    _editSequenceItem(element, index) {
+        if (!element || !['stack', 'queue'].includes(element.type) ||
+            !Number.isInteger(index) || index < 0 || index >= element.items.length) return;
+        if (this._inlineEdit) this._inlineEdit.finish();
+
+        const overlay = document.getElementById('text-edit-overlay');
+        if (!overlay) return;
+
+        let cell;
+        if (element.type === 'stack') {
+            const visibleCount = Math.min(element.items.length, element.maxDisplay);
+            const firstVisibleIndex = element.items.length - visibleCount;
+            const slot = index - firstVisibleIndex;
+            if (slot < 0 || slot >= visibleCount) return;
+            cell = {
+                x: element.x + 8,
+                y: element.y + element.height - 8 - (slot + 1) * element.cellHeight,
+                width: element.width - 16,
+                height: element.cellHeight
+            };
+        } else {
+            if (index >= element.maxDisplay) return;
+            cell = {
+                x: element.x + 8 + index * element.cellWidth,
+                y: element.y + 8,
+                width: element.cellWidth,
+                height: element.cellWidth
+            };
+        }
+
+        const center = element.toWorldPoint(
+            cell.x + cell.width / 2,
+            cell.y + cell.height / 2
+        );
+        const screen = this.camera.worldToScreen(center.x, center.y);
+        const canvasRect = this.canvas.getBoundingClientRect();
+        const width = cell.width * this.camera.zoom;
+        const height = cell.height * this.camera.zoom;
+        const oldValue = element.items[index];
+        const oldText = oldValue == null || oldValue === '\u3000' ? '' : String(oldValue);
+
+        overlay.style.cssText = '';
+        overlay.className = '';
+        overlay.style.display = 'block';
+        overlay.style.left = `${canvasRect.left + screen.x - width / 2}px`;
+        overlay.style.top = `${canvasRect.top + screen.y - height / 2}px`;
+        overlay.style.width = `${width}px`;
+        overlay.style.height = `${height}px`;
+        overlay.style.boxSizing = 'border-box';
+        overlay.style.padding = '0 3px';
+        overlay.style.textAlign = 'center';
+        overlay.style.lineHeight = `${height}px`;
+        overlay.style.fontFamily = 'Consolas, monospace';
+        overlay.style.fontSize = `${Math.max(8, element.fontSize * this.camera.zoom)}px`;
+        overlay.style.background = 'rgba(50,50,50,0.98)';
+        overlay.style.color = element.color || '#e0e0e0';
+        overlay.style.border = `1.5px solid ${element.color || '#e0e0e0'}`;
+        overlay.style.outline = 'none';
+        overlay.style.transformOrigin = 'center center';
+        overlay.style.transform = element.rotation ? `rotate(${element.rotation}rad)` : 'none';
+        overlay.maxLength = MAX_DATA_STRUCTURE_INPUT_LENGTH;
+        overlay.value = oldText;
+        overlay.focus();
+        overlay.select();
+
+        const applyValue = value => {
+            if (index >= element.items.length) return;
+            element.items[index] = value;
+            element.updateTextFromData();
+            element._updateSize();
+        };
+        let cancelled = false;
+        let finished = false;
+        const finishEdit = () => {
+            if (finished) return;
+            finished = true;
+            if (this._inlineEdit?.overlay === overlay) this._inlineEdit = null;
+            const enteredValue = overlay.value;
+            let newValue = cancelled || enteredValue === oldText ? oldValue : enteredValue;
+            if (newValue !== oldValue && inlineDataInputLength(element, index, newValue) >
+                MAX_DATA_STRUCTURE_INPUT_LENGTH) {
+                this._toast('資料總輸入不可超過 1 MB，已保留原值。', 4000);
+                newValue = oldValue;
+            }
+            applyValue(newValue);
+            overlay.style.display = 'none';
+            overlay.style.transform = '';
+            overlay.onblur = null;
+            overlay.onkeydown = null;
+            if (document.activeElement === overlay) overlay.blur();
+            if (oldValue !== newValue) {
+                this.history.push({
+                    description: `Edit ${element.type} Item`,
+                    undo: () => { applyValue(oldValue); this.renderer.markDirty(); },
+                    redo: () => { applyValue(newValue); this.renderer.markDirty(); }
+                });
+                this._autosave();
+            }
+            this.renderer.markDirty();
+        };
+
+        this._inlineEdit = {
+            element,
+            overlay,
+            finish: finishEdit,
+            cancel: () => {
+                cancelled = true;
+                overlay.value = oldText;
+                finishEdit();
+            }
+        };
+        overlay.onblur = finishEdit;
+        overlay.onkeydown = event => {
+            if (event.key === 'Enter') {
+                event.preventDefault();
+                overlay.blur();
+            } else if (event.key === 'Escape') {
+                event.preventDefault();
+                cancelled = true;
+                overlay.value = oldText;
+                overlay.blur();
+            } else if (event.key === 'Tab') {
+                event.preventDefault();
+                const nextIndex = index + (event.shiftKey ? -1 : 1);
+                finishEdit();
+                if (nextIndex >= 0 && nextIndex < element.items.length) {
+                    this._editSequenceItem(element, nextIndex);
                 }
             }
         };
@@ -1984,6 +2197,7 @@ class App {
         overlay.style.outline = 'none';
         overlay.style.transformOrigin = 'center center';
         overlay.style.transform = treeEl.rotation ? `rotate(${treeEl.rotation}rad)` : 'none';
+        overlay.maxLength = MAX_DATA_STRUCTURE_INPUT_LENGTH;
         overlay.value = String(treeNode.value);
         overlay.focus();
         overlay.select();
@@ -1997,6 +2211,9 @@ class App {
             if (currentNode) treeEl.setNodeValue(currentNode, value);
         };
         const updatePreview = () => {
+            if (overlay.value.length > MAX_DATA_STRUCTURE_INPUT_LENGTH) {
+                overlay.value = overlay.value.slice(0, MAX_DATA_STRUCTURE_INPUT_LENGTH);
+            }
             applyNodeValue(overlay.value);
             this.renderer.markDirty();
         };
@@ -2005,13 +2222,14 @@ class App {
             if (finished) return;
             finished = true;
             if (this._inlineEdit?.overlay === overlay) this._inlineEdit = null;
-            const newValue = cancelled ? oldValue : (overlay.value.trim() || oldValue);
+            const newValue = cancelled || !overlay.value.trim() ? oldValue : overlay.value;
             applyNodeValue(newValue);
             treeEl.isEditingNode = false;
             overlay.style.display = 'none';
             overlay.onblur = null;
             overlay.oninput = null;
             overlay.onkeydown = null;
+            if (document.activeElement === overlay) overlay.blur();
             if (oldValue !== newValue) {
                 this.history.push({
                     description: 'Edit Tree Node',
@@ -2139,6 +2357,7 @@ class App {
             overlay.onblur = null;
             overlay.oninput = null;
             overlay.onkeydown = null;
+            if (document.activeElement === overlay) overlay.blur();
 
             if (!cancelled && !valid) this._toast('邊權重必須是有限數值。');
             if (oldWeight !== newWeight && valid) {
@@ -2229,6 +2448,12 @@ class App {
         return true;
     }
 
+    _finishInlineEditing() {
+        if (!this._inlineEdit) return false;
+        this._inlineEdit.finish?.();
+        return true;
+    }
+
     _dismissPendingDialogsForElement(element) {
         if (!element || this._pendingElementDialogElement !== element) return false;
         this.textInputDialog?.close?.();
@@ -2286,8 +2511,11 @@ class App {
             if (e.key === 'Tab') {
                 e.preventDefault();
                 const s = textarea.selectionStart, end = textarea.selectionEnd;
-                textarea.value = textarea.value.substring(0, s) + '    ' + textarea.value.substring(end);
-                textarea.selectionStart = textarea.selectionEnd = s + 4;
+                const available = Math.max(0, MarkdownElement.MAX_SOURCE_LENGTH -
+                    (textarea.value.length - (end - s)));
+                const indent = ' '.repeat(Math.min(4, available));
+                textarea.value = textarea.value.substring(0, s) + indent + textarea.value.substring(end);
+                textarea.selectionStart = textarea.selectionEnd = s + indent.length;
                 textarea.dispatchEvent(new Event('input'));
             }
         });
@@ -2831,6 +3059,7 @@ class App {
     _startRename(el) {
         const inp = document.getElementById('rename-input');
         if (!inp) return;
+        inp.maxLength = 1024;
         const b = el.getBounds ? el.getBounds() : { x: el.x, y: el.y, w: el.width || 60, h: el.height || 40 };
         const rect = this.canvas.getBoundingClientRect();
         const sp = this.camera.worldToScreen(b.x + b.w / 2, b.y + b.h / 2);

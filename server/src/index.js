@@ -6,7 +6,7 @@ import * as decoding from 'lib0/decoding';
 import { createClerkClient, verifyToken } from '@clerk/backend';
 import { DurableObject } from 'cloudflare:workers';
 import { validateWhiteboardElement } from '../../js/core/WhiteboardElementValidation.js';
-import { TreeParser } from '../../js/tree/TreeParser.js';
+import { MAX_TREE_NODES, TreeParser } from '../../js/tree/TreeParser.js';
 import { authenticateRequest, getAllowedOrigins, getRoomId, isAllowedOrigin } from './auth.mjs';
 import { consumeConnectTicket, handleApiRequest } from './api.mjs';
 
@@ -150,9 +150,23 @@ function validateElement(id, shared) {
 function validateTreeElementSource(data) {
   if (data.inputText === '') return;
   const lines = data.inputText.replace(/\r/g, '').split('\n').map(line => line.trim()).filter(Boolean);
-  let parsed = TreeParser.autoDetectAndParse(data.inputText, data.treeType || 'tree');
-  if (parsed.error) parsed = TreeParser.parseRootedFormat(lines);
-  if (parsed.error || !parsed.root) throw new Error('Tree source cannot be restored.');
+  const inputMode = data.inputMode;
+  let parsed;
+  if (inputMode === undefined) {
+    // Legacy clients wrote parent/child rows without recording a mode. Keep
+    // their original root interpretation, then fall back for older auto input.
+    parsed = TreeParser.parseRootedFormat(lines);
+    if (parsed.error) parsed = TreeParser.autoDetectAndParse(data.inputText, data.treeType || 'tree');
+  } else if (inputMode === 'rooted') parsed = TreeParser.parseRootedFormat(lines);
+  else if (inputMode === 'parent') parsed = TreeParser.parseParentFormat(lines);
+  else if (inputMode === 'edge') parsed = TreeParser.parseEdgeFormat(lines);
+  else if (inputMode === 'values') {
+    const values = data.inputText.replace(/,/g, ' ').trim().split(/\s+/).filter(Boolean);
+    parsed = values.length > MAX_TREE_NODES
+      ? { error: 'Tree input contains too many values.' }
+      : TreeParser._buildByType(values, data.treeType || 'tree');
+  } else parsed = TreeParser.autoDetectAndParse(data.inputText, data.treeType || 'tree');
+  if (parsed?.error || !parsed?.root) throw new Error('Tree source cannot be restored.');
 
   const validPaths = new Set();
   const pending = [{ node: parsed.root, path: 'r' }];

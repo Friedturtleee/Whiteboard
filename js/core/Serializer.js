@@ -20,6 +20,7 @@ const MAX_IMPORTED_TEXT_LENGTH = 1_000_000;
 const MAX_IMPORTED_SVG_LENGTH = 2_000_000;
 const MAX_WORLD_COORDINATE = 100_000_000;
 const MAX_ELEMENT_DIMENSION = 10_000_000;
+const MAX_TEXT_BASE_DIMENSION = 1_000_000_000;
 const MAX_EXPORT_CANVAS_DIMENSION = 16384;
 const MAX_EXPORT_CANVAS_PIXELS = 16_000_000;
 const MIN_CAMERA_ZOOM = 0.45;
@@ -107,7 +108,7 @@ export class Serializer {
     }
 
     /** Validate and build an import off-canvas before replacing the current board. */
-    static loadJSONData(app, data) {
+    static loadJSONData(app, data, { preserveExternalConnections = false } = {}) {
         if (!data || typeof data !== 'object' || !Array.isArray(data.elements)) {
             throw new TypeError('Whiteboard file must contain an elements array.');
         }
@@ -253,6 +254,8 @@ export class Serializer {
                 if (typeof ed.inputText !== 'string' || ed.inputText.length > MAX_IMPORTED_TEXT_LENGTH ||
                     (ed.treeType !== undefined &&
                         !['tree', 'binary', 'bst', 'avl', 'rb', 'red-black', 'euler'].includes(ed.treeType)) ||
+                    (ed.inputMode !== undefined &&
+                        !['auto', 'rooted', 'parent', 'edge', 'values'].includes(ed.inputMode)) ||
                     (ed.nodeRadius !== undefined &&
                         (!Number.isFinite(ed.nodeRadius) || ed.nodeRadius <= 0 || ed.nodeRadius > 10000)) ||
                     (ed.hasWeights !== undefined && typeof ed.hasWeights !== 'boolean') ||
@@ -271,7 +274,8 @@ export class Serializer {
                     ['isBold', 'isItalic', 'isUnderline'].some(field =>
                         ed[field] !== undefined && typeof ed[field] !== 'boolean') ||
                     ['baseWidth', 'baseHeight', '_baseWidth', '_baseHeight'].some(field =>
-                        ed[field] !== undefined && (!Number.isFinite(ed[field]) || ed[field] <= 0))) {
+                        ed[field] !== undefined && (!Number.isFinite(ed[field]) ||
+                            ed[field] <= 0 || ed[field] > MAX_TEXT_BASE_DIMENSION))) {
                     throw new TypeError('Text element contains invalid or oversized text/style data.');
                 }
             } else if (ed.type === 'markdown' &&
@@ -301,12 +305,25 @@ export class Serializer {
             throw new TypeError('Whiteboard file contains invalid camera settings.');
         }
 
-        const importedIds = new Set(importedElements.map(element => element.id));
+        const importedById = new Map(importedElements.map(element => [element.id, element]));
+        const validPortsById = new Map();
+        const hasPort = (elementId, portId) => {
+            const target = importedById.get(elementId);
+            if (!target) return false;
+            let ports = validPortsById.get(elementId);
+            if (!ports) {
+                ports = new Set((target.getConnectionPorts?.() || []).map(port => port.id));
+                validPortsById.set(elementId, ports);
+            }
+            return ports.has(portId);
+        };
         for (const element of importedElements) {
             if (element.shapeType !== 'line' && element.shapeType !== 'arrow') continue;
             for (const endpoint of ['p1', 'p2']) {
                 const connection = element.connections?.[endpoint];
-                if (connection && !importedIds.has(connection.elementId)) {
+                if (connection && preserveExternalConnections &&
+                    !importedById.has(connection.elementId)) continue;
+                if (connection && !hasPort(connection.elementId, connection.portId)) {
                     element.connections[endpoint] = null;
                 }
             }

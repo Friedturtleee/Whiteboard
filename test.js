@@ -725,6 +725,25 @@ try {
         throw new Error('Markdown transparent text-style browser check failed: ' +
             JSON.stringify(markdownAppearance));
     }
+    const markdownTabLimit = await page.evaluate(async () => {
+        const { MarkdownElement } = await import('/js/elements/MarkdownElement.js');
+        const app = window.__whiteboard;
+        const markdown = new MarkdownElement();
+        markdown.markdownText = 'x'.repeat(MarkdownElement.MAX_SOURCE_LENGTH);
+        app._showMarkdownDialog(markdown);
+        const textarea = document.querySelector('.markdown-editor-pane textarea');
+        textarea.setSelectionRange(0, 2);
+        textarea.dispatchEvent(new KeyboardEvent('keydown', {
+            key: 'Tab', bubbles: true, cancelable: true
+        }));
+        const staysWithinSourceLimit = textarea.value.length === MarkdownElement.MAX_SOURCE_LENGTH &&
+            textarea.value.startsWith('  ') && textarea.selectionStart === 2;
+        app._markdownDialogClose?.();
+        return staysWithinSourceLimit;
+    });
+    if (!markdownTabLimit) {
+        throw new Error('Markdown Tab indentation must respect the serialized source limit.');
+    }
     const mermaidLoadCount = await page.evaluate(async () => {
         const { Serializer } = await import('/js/core/Serializer.js');
         const app = {
@@ -861,9 +880,16 @@ try {
         throw new Error('A data-structure delete/undo/redo browser check failed.');
     }
     const inlineEditing = await page.evaluate(async () => {
-        const [{ TreeElement }, { TextElement }] = await Promise.all([
+        const [
+            { TreeElement }, { TextElement }, { MatrixElement }, { StackElement }, { QueueElement },
+            { CloudBoards }
+        ] = await Promise.all([
             import('/js/tree/TreeElement.js'),
-            import('/js/elements/TextElement.js')
+            import('/js/elements/TextElement.js'),
+            import('/js/elements/MatrixElement.js'),
+            import('/js/elements/StackElement.js'),
+            import('/js/elements/QueueElement.js'),
+            import('/js/network/CloudBoards.js')
         ]);
         const app = window.__whiteboard;
         const overlay = document.getElementById('text-edit-overlay');
@@ -875,6 +901,7 @@ try {
         app.selectionManager.select(tree);
         app.history.clear();
         app._editTreeNodeValue(tree, node, 0, 0);
+        const nodeEditorUsesSerializedValueLimit = overlay.maxLength === 1_000_000;
         const style = getComputedStyle(overlay);
         const nodeHasNoEditorFrame = style.borderTopWidth === '0px' &&
             style.backgroundColor === 'rgba(0, 0, 0, 0)';
@@ -922,6 +949,7 @@ try {
             clientX: canvasRect.left + edgeScreenPos.x,
             clientY: canvasRect.top + edgeScreenPos.y
         });
+        const edgeEditorUsesNumericInputLimit = overlay.maxLength === 64;
         const edgeEditorHasNoFrame = getComputedStyle(overlay).borderTopWidth === '0px' &&
             getComputedStyle(overlay).backgroundColor === 'rgba(0, 0, 0, 0)';
         const edgeEditorCentered = Math.abs(
@@ -952,6 +980,196 @@ try {
         app.elements.splice(app.elements.indexOf(edgeTree), 1);
         app.selectionManager.clear();
 
+        const queue = new QueueElement(500, 320);
+        queue.setFromText('front back');
+        app.elements.push(queue);
+        app.layerManager._reindex();
+        app.history.clear();
+        app.toolbar.setTool('select');
+        const queueCell = queue.toWorldPoint(
+            queue.x + 8 + queue.cellWidth + queue.cellWidth / 2,
+            queue.y + queue.height / 2
+        );
+        const queueCellScreen = app.camera.worldToScreen(queueCell.x, queueCell.y);
+        const queueCanvasRect = app.canvas.getBoundingClientRect();
+        app._onDoubleClick({
+            clientX: queueCanvasRect.left + queueCellScreen.x,
+            clientY: queueCanvasRect.top + queueCellScreen.y
+        });
+        const queueEditorOpened = app._inlineEdit?.element === queue;
+        const queueEditorUsesSerializedValueLimit = overlay.maxLength === 1_000_000;
+        overlay.value = 'edited-back';
+        overlay.blur();
+        const queueValueEdited = queue.items[1] === 'edited-back' &&
+            queue.inputText === 'front edited-back';
+        app.history.undo();
+        const queueValueUndo = queue.items[1] === 'back';
+        app.history.redo();
+        const queueValueRedo = queue.items[1] === 'edited-back';
+        const queueSnapshot = queue.serialize();
+        const restoredQueue = QueueElement.fromData(queueSnapshot);
+        restoredQueue.deserialize(queueSnapshot);
+        const queueValueSaveSynced = restoredQueue.items[1] === 'edited-back';
+        app.elements.splice(app.elements.indexOf(queue), 1);
+
+        const whitespaceQueue = new QueueElement(500, 320);
+        whitespaceQueue.setFromText('"  before  "');
+        app.elements.push(whitespaceQueue);
+        app._editSequenceItem(whitespaceQueue, 0);
+        overlay.value = '  after  ';
+        overlay.blur();
+        const sequenceWhitespacePreserved = whitespaceQueue.items[0] === '  after  ' &&
+            whitespaceQueue.inputText === '"  after  "';
+        app.history.undo();
+        const sequenceWhitespaceUndoPreserved = whitespaceQueue.items[0] === '  before  ';
+        app.history.redo();
+        const sequenceWhitespaceRedoPreserved = whitespaceQueue.items[0] === '  after  ';
+        app.elements.splice(app.elements.indexOf(whitespaceQueue), 1);
+
+        const whitespaceStack = new StackElement(500, 320);
+        whitespaceStack.setFromText('"  before  "');
+        app._editSequenceItem(whitespaceStack, 0);
+        overlay.value = '  after  ';
+        overlay.blur();
+        const stackWhitespacePreserved = whitespaceStack.items[0] === '  after  ' &&
+            whitespaceStack.inputText === '"  after  "';
+
+        const pendingQueueEdit = new QueueElement(500, 320);
+        pendingQueueEdit.setFromText('before-switch');
+        app.elements.push(pendingQueueEdit);
+        app._editSequenceItem(pendingQueueEdit, 0);
+        overlay.value = 'committed-before-switch';
+        const previousCloudBoards = app.cloudBoards;
+        const readOnlyTransition = Object.create(CloudBoards.prototype);
+        Object.assign(readOnlyTransition, {
+            app, isReadOnly: true, isCloudBoard: false, connection: null,
+            activeBoard: null, statusOverride: ''
+        });
+        app.cloudBoards = readOnlyTransition;
+        readOnlyTransition._setReadOnly(true);
+        const switchFinishesInlineEdit = pendingQueueEdit.items[0] === 'committed-before-switch' &&
+            overlay.style.display === 'none' && app._inlineEdit === null;
+        readOnlyTransition._setReadOnly(false);
+        app.cloudBoards = previousCloudBoards;
+        app.elements.splice(app.elements.indexOf(pendingQueueEdit), 1);
+
+        const stack = new StackElement(500, 320);
+        stack.setFromText('bottom top');
+        app.elements.push(stack);
+        app.layerManager._reindex();
+        app.history.clear();
+        const stackCell = stack.toWorldPoint(
+            stack.x + stack.width / 2,
+            stack.y + stack.height - 8 - 1.5 * stack.cellHeight
+        );
+        const stackCellScreen = app.camera.worldToScreen(stackCell.x, stackCell.y);
+        const stackCanvasRect = app.canvas.getBoundingClientRect();
+        app._onDoubleClick({
+            clientX: stackCanvasRect.left + stackCellScreen.x,
+            clientY: stackCanvasRect.top + stackCellScreen.y
+        });
+        const stackEditorOpened = app._inlineEdit?.element === stack;
+        const stackEditorUsesSerializedValueLimit = overlay.maxLength === 1_000_000;
+        overlay.value = 'edited-top';
+        overlay.blur();
+        const stackValueEdited = stack.items[1] === 'edited-top' &&
+            stack.inputText === 'bottom edited-top';
+        app.history.undo();
+        const stackValueUndo = stack.items[1] === 'top';
+        app.history.redo();
+        const stackValueRedo = stack.items[1] === 'edited-top';
+        const stackSnapshot = stack.serialize();
+        const restoredStack = StackElement.fromData(stackSnapshot);
+        restoredStack.deserialize(stackSnapshot);
+        const stackValueSaveSynced = restoredStack.items[1] === 'edited-top';
+        app.elements.splice(app.elements.indexOf(stack), 1);
+
+        const rotatedMatrix = new MatrixElement(app.camera.x + 100, app.camera.y + 100);
+        rotatedMatrix.setFromText('1 2\n3 4');
+        rotatedMatrix.rotation = Math.PI / 2;
+        app.elements.push(rotatedMatrix);
+        app.layerManager._reindex();
+        app.toolbar.setTool('select');
+        const expectedMatrixCenter = rotatedMatrix.toWorldPoint(
+            rotatedMatrix.x + 10 + 1.5 * rotatedMatrix.cellSize,
+            rotatedMatrix.y + 10 + 0.5 * rotatedMatrix.cellSize
+        );
+        const expectedMatrixScreen = app.camera.worldToScreen(
+            expectedMatrixCenter.x, expectedMatrixCenter.y
+        );
+        const matrixCanvasRect = app.canvas.getBoundingClientRect();
+        app._onDoubleClick({
+            clientX: matrixCanvasRect.left + expectedMatrixScreen.x,
+            clientY: matrixCanvasRect.top + expectedMatrixScreen.y
+        });
+        const liveCanvasRect = app.canvas.getBoundingClientRect();
+        const rotatedMatrixOverlay = overlay.getBoundingClientRect();
+        const matrixEditorUsesSerializedValueLimit = overlay.maxLength === 1_000_000;
+        const rotatedMatrixInlineEditAligned =
+            Math.abs(rotatedMatrixOverlay.left + rotatedMatrixOverlay.width / 2 -
+                (liveCanvasRect.left + expectedMatrixScreen.x)) < 0.5 &&
+            Math.abs(rotatedMatrixOverlay.top + rotatedMatrixOverlay.height / 2 -
+                (liveCanvasRect.top + expectedMatrixScreen.y)) < 0.5 &&
+            overlay.style.transform.includes('rotate') &&
+            app._inlineEdit?.element === rotatedMatrix;
+        app.history.clear();
+        app._editMatrixCell(rotatedMatrix, 0, 1);
+        overlay.value = '22';
+        overlay.onblur();
+        const matrixCellEdited = rotatedMatrix.data[0][1] === '22' &&
+            rotatedMatrix.inputText === '1 22\n3 4';
+        app.history.undo();
+        const matrixCellUndoSynced = rotatedMatrix.data[0][1] === '2';
+        app.history.redo();
+        const matrixCellRedoSynced = rotatedMatrix.data[0][1] === '22';
+        const savedMatrix = rotatedMatrix.serialize();
+        const restoredMatrix = MatrixElement.fromData(savedMatrix);
+        restoredMatrix.deserialize(savedMatrix);
+        const matrixCellSaveSynced = restoredMatrix.data[0][1] === '22';
+        app.elements.splice(app.elements.indexOf(rotatedMatrix), 1);
+        app.layerManager._reindex();
+
+        const whitespaceMatrix = new MatrixElement(0, 0);
+        whitespaceMatrix.setFromText('"  before  "');
+        app._editMatrixCell(whitespaceMatrix, 0, 0);
+        overlay.value = '  after  ';
+        overlay.blur();
+        const matrixWhitespacePreserved = whitespaceMatrix.data[0][0] === '  after  ' &&
+            whitespaceMatrix.inputText === '"  after  "';
+
+        const oversizedMatrix = new MatrixElement(0, 0);
+        oversizedMatrix.setFromText('1 2');
+        oversizedMatrix.data[0][0] = 'x'.repeat(999_997);
+        oversizedMatrix.updateTextFromData();
+        app.history.clear();
+        app._editMatrixCell(oversizedMatrix, 0, 1);
+        overlay.value = 'xxx';
+        overlay.blur();
+        const matrixInlineLimitKeepsValue = oversizedMatrix.data[0][1] === '2' &&
+            oversizedMatrix.inputText.length === 999_999 && app.history.undoStack.length === 0;
+
+        const oversizedQueue = new QueueElement(0, 0);
+        oversizedQueue.setFromText('x'.repeat(999_998) + ' b');
+        app.history.clear();
+        app._editSequenceItem(oversizedQueue, 1);
+        overlay.value = 'bb';
+        overlay.blur();
+        const sequenceInlineLimitKeepsValue = oversizedQueue.items[1] === 'b' &&
+            oversizedQueue.inputText.length === 1_000_000 && app.history.undoStack.length === 0;
+
+        const escapedQueue = new QueueElement(0, 0);
+        escapedQueue.items = ['x'.repeat(999_000), 'b'];
+        escapedQueue.updateTextFromData();
+        app.history.clear();
+        app._editSequenceItem(escapedQueue, 1);
+        overlay.value = '"'.repeat(1000);
+        overlay.blur();
+        const sequenceEscapedLengthLimitKeepsValue = escapedQueue.items[1] === 'b' &&
+            escapedQueue.inputText.length === 999_002 && app.history.undoStack.length === 0;
+
+        app.history.clear();
+        app.selectionManager.clear();
+
         const text = new TextElement(80, 80);
         text.text = 'before';
         text.autoSize(app.renderer.ctx);
@@ -963,6 +1181,7 @@ try {
         app.elements.push(restoredText);
         app.history.clear();
         app._startTextEditing(restoredText);
+        const textEditorUsesSerializedValueLimit = overlay.maxLength === 1_000_000;
         overlay.value = 'a much longer string';
         overlay.dispatchEvent(new Event('input', { bubbles: true }));
         const textPreviewSynced = restoredText.text === overlay.value &&
@@ -974,23 +1193,301 @@ try {
         app.history.redo();
         const textRedoSynced = restoredText.text === 'a much longer string' &&
             restoredText.width === editedWidth;
+        const textCommitReleasesFocus = document.activeElement !== overlay;
         app.elements.splice(app.elements.indexOf(restoredText), 1);
+        app.history.clear();
+
+        const cancelledTree = new TreeElement(40, 40);
+        cancelledTree.buildFromText('2\n1 2', 'rooted');
+        const cancelledNode = cancelledTree.root.children[0];
+        app._editTreeNodeValue(cancelledTree, cancelledNode, 0, 0);
+        overlay.value = 'discard node value';
+        overlay.dispatchEvent(new Event('input', { bubbles: true }));
+        app._cancelInlineEditForElement(cancelledTree);
+        const treeInlineCancellationReleasesFocus = cancelledNode.value === '2' &&
+            document.activeElement !== overlay;
+
+        const whitespaceTree = new TreeElement(40, 40);
+        whitespaceTree.buildFromText('2\n1 2', 'rooted');
+        const whitespaceNode = whitespaceTree.root.children[0];
+        app._editTreeNodeValue(whitespaceTree, whitespaceNode, 0, 0);
+        overlay.value = '  spaced label  ';
+        overlay.dispatchEvent(new Event('input', { bubbles: true }));
+        overlay.blur();
+        const treeNodeWhitespacePreserved = whitespaceNode.value === '  spaced label  ';
+        app.history.undo();
+        const treeNodeWhitespaceUndoPreserved = whitespaceNode.value === '2';
+        app.history.redo();
+        const treeNodeWhitespaceRedoPreserved = whitespaceNode.value === '  spaced label  ';
+
+        const cancelledText = new TextElement(80, 80);
+        cancelledText.text = 'keep this text';
+        cancelledText.autoSize(app.renderer.ctx);
+        app.elements.push(cancelledText);
+        app.history.clear();
+        app._startTextEditing(cancelledText);
+        overlay.value = 'discard this text';
+        overlay.dispatchEvent(new Event('input', { bubbles: true }));
+        overlay.dispatchEvent(new KeyboardEvent('keydown', {
+            key: 'Escape', bubbles: true, cancelable: true
+        }));
+        const textEscapeCancels = cancelledText.text === 'keep this text' &&
+            app.history.undoStack.length === 0 && overlay.style.display === 'none' &&
+            document.activeElement !== overlay;
+        app.elements.splice(app.elements.indexOf(cancelledText), 1);
         app.history.clear();
         app.renderer.markDirty();
 
         return {
-            nodeHasNoEditorFrame, selectionFrameHidden, selectionFrameRestored,
+            nodeHasNoEditorFrame, nodeEditorUsesSerializedValueLimit,
+            selectionFrameHidden, selectionFrameRestored,
             nodePreviewSynced, nodeCommitSynced,
             nodeUndoSynced, nodeRedoSynced, nodeSaveSynced,
-            edgeEditorHasNoFrame, edgeEditorCentered, edgeSelectionFrameHidden, edgeSelectionFrameRestored,
+            edgeEditorHasNoFrame, edgeEditorCentered, edgeEditorUsesNumericInputLimit,
+            edgeSelectionFrameHidden, edgeSelectionFrameRestored,
             edgePreviewSynced, edgeCommitSynced, edgeUndoSynced, edgeRedoSynced,
-            edgeSaveSynced, textPreviewSynced,
+            edgeSaveSynced, queueEditorOpened, queueEditorUsesSerializedValueLimit,
+            queueValueEdited, queueValueUndo, queueValueRedo, queueValueSaveSynced,
+            sequenceWhitespacePreserved, sequenceWhitespaceUndoPreserved,
+            sequenceWhitespaceRedoPreserved, stackWhitespacePreserved, matrixWhitespacePreserved,
+            treeNodeWhitespacePreserved, treeNodeWhitespaceUndoPreserved,
+            treeNodeWhitespaceRedoPreserved, switchFinishesInlineEdit,
+            stackEditorOpened, stackEditorUsesSerializedValueLimit,
+            stackValueEdited, stackValueUndo, stackValueRedo, stackValueSaveSynced,
+            rotatedMatrixInlineEditAligned, matrixEditorUsesSerializedValueLimit,
+            matrixCellEdited, matrixCellUndoSynced, matrixCellRedoSynced, matrixCellSaveSynced,
+            matrixInlineLimitKeepsValue, sequenceInlineLimitKeepsValue,
+            sequenceEscapedLengthLimitKeepsValue,
+            textEditorUsesSerializedValueLimit, textPreviewSynced, textCommitReleasesFocus,
+            treeInlineCancellationReleasesFocus, textEscapeCancels,
             textUndoSynced, textRedoSynced
         };
     });
     if (Object.values(inlineEditing).some(value => !value)) {
-        throw new Error('An inline tree/text editing synchronization check failed: ' +
+        throw new Error('An inline editing synchronization check failed: ' +
             JSON.stringify(inlineEditing));
+    }
+    const matrixClickCreation = await page.evaluate(() => {
+        const app = window.__whiteboard;
+        const previousDialog = app._showDataStructureDialog;
+        app._showDataStructureDialog = () => {};
+        try {
+            app._startCreating('matrix', 100, 100);
+            const element = app._creatingElement;
+            const setFromText = element.setFromText;
+            let initialGrid = null;
+            element.setFromText = text => {
+                if (text === '') {
+                    initialGrid = { rows: element.rows, cols: element.cols, cellSize: element.cellSize };
+                }
+                return setFromText.call(element, text);
+            };
+            app._finishCreating(100, 100, false);
+            const pointClickCreatesDefaultGrid = initialGrid?.rows === 3 &&
+                initialGrid?.cols === 3 && initialGrid?.cellSize === 42;
+            app.elements.splice(app.elements.indexOf(element), 1);
+            app.history.clear();
+            app.selectionManager.clear();
+            app.layerManager._reindex();
+            app.renderer.markDirty();
+
+            const previousZoom = app.camera.zoom;
+            app.camera.zoom = 0.45;
+            const startWorld = { x: 100, y: 100 };
+            const startScreen = app.camera.worldToScreen(startWorld.x, startWorld.y);
+            app._startCreating('matrix', startWorld.x, startWorld.y, startScreen.x, startScreen.y);
+            const lowZoomElement = app._creatingElement;
+            let lowZoomInitialGrid = null;
+            const lowZoomSetFromText = lowZoomElement.setFromText;
+            lowZoomElement.setFromText = text => {
+                if (text === '') {
+                    lowZoomInitialGrid = {
+                        rows: lowZoomElement.rows,
+                        cols: lowZoomElement.cols,
+                        cellSize: lowZoomElement.cellSize
+                    };
+                }
+                return lowZoomSetFromText.call(lowZoomElement, text);
+            };
+            const endScreen = { x: startScreen.x + 5, y: startScreen.y };
+            const endWorld = app.camera.screenToWorld(endScreen.x, endScreen.y);
+            app._finishCreating(endWorld.x, endWorld.y, false, endScreen.x, endScreen.y);
+            const lowZoomShortMoveStillClicks = lowZoomInitialGrid?.rows === 3 &&
+                lowZoomInitialGrid?.cols === 3 && lowZoomInitialGrid?.cellSize === 42;
+            app.elements.splice(app.elements.indexOf(lowZoomElement), 1);
+            app.history.clear();
+            app.selectionManager.clear();
+
+            app._startCreating('rectangle', startWorld.x, startWorld.y, startScreen.x, startScreen.y);
+            const jitteredRectangle = app._creatingElement;
+            const jitterEndScreen = { x: startScreen.x - 5, y: startScreen.y - 2 };
+            const jitterEndWorld = app.camera.screenToWorld(jitterEndScreen.x, jitterEndScreen.y);
+            app._updateCreating(jitterEndWorld.x, jitterEndWorld.y);
+            app._finishCreating(jitterEndWorld.x, jitterEndWorld.y, false,
+                jitterEndScreen.x, jitterEndScreen.y);
+            const clickJitterPreservesShapeOrigin = jitteredRectangle.x === startWorld.x &&
+                jitteredRectangle.y === startWorld.y && jitteredRectangle.width === 120 &&
+                jitteredRectangle.height === 80;
+            app.elements.splice(app.elements.indexOf(jitteredRectangle), 1);
+            app.history.clear();
+            app.selectionManager.clear();
+            app.layerManager._reindex();
+            app.camera.zoom = previousZoom;
+            app.renderer.markDirty();
+            return {
+                pointClickCreatesDefaultGrid,
+                lowZoomShortMoveStillClicks,
+                clickJitterPreservesShapeOrigin
+            };
+        } finally {
+            app._showDataStructureDialog = previousDialog;
+        }
+    });
+    if (!matrixClickCreation.pointClickCreatesDefaultGrid ||
+        !matrixClickCreation.lowZoomShortMoveStillClicks ||
+        !matrixClickCreation.clickJitterPreservesShapeOrigin) {
+        throw new Error('A point click on the matrix tool should create the default 3 × 3 grid.');
+    }
+    const contestInputDialogs = await page.evaluate(async () => {
+        const [{ TreeElement }, { GraphElement }] = await Promise.all([
+            import('/js/tree/TreeElement.js'),
+            import('/js/graph/GraphElement.js')
+        ]);
+        const app = window.__whiteboard;
+        const tree = new TreeElement(100, 100);
+        app.elements.push(tree);
+        app._showTreeDialog(tree);
+        let dialog = document.querySelector('.modal-overlay');
+        let textarea = dialog?.querySelector('textarea');
+        textarea.value = '4\n2 1\n2 3\n4 2';
+        app.textInputDialog.flushPreview();
+        const treePreview = tree.root?.value === '1' &&
+            tree.root.children[0].value === '2' && tree.root.children[0].children.length === 2;
+        dialog.querySelector('.modal-actions .btn-primary').click();
+        const treeConfirmed = tree.inputMode === 'auto' && tree.root.value === '1' &&
+            tree.root.children[0].children.length === 2;
+        app.elements.splice(app.elements.indexOf(tree), 1);
+
+        const zeroBasedTree = new TreeElement(100, 100);
+        app.elements.push(zeroBasedTree);
+        app._showTreeDialog(zeroBasedTree);
+        dialog = document.querySelector('.modal-overlay');
+        textarea = dialog?.querySelector('textarea');
+        textarea.value = '4\n1 0 2\n1 2\n3 1';
+        app.textInputDialog.flushPreview();
+        const zeroBasedTreePreview = zeroBasedTree.root?.value === '0' &&
+            zeroBasedTree.root.children[0].meta.edgeWeight === '2' &&
+            zeroBasedTree.root.children[0].children.length === 2;
+        dialog.querySelector('.modal-actions .btn-primary').click();
+        const zeroBasedTreeConfirmed = zeroBasedTree.inputMode === 'auto' &&
+            zeroBasedTree.root.value === '0';
+        app.elements.splice(app.elements.indexOf(zeroBasedTree), 1);
+        app.history.clear();
+
+        const modeTree = new TreeElement(80, 80);
+        modeTree.buildFromText('3\n2 1\n2 3', 'auto');
+        app.elements.push(modeTree);
+        app.history.clear();
+        app._showTreeDialog(modeTree);
+        dialog = document.querySelector('.modal-overlay');
+        const modeSelect = dialog?.querySelectorAll('select')[1];
+        modeSelect.value = 'rooted';
+        modeSelect.dispatchEvent(new Event('change', { bubbles: true }));
+        app.textInputDialog.flushPreview();
+        const rootedModePreview = modeTree.inputMode === 'rooted' && modeTree.root.value === '2';
+        dialog.querySelector('.modal-actions .btn-primary').click();
+        const modeOnlyChangeRecorded = app.history.undoStack.at(-1)?.description === 'Edit Tree';
+        app.history.undo();
+        const modeUndoRestoresAuto = modeTree.inputMode === 'auto' && modeTree.root.value === '1';
+        app.history.redo();
+        const modeRedoRestoresRooted = modeTree.inputMode === 'rooted' && modeTree.root.value === '2';
+        app.elements.splice(app.elements.indexOf(modeTree), 1);
+        app.history.clear();
+
+        const typedTree = new TreeElement(80, 80);
+        typedTree.treeType = 'tree';
+        typedTree.buildFromText('4\n2 1\n2 3\n4 2', 'auto');
+        app.elements.push(typedTree);
+        app._showTreeDialog(typedTree);
+        dialog = document.querySelector('.modal-overlay');
+        const treeSelects = dialog?.querySelectorAll('select') || [];
+        const typeSelectorDefaultsToCurrent = treeSelects[0]?.value === 'tree';
+        treeSelects[0].value = 'avl';
+        treeSelects[0].dispatchEvent(new Event('change', { bubbles: true }));
+        app.textInputDialog.flushPreview();
+        const treeTypePreviewWorks = typedTree.treeType === 'avl' && typedTree.root?.value === '1';
+        dialog.querySelector('.modal-actions .btn-primary').click();
+        const treeTypeConfirmWorks = typedTree.treeType === 'avl';
+        app.history.undo();
+        const treeTypeUndoWorks = typedTree.treeType === 'tree';
+        app.elements.splice(app.elements.indexOf(typedTree), 1);
+        app.history.clear();
+
+        const graph = new GraphElement(120, 120);
+        app.elements.push(graph);
+        app._showGraphDialog(graph);
+        dialog = document.querySelector('.modal-overlay');
+        textarea = dialog?.querySelector('textarea');
+        textarea.value = '4 5\n1 2\n2 3 7\n3 4 2\n4 1\n1 3 5';
+        app.textInputDialog.flushPreview();
+        const graphPreview = graph.nodes.size === 4 && graph.edges.length === 5 &&
+            graph.edges[1].w === '7' && graph.edges[4].w === '5';
+        dialog.querySelector('.modal-actions .btn-primary').click();
+        const graphConfirmed = graph.graphMode === 'edge-list' && graph.edges.length === 5 &&
+            graph.edges[2].w === '2';
+        app.elements.splice(app.elements.indexOf(graph), 1);
+        app.history.clear();
+        app.layerManager._reindex();
+        app.renderer.markDirty();
+        return {
+            treePreview, treeConfirmed, zeroBasedTreePreview, zeroBasedTreeConfirmed,
+            rootedModePreview, modeOnlyChangeRecorded,
+            modeUndoRestoresAuto, modeRedoRestoresRooted, typeSelectorDefaultsToCurrent,
+            treeTypePreviewWorks, treeTypeConfirmWorks, treeTypeUndoWorks,
+            graphPreview, graphConfirmed
+        };
+    });
+    if (Object.values(contestInputDialogs).some(value => !value)) {
+        throw new Error('CF/AtCoder tree/graph input dialogs failed: ' + JSON.stringify(contestInputDialogs));
+    }
+    const rotatedGraphEdgePreview = await page.evaluate(async () => {
+        const { GraphElement } = await import('/js/graph/GraphElement.js');
+        const app = window.__whiteboard;
+        const graph = new GraphElement(app.camera.x + 100, app.camera.y + 100);
+        const sourceId = graph.addNode(45, 55);
+        const targetId = graph.addNode(150, 110);
+        const sourceNode = graph.nodes.get(sourceId);
+        const targetNode = graph.nodes.get(targetId);
+        graph.rotation = 0.7;
+        app.elements.push(graph);
+        app.selectionManager.clear();
+        app.layerManager._reindex();
+        const sourceWorld = graph.toWorldPoint(
+            graph.x + 20 + sourceNode.x,
+            graph.y + 20 + sourceNode.y
+        );
+        app._handleSelectDown(sourceWorld.x, sourceWorld.y, {
+            altKey: true, shiftKey: false, ctrlKey: false, metaKey: false
+        });
+        const previewStartsAtSource = Math.hypot(
+            app._edgePreview.x1 - sourceWorld.x,
+            app._edgePreview.y1 - sourceWorld.y
+        ) < 1e-7;
+        const targetWorld = graph.toWorldPoint(
+            graph.x + 20 + targetNode.x,
+            graph.y + 20 + targetNode.y
+        );
+        app._finishEdgeCreation(targetWorld.x, targetWorld.y);
+        const edgeCreatedAtRotatedTarget = graph.edges.length === 1 &&
+            graph.edges[0].u === sourceId && graph.edges[0].v === targetId;
+        app.elements.splice(app.elements.indexOf(graph), 1);
+        app.history.clear();
+        app.layerManager._reindex();
+        app.renderer.markDirty();
+        return { previewStartsAtSource, edgeCreatedAtRotatedTarget };
+    });
+    if (Object.values(rotatedGraphEdgePreview).some(value => !value)) {
+        throw new Error('Rotated graph edge creation failed: ' + JSON.stringify(rotatedGraphEdgePreview));
     }
     const pointerCaptureCancellation = await page.evaluate(() => {
         const app = window.__whiteboard;

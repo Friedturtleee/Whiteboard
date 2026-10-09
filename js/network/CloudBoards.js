@@ -347,18 +347,26 @@ export class CloudBoards {
         if (title === null) return;
         const trimmed = title.trim();
         if (!trimmed || trimmed.length > 80) return this._showError(new Error('名稱需為 1 到 80 個字元。'));
+        const wasCloudBoard = this.isCloudBoard;
+        const originalBoardId = this.activeBoard?.id || null;
+        const previousReadOnly = this.isCloudBoard
+            ? this.activeBoard?.role === 'viewer'
+            : this.isReadOnly;
         let createdBoard = null;
         let createdBoardToken = null;
         try {
+            this.app._finishInlineEditing?.();
+            this.app._finishTextEditing();
+            this.app._dismissPendingDialogs?.();
+            this.isReadOnly = true;
+            this._setReadOnly(true);
             const clerk = await this._loadClerk();
             const ownerUserId = clerk.user?.id;
             const identityRevision = this.clerkIdentityRevision;
             if (!ownerUserId) throw new Error('請先登入帳號。');
-            this.app._finishTextEditing();
-            this.app._dismissPendingDialogs?.();
             const seedData = this._snapshot();
             clearTimeout(this.syncTimer);
-            if (this.connection && !this.isReadOnly && !await this.connection.flush()) {
+            if (this.connection && !previousReadOnly && !await this.connection.flush()) {
                 throw new Error('雲端尚未確認最後的修改；同步完成前不會建立新的雲端副本。');
             }
             const ownerToken = await this._token();
@@ -387,6 +395,11 @@ export class CloudBoards {
                     error.message = `${error.message}；新白板的清理尚未完成：${cleanupError.message}`;
                 }
             }
+            if (this.isCloudBoard === wasCloudBoard &&
+                (!wasCloudBoard || this.activeBoard?.id === originalBoardId)) {
+                this.isReadOnly = previousReadOnly;
+                this._setReadOnly(previousReadOnly);
+            }
             this._showError(error);
         }
     }
@@ -409,87 +422,108 @@ export class CloudBoards {
         if (requestedUserId && this._hasCloudRecoveryDraft(requestedUserId, board.id)) {
             throw new Error('這份白板有未同步復原草稿；請先在雲端面板下載 JSON 或清除草稿，再開啟雲端版本。');
         }
-        this.app._finishTextEditing();
-        this.app._dismissPendingDialogs?.();
-        this.app._flushAutosave?.();
-        const identityRevision = this.clerkIdentityRevision;
-        this.statusOverride = '';
-        const seedData = options.seedData?.seedData ?? options.seedData ?? null;
-        let preferredCamera = null;
-        if (!seedData) {
-            try {
-                const cached = JSON.parse(localStorage.getItem(
-                    this._cloudCacheKey(this.clerk?.user?.id || 'guest', board.id)
-                ) || 'null');
-                if (cached?.camera) preferredCamera = cached.camera;
-            } catch {}
-        }
-        const firstCloudBoard = !this.isCloudBoard;
-        if (firstCloudBoard) {
-            this.localAutosaveKey = this.app.autosaveKey;
-            this.localSnapshot = this._snapshot();
-        }
-        clearTimeout(this.syncTimer);
-        if (this.connection && !this.isReadOnly && !await this.connection.flush()) {
-            throw new Error('雲端尚未確認最後的修改；目前連線不穩，請先恢復同步或匯出資料後再切換白板。');
-        }
-        if (!isCurrentOpen()) return false;
-        // Tickets expire quickly. Request one only after the previous board has
-        // finished flushing, so a large board cannot consume its lifetime.
-        const connection = options.shareToken
-            ? await this._api('/api/share/access', {
-                method: 'POST', auth: false, body: { token: options.shareToken }
-            })
-            : existingTicket
-                ? { board, ticket: existingTicket }
-                : await this._api(`/api/boards/${board.id}/connect-ticket`, { method: 'POST', body: {} });
-        if (!isCurrentOpen()) return false;
-        if (!options.shareToken && (!requestedUserId ||
-            this.clerkIdentityRevision !== identityRevision || this.clerk?.user?.id !== requestedUserId)) {
-            throw new Error('登入帳號在開啟白板期間已變更；為保護資料，請重新選取白板。');
-        }
-        if (connection.board.id !== board.id) throw new Error('分享連結與白板不相符。');
-        const { BoardCollaboration } = await import('./BoardCollaboration.js');
-        if (!isCurrentOpen()) return false;
-        if (!options.shareToken && (this.clerkIdentityRevision !== identityRevision ||
-            this.clerk?.user?.id !== requestedUserId)) return false;
-        clearTimeout(this.reconnectTimer);
-        this.connection?.disconnect();
-        this.connection = null;
-        this.activeBoard = { ...connection.board, id: board.id, role: connection.board.role || board.role };
-        this.guestShareToken = options.shareToken || null;
-        this.activeUserId = requestedUserId;
-        this.isCloudBoard = true;
-        this.isReadOnly = this.activeBoard.role === 'viewer';
-        this.app.autosaveKey = this._cloudCacheKey(requestedUserId || 'guest', board.id);
-        this._setReadOnly(this.isReadOnly);
-        this.app._skipAutosave = true;
-        this.app.elements = [];
-        this.app.selectionManager.clear();
-        this.app.history.clear();
-        this.app.camera.zoom = 1.5;
-        this.app._initCamera();
-        this.app._updateZoomDisplay();
-        this.app.layerManager._reindex();
-        this.app.propertyPanel.update();
-        this.app.layerPanel.update();
-        this.app.renderer.markDirty();
-        this.app._skipAutosave = false;
+        const previousReadOnly = this.isCloudBoard
+            ? this.activeBoard?.role === 'viewer'
+            : this.isReadOnly;
+        let transitionCommitted = false;
         try {
-            this.connection = new BoardCollaboration(this.app, {
-                apiBaseUrl: this.config.apiBaseUrl,
-                board: this.activeBoard,
-                ticket: connection.ticket,
-                seedData: seedData?.elements ? seedData : null,
-                preferredCamera
-            });
-            this.updateUndoControls();
-            this._renderStatus();
-            if (this.modal && !this.modal.hidden) this._renderPanel().catch(error => this._showError(error));
-            return true;
+            this.app._finishInlineEditing?.();
+            this.app._finishTextEditing();
+            this.app._dismissPendingDialogs?.();
+            this.app._flushAutosave?.();
+            this.isReadOnly = true;
+            this._setReadOnly(true);
+            const identityRevision = this.clerkIdentityRevision;
+            this.statusOverride = '';
+            const seedData = options.seedData?.seedData ?? options.seedData ?? null;
+            let preferredCamera = null;
+            if (!seedData) {
+                try {
+                    const cached = JSON.parse(localStorage.getItem(
+                        this._cloudCacheKey(this.clerk?.user?.id || 'guest', board.id)
+                    ) || 'null');
+                    if (cached?.camera) preferredCamera = cached.camera;
+                } catch {}
+            }
+            const firstCloudBoard = !this.isCloudBoard;
+            if (firstCloudBoard) {
+                this.localAutosaveKey = this.app.autosaveKey;
+                this.localSnapshot = this._snapshot();
+            }
+            clearTimeout(this.syncTimer);
+            if (this.connection && !previousReadOnly && !await this.connection.flush()) {
+                throw new Error('雲端尚未確認最後的修改；目前連線不穩，請先恢復同步或匯出資料後再切換白板。');
+            }
+            if (!isCurrentOpen()) return false;
+            // Tickets expire quickly. Request one only after the previous board has
+            // finished flushing, so a large board cannot consume its lifetime.
+            const connection = options.shareToken
+                ? await this._api('/api/share/access', {
+                    method: 'POST', auth: false, body: { token: options.shareToken }
+                })
+                : existingTicket
+                    ? { board, ticket: existingTicket }
+                    : await this._api(`/api/boards/${board.id}/connect-ticket`, { method: 'POST', body: {} });
+            if (!isCurrentOpen()) return false;
+            if (!options.shareToken && (!requestedUserId ||
+                this.clerkIdentityRevision !== identityRevision || this.clerk?.user?.id !== requestedUserId)) {
+                throw new Error('登入帳號在開啟白板期間已變更；為保護資料，請重新選取白板。');
+            }
+            if (connection.board.id !== board.id) throw new Error('分享連結與白板不相符。');
+            const { BoardCollaboration } = await import('./BoardCollaboration.js');
+            if (!isCurrentOpen()) return false;
+            if (!options.shareToken && (this.clerkIdentityRevision !== identityRevision ||
+                this.clerk?.user?.id !== requestedUserId)) return false;
+            transitionCommitted = true;
+            clearTimeout(this.reconnectTimer);
+            this.connection?.disconnect();
+            this.connection = null;
+            this.activeBoard = { ...connection.board, id: board.id, role: connection.board.role || board.role };
+            this.guestShareToken = options.shareToken || null;
+            this.activeUserId = requestedUserId;
+            this.isCloudBoard = true;
+            this.isReadOnly = true;
+            this.app.autosaveKey = this._cloudCacheKey(requestedUserId || 'guest', board.id);
+            const previousSkipAutosave = this.app._skipAutosave;
+            this.app._skipAutosave = true;
+            try {
+                this.app.elements = [];
+                this.app.selectionManager.clear();
+                this.app.history.clear();
+                this.app.camera.zoom = 1.5;
+                this.app._initCamera();
+                this.app._updateZoomDisplay();
+                this.app.layerManager._reindex();
+                this.app.propertyPanel.update();
+                this.app.layerPanel.update();
+                this.app.renderer.markDirty();
+            } finally {
+                this.app._skipAutosave = previousSkipAutosave;
+            }
+            try {
+                this.connection = new BoardCollaboration(this.app, {
+                    apiBaseUrl: this.config.apiBaseUrl,
+                    board: this.activeBoard,
+                    ticket: connection.ticket,
+                    seedData: seedData?.elements ? seedData : null,
+                    preferredCamera
+                });
+                this.isReadOnly = this.activeBoard.role === 'viewer';
+                this._setReadOnly(this.isReadOnly);
+                this.updateUndoControls();
+                this._renderStatus();
+                if (this.modal && !this.modal.hidden) this._renderPanel().catch(error => this._showError(error));
+                return true;
+            } catch (error) {
+                this.statusOverride = '連線無法啟動；本機白板仍可從「返回本機白板」取回。';
+                this._showError(error);
+                throw error;
+            }
         } catch (error) {
-            this.statusOverride = '連線無法啟動；本機白板仍可從「返回本機白板」取回。';
-            this._showError(error);
+            if (!transitionCommitted && isCurrentOpen()) {
+                this.isReadOnly = previousReadOnly;
+                this._setReadOnly(previousReadOnly);
+            }
             throw error;
         }
     }
@@ -608,13 +642,50 @@ export class CloudBoards {
             !confirm('這份白板包含未確認保存的舊帳號編輯。請先匯出 JSON；確定要返回本機並離開此復原畫面嗎？')) {
             return false;
         }
+        const previousReadOnly = this.isCloudBoard
+            ? this.activeBoard?.role === 'viewer'
+            : this.isReadOnly;
+        this.app._finishInlineEditing?.();
         this.app._finishTextEditing();
         this.app._dismissPendingDialogs?.();
         this.app._flushAutosave?.();
+        this.isReadOnly = true;
+        this._setReadOnly(true);
+        const restoreEditAccess = () => {
+            this.isReadOnly = previousReadOnly;
+            this._setReadOnly(previousReadOnly);
+        };
         clearTimeout(this.syncTimer);
-        if (!skipFlush && this.connection && !this.isReadOnly && this.connection.status !== 'revoked' &&
-            !await this.connection.flush()) {
+        let acknowledged = true;
+        try {
+            if (!skipFlush && this.connection && !previousReadOnly &&
+                this.connection.status !== 'revoked') {
+                acknowledged = await this.connection.flush();
+            }
+        } catch (error) {
+            restoreEditAccess();
+            throw error;
+        }
+        if (!acknowledged) {
+            restoreEditAccess();
             throw new Error('雲端尚未確認最後的修改；請先恢復同步或匯出資料後再返回本機。');
+        }
+        // Restore and validate the local snapshot before disconnecting. Import
+        // builds off-canvas, so a damaged snapshot leaves the cloud board intact.
+        const previousAutosaveKey = this.app.autosaveKey;
+        const localAutosaveKey = this.localAutosaveKey || 'cp_whiteboard_autosave_whiteboard';
+        const previousSkipAutosave = this.app._skipAutosave;
+        this.app._skipAutosave = true;
+        this.app.autosaveKey = localAutosaveKey;
+        try {
+            if (this.localSnapshot) Serializer.loadJSONData(this.app, this.localSnapshot);
+            else this.app._tryLoadAutosave();
+        } catch (error) {
+            this.app.autosaveKey = previousAutosaveKey;
+            restoreEditAccess();
+            throw error;
+        } finally {
+            this.app._skipAutosave = previousSkipAutosave;
         }
         clearTimeout(this.reconnectTimer);
         this.connection?.disconnect();
@@ -627,11 +698,6 @@ export class CloudBoards {
         this.accountRecoveryPending = false;
         this.statusOverride = '';
         this._setReadOnly(false);
-        this.app.autosaveKey = this.localAutosaveKey || 'cp_whiteboard_autosave_whiteboard';
-        this.app._skipAutosave = true;
-        if (this.localSnapshot) Serializer.loadJSONData(this.app, this.localSnapshot);
-        else this.app._tryLoadAutosave();
-        this.app._skipAutosave = false;
         this.app._refreshUI();
         this.localSnapshot = null;
         this.localAutosaveKey = null;
@@ -728,6 +794,7 @@ export class CloudBoards {
     _setReadOnly(readOnly, { commitPendingMarkdown = false, preservePendingEdits = false } = {}) {
         document.body.classList.toggle('wb-cloud-readonly', readOnly);
         if (readOnly) {
+            this.app._finishInlineEditing?.();
             this.app._cancelPointerInteraction?.(this.app._activePointerId ?? null, {
                 preserveCreatedElements: preservePendingEdits
             });

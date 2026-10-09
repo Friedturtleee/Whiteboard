@@ -4,6 +4,8 @@
  */
 import { Element } from '../core/Element.js';
 
+const MAX_ELEMENT_DIMENSION = 10_000_000;
+
 export class TextElement extends Element {
     constructor(x = 0, y = 0) {
         super('text', x, y, 100, 24);
@@ -93,8 +95,8 @@ export class TextElement extends Element {
         
         this._baseWidth = newBaseW;
         this._baseHeight = newBaseH;
-        this.width = newBaseW * oldScaleX;
-        this.height = newBaseH * oldScaleY;
+        this.width = Math.min(MAX_ELEMENT_DIMENSION, newBaseW * oldScaleX);
+        this.height = Math.min(MAX_ELEMENT_DIMENSION, newBaseH * oldScaleY);
     }
 
     serialize() {

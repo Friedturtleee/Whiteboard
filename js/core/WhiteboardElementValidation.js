@@ -3,6 +3,7 @@ const MAX_IMPORTED_SVG_LENGTH = 2_000_000;
 const MAX_IMPORTED_PEN_POINTS = 100_000;
 const MAX_WORLD_COORDINATE = 100_000_000;
 const MAX_ELEMENT_DIMENSION = 10_000_000;
+const MAX_TEXT_BASE_DIMENSION = 1_000_000_000;
 
 function isSafeDisplayValue(value) {
     return value === null || typeof value === 'boolean' ||
@@ -169,6 +170,7 @@ export function validateWhiteboardElement(ed) {
     } else if (ed.type === 'tree') {
         if (typeof ed.inputText !== 'string' || ed.inputText.length > MAX_IMPORTED_TEXT_LENGTH ||
             (ed.treeType !== undefined && !['tree', 'binary', 'bst', 'avl', 'rb', 'red-black', 'euler'].includes(ed.treeType)) ||
+            (ed.inputMode !== undefined && !['auto', 'rooted', 'parent', 'edge', 'values'].includes(ed.inputMode)) ||
             (ed.nodeRadius !== undefined && (!Number.isFinite(ed.nodeRadius) || ed.nodeRadius <= 0 || ed.nodeRadius > 10000)) ||
             (ed.hasWeights !== undefined && typeof ed.hasWeights !== 'boolean') ||
             ['_relOffsetX', '_relOffsetY'].some(field => ed[field] !== undefined &&
@@ -185,7 +187,7 @@ export function validateWhiteboardElement(ed) {
             ['isBold', 'isItalic', 'isUnderline'].some(field => ed[field] !== undefined && typeof ed[field] !== 'boolean') ||
             ['baseWidth', 'baseHeight', '_baseWidth', '_baseHeight'].some(field =>
                 ed[field] !== undefined && (!Number.isFinite(ed[field]) ||
-                    ed[field] <= 0 || ed[field] > MAX_ELEMENT_DIMENSION))) {
+                    ed[field] <= 0 || ed[field] > MAX_TEXT_BASE_DIMENSION))) {
             throw new TypeError('Text element contains invalid or oversized text/style data.');
         }
     } else if (ed.type === 'markdown') {

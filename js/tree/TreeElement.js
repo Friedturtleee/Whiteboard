@@ -15,23 +15,28 @@ export class TreeElement extends Element {
         this.root = null;
         this.nodeRadius = 18;
         this.inputText = '';
+        this.inputMode = 'auto';
         this.label = 'Tree';
         this.hasWeights = false;
         this._nodeValueOverrides = {};
         this._edgeWeightOverrides = {};
+        this._nodePortIdsByPath = new Map();
         this._draggingNode = null;
     }
 
     /**
      * Build tree from text input.
      * @param {string} text
-     * @param {string} mode - 'auto' (auto-detect) | 'parent' | 'edge' | 'values'
+     * @param {string} mode - 'auto' | 'rooted' | 'parent' | 'edge' | 'values'
      * @returns {string|null} error message if validation fails, null on success
      */
     buildFromText(text, mode = 'auto') {
         const input = String(text ?? '');
         if (input.length > MAX_TREE_INPUT_LENGTH) {
             return '樹資料不可超過 1 MB。';
+        }
+        if (!['auto', 'rooted', 'parent', 'edge', 'values'].includes(mode)) {
+            return '未知的樹輸入格式。';
         }
         let result;
 
@@ -58,7 +63,7 @@ export class TreeElement extends Element {
             }
             if (this.treeType === 'avl') {
                 result = TreeParser.buildAVL(values);
-            } else if (this.treeType === 'rb') {
+            } else if (this.treeType === 'rb' || this.treeType === 'red-black') {
                 result = TreeParser.buildRBTree(values);
             } else {
                 result = TreeParser.buildBST(values);
@@ -69,7 +74,9 @@ export class TreeElement extends Element {
         if (!result?.root) return input.trim() ? '無法建立樹，請檢查輸入格式。' : null;
 
         this.root = result.root;
+        this._nodePortIdsByPath = this._captureNodePortIds(this.root);
         this.inputText = input;
+        this.inputMode = mode;
         this.hasWeights = result.hasWeights || false;
         this._nodeValueOverrides = {};
         this._edgeWeightOverrides = {};
@@ -156,6 +163,10 @@ export class TreeElement extends Element {
     }
 
     containsPoint(wx, wy, camera) {
+        // A hit inside the selection bounds is already definitive. This
+        // avoids walking a large tree on every pointer move over its body.
+        if (super.containsPoint(wx, wy, camera)) return true;
+
         const point = this.toLocalPoint(wx, wy);
         // First check node hit
         if (this.root) {
@@ -174,8 +185,7 @@ export class TreeElement extends Element {
             });
             if (hitEdge) return true;
         }
-        // Fallback to bounding box
-        return super.containsPoint(wx, wy, camera);
+        return false;
     }
 
     /**
@@ -219,7 +229,8 @@ export class TreeElement extends Element {
             visited.add(node);
             const point = this.toWorldPoint(offsetX + node.x, offsetY + node.y);
             const legacyId = `node_${node.value}`;
-            const id = usedPortIds.has(legacyId) ? `tree@${path}` : legacyId;
+            const id = this._nodePortIdsByPath.get(path) ||
+                (usedPortIds.has(legacyId) ? `tree@${path}` : legacyId);
             usedPortIds.add(id);
             ports.push({ id, x: point.x, y: point.y });
             for (let index = (node.children?.length || 0) - 1; index >= 0; index--) {
@@ -227,6 +238,26 @@ export class TreeElement extends Element {
             }
         }
         return ports;
+    }
+
+    _captureNodePortIds(root) {
+        const idsByPath = new Map();
+        const usedPortIds = new Set();
+        const pending = root ? [{ node: root, path: 'r' }] : [];
+        const visited = new Set();
+        while (pending.length) {
+            const { node, path } = pending.pop();
+            if (!node || node.value === null || visited.has(node)) continue;
+            visited.add(node);
+            const legacyId = `node_${node.value}`;
+            const id = usedPortIds.has(legacyId) ? `tree@${path}` : legacyId;
+            usedPortIds.add(id);
+            idsByPath.set(path, id);
+            for (let index = (node.children?.length || 0) - 1; index >= 0; index--) {
+                pending.push({ node: node.children[index], path: `${path}.${index}` });
+            }
+        }
+        return idsByPath;
     }
 
     moveNodes(dx, dy) {
@@ -424,6 +455,7 @@ export class TreeElement extends Element {
             treeType: this.treeType,
             nodeRadius: this.nodeRadius,
             inputText: this.inputText,
+            inputMode: this.inputMode,
             hasWeights: this.hasWeights,
             nodeValueOverrides: { ...this._nodeValueOverrides },
             edgeWeightOverrides: { ...this._edgeWeightOverrides },
@@ -437,6 +469,7 @@ export class TreeElement extends Element {
         // Reused elements (especially those updated by remote sync) must not
         // keep nodes or offsets from an older snapshot when the source is empty.
         this.root = null;
+        this._nodePortIdsByPath = new Map();
         this._offsetX = undefined;
         this._offsetY = undefined;
         const nodeValueOverrides = data.nodeValueOverrides || {};
@@ -450,16 +483,25 @@ export class TreeElement extends Element {
         this.treeType = data.treeType || 'tree';
         this.nodeRadius = data.nodeRadius || 18;
         this.inputText = data.inputText || '';
+        this.inputMode = data.inputMode || 'auto';
+        if (!['auto', 'rooted', 'parent', 'edge', 'values'].includes(this.inputMode)) {
+            throw new TypeError('Saved tree input mode is invalid.');
+        }
         this.hasWeights = data.hasWeights || false;
         this._relOffsetX = data._relOffsetX;
         this._relOffsetY = data._relOffsetY;
         // Rebuild tree from saved text
         if (this.inputText) {
-            let error = this.buildFromText(this.inputText, 'auto');
-            // New editor entries use explicit rooted input regardless of the
-            // display subtype; older auto-detection only recognized this form
-            // for the generic tree type.
-            if (error) error = this.buildFromText(this.inputText, 'rooted');
+            let error;
+            if (data.inputMode === undefined) {
+                // Before the mode selector was saved, the editor wrote rooted
+                // parent/child rows. Prefer that interpretation when valid so
+                // undirected auto-detection cannot silently change the root.
+                error = this.buildFromText(this.inputText, 'rooted');
+                if (error) error = this.buildFromText(this.inputText, 'auto');
+            } else {
+                error = this.buildFromText(this.inputText, this.inputMode);
+            }
             if (error) throw new TypeError('Saved tree data is invalid: ' + error);
             // Restore relative offsets
             if (data._relOffsetX !== undefined) {

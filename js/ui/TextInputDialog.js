@@ -112,14 +112,17 @@ export class TextInputDialog {
             modeSelect = document.createElement('select');
             modeSelect.style.marginBottom = '8px';
             const modes = [
-                { value: 'auto',   label: '自動偵測格式' },
-                { value: 'edge',   label: '邊列表 (每行: 父 子)' },
-                { value: 'values', label: '層序數值列表 (自動建樹)' }
+                { value: 'auto',   label: '自動偵測（CP 樹：N，接 N-1 條無向邊）' },
+                { value: 'rooted', label: '有根邊列表（N，接 父 子）' },
+                { value: 'parent', label: '父節點陣列' },
+                { value: 'edge',   label: '無標頭邊列表（每行：u v [權重]）' },
+                { value: 'values', label: '數值列表（依樹類型建立）' }
             ];
             for (const m of modes) {
                 const opt = document.createElement('option');
                 opt.value = m.value;
                 opt.textContent = m.label;
+                if (m.value === opts.mode) opt.selected = true;
                 modeSelect.appendChild(opt);
             }
             dialog.appendChild(modeSelect);

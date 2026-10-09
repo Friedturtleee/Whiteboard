@@ -1,7 +1,11 @@
 /**
  * TreeParser — parses text input into a tree structure.
  *
- * Format R (rooted, default for 'tree' type):
+ * Contest format (default):
+ *   First line: n (number of nodes)
+ *   Next n-1 lines: u v [edge_weight] (undirected edges; IDs 1..n or 0..n-1)
+ *
+ * Format R (explicit rooted input):
  *   First line: n (number of nodes)
  *   Next n-1 lines: parent child [edge_weight]
  *   The optional weight belongs to the parent-child edge.
@@ -47,13 +51,13 @@ export class TreeParser {
 
         const tokenCounts = lines.map(l => l.split(/\s+/).length);
 
-        // For generic 'tree' (and 'euler') type: use rooted format
-        // Detection: first line is a single integer N, rest are 2-3 token edge lines
-        if (treeType === 'tree' || treeType === 'euler') {
-            if (tokenCounts[0] === 1 && /^\d+$/.test(lines[0])
-                && (lines.length === 1 || tokenCounts.slice(1).every(c => c >= 2 && c <= 3))) {
-                return TreeParser.parseRootedFormat(lines);
-            }
+        // Competitive-programming tree input is N followed by N-1 undirected
+        // edges. Root the visual tree at the first ID (0 or 1), regardless of
+        // edge direction.
+        // The explicit rooted parser remains available for older saved input.
+        if (tokenCounts[0] === 1 && /^\d+$/.test(lines[0]) &&
+            (lines.length === 1 || tokenCounts.slice(1).some(count => count >= 2))) {
+            return TreeParser.parseContestFormat(lines);
         }
 
         // Single line with multiple values → value list for auto-build
@@ -80,6 +84,115 @@ export class TreeParser {
 
         // Mixed token counts → try edge format
         return TreeParser.parseEdgeFormat(lines);
+    }
+
+    /**
+     * Parse the common Codeforces/AtCoder tree format: N, then N-1 lines
+     * containing an undirected edge u v [weight]. Node IDs are either 1..N or
+     * 0..N-1; if zero appears, it is the visual root.
+     */
+    static parseContestFormat(lines) {
+        const invalid = error => ({
+            root: null, nodes: new Map(), error, hasWeights: false, format: 'contest'
+        });
+        if (!Array.isArray(lines) || lines.length === 0) {
+            return invalid('請輸入節點數與樹的邊資料。');
+        }
+
+        const header = String(lines[0]).trim();
+        const n = Number(header);
+        if (!/^\d+$/.test(header) || !Number.isSafeInteger(n) || n <= 0) {
+            return invalid('第一行應為正整數節點數 n。');
+        }
+        if (n > MAX_TREE_NODES) {
+            return invalid('節點數不可超過 ' + MAX_TREE_NODES + '。');
+        }
+        if (lines.length !== n) {
+            return invalid('節點數為 ' + n + ' 時，後續必須恰好提供 ' + (n - 1) + ' 條邊。');
+        }
+
+        // AtCoder inputs sometimes number vertices from 0. Since vertex 0
+        // cannot occur in a valid 1-based tree, use it as an unambiguous base
+        // marker and otherwise keep the conventional 1-based root.
+        const startId = lines.slice(1).some(line =>
+            String(line).trim().split(/\s+/).slice(0, 2)
+                .some(token => /^\d+$/.test(token) && Number(token) === 0)
+        ) ? 0 : 1;
+        const nodes = new Map();
+        const adjacency = new Map();
+        const seenEdges = new Set();
+        let hasWeights = false;
+        for (let id = startId; id < startId + n; id++) {
+            const key = String(id);
+            nodes.set(key, { value: key, children: [], parent: null, x: 0, y: 0, meta: {} });
+            adjacency.set(key, []);
+        }
+
+        for (let i = 1; i < lines.length; i++) {
+            const parts = String(lines[i]).trim().split(/\s+/);
+            if (parts.length < 2 || parts.length > 3) {
+                return invalid('第 ' + (i + 1) + ' 行格式應為：節點 u 節點 v [邊權重]。');
+            }
+            if (!/^\d+$/.test(parts[0]) || !/^\d+$/.test(parts[1])) {
+                return invalid('第 ' + (i + 1) + ' 行的節點編號必須是非負整數。');
+            }
+            const uNumber = Number(parts[0]);
+            const vNumber = Number(parts[1]);
+            if (!Number.isSafeInteger(uNumber) || !Number.isSafeInteger(vNumber) ||
+                uNumber < startId || uNumber >= startId + n ||
+                vNumber < startId || vNumber >= startId + n) {
+                return invalid('第 ' + (i + 1) + ' 行的節點編號必須介於 ' + startId +
+                    ' 和 ' + (startId + n - 1) + '。');
+            }
+            if (uNumber === vNumber) {
+                return invalid('第 ' + (i + 1) + ' 行不能是自我連結。');
+            }
+            const u = String(uNumber);
+            const v = String(vNumber);
+            const edgeKey = JSON.stringify([u, v].sort((a, b) => Number(a) - Number(b)));
+            if (seenEdges.has(edgeKey)) {
+                return invalid('樹的邊不可重複。');
+            }
+
+            let weight = null;
+            if (parts.length === 3) {
+                if (parts[2].trim() === '' || !Number.isFinite(Number(parts[2]))) {
+                    return invalid('第 ' + (i + 1) + ' 行的邊權重必須是有限數值。');
+                }
+                weight = parts[2];
+                hasWeights = true;
+            }
+
+            seenEdges.add(edgeKey);
+            adjacency.get(u).push({ to: v, weight });
+            adjacency.get(v).push({ to: u, weight });
+        }
+
+        const rootId = String(startId);
+        const root = nodes.get(rootId);
+        const visited = new Set([rootId]);
+        const parent = new Map([[rootId, null]]);
+        const queue = [rootId];
+        for (let index = 0; index < queue.length; index++) {
+            const current = queue[index];
+            const currentNode = nodes.get(current);
+            for (const { to, weight } of adjacency.get(current)) {
+                if (to === parent.get(current)) continue;
+                if (visited.has(to)) return invalid('輸入包含循環，無法形成樹。');
+                visited.add(to);
+                parent.set(to, current);
+                const child = nodes.get(to);
+                child.parent = currentNode;
+                if (weight !== null) child.meta.edgeWeight = weight;
+                currentNode.children.push(child);
+                queue.push(to);
+            }
+        }
+
+        if (visited.size !== n) {
+            return invalid('有 ' + (n - visited.size) + ' 個節點無法從節點 ' + rootId + ' 到達。');
+        }
+        return { root, nodes, error: null, hasWeights, format: 'contest' };
     }
 
     /**
@@ -187,7 +300,7 @@ export class TreeParser {
     static _buildByType(values, treeType) {
         if (treeType === 'bst') return TreeParser.buildBST(values);
         if (treeType === 'avl') return TreeParser.buildAVL(values);
-        if (treeType === 'rb')  return TreeParser.buildRBTree(values);
+        if (treeType === 'rb' || treeType === 'red-black') return TreeParser.buildRBTree(values);
         // For generic tree / euler, default to BST
         return TreeParser.buildBST(values);
     }

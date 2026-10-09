@@ -6,6 +6,7 @@ import { MatrixElement } from '../js/elements/MatrixElement.js';
 import { TextElement } from '../js/elements/TextElement.js';
 import { PenElement } from '../js/elements/PenElement.js';
 import { Serializer } from '../js/core/Serializer.js';
+import { validateWhiteboardElement } from '../js/core/WhiteboardElementValidation.js';
 import { History } from '../js/core/History.js';
 import { SelectionManager } from '../js/core/SelectionManager.js';
 import { Transform } from '../js/core/Transform.js';
@@ -21,6 +22,7 @@ import { TreeParser } from '../js/tree/TreeParser.js';
 import { TreeRenderer } from '../js/tree/TreeRenderer.js';
 import { MarkdownElement } from '../js/elements/MarkdownElement.js';
 import { authorizeRequest, getRoomId } from '../server/src/auth.mjs';
+import { formatDataToken, splitDataTokens } from '../js/core/DataTokens.js';
 
 test('array placeholders remain distinct from ordinary user data', () => {
     const input = 'left\u3000__WHITEBOARD_EMPTY__\u3000right';
@@ -38,6 +40,34 @@ test('matrix placeholders preserve boundary cells and sentinel-like values', () 
     const matrix = new MatrixElement();
     assert.equal(matrix.setFromText('\u3000__WHITEBOARD_EMPTY__\u3000'), null);
     assert.deepEqual(matrix.data, [['', '__WHITEBOARD_EMPTY__', '']]);
+});
+
+test('quoted array tokens preserve spaces, commas, quotes, and line breaks', () => {
+    const values = ['plain', 'two words', 'a,b', 'say "hi"', 'line\nbreak', '', '\u3000'];
+    const encoded = values.map(formatDataToken).join(' ');
+    assert.deepEqual(splitDataTokens(encoded, { multiline: true }), values.map(value =>
+        value === '\u3000' ? '' : value
+    ));
+
+    const queue = new QueueElement();
+    assert.equal(queue.setFromText('plain "two words" "a,b" "say \\\"hi\\\""'), null);
+    const originalItems = [...queue.items];
+    queue.updateTextFromData();
+    assert.deepEqual(queue.setFromText(queue.inputText), null);
+    assert.deepEqual(queue.items, originalItems);
+
+    const matrix = new MatrixElement();
+    assert.equal(matrix.setFromText('"single cell value"'), null);
+    assert.deepEqual(matrix.data, [['single cell value']]);
+    matrix.updateTextFromData();
+    assert.equal(matrix.setFromText(matrix.inputText), null);
+    assert.deepEqual(matrix.data, [['single cell value']]);
+
+    assert.equal(matrix.setFromText('"two words" 4\n"a,b" "line\\nbreak"'), null);
+    const originalData = matrix.data.map(row => [...row]);
+    matrix.updateTextFromData();
+    assert.equal(matrix.setFromText(matrix.inputText), null);
+    assert.deepEqual(matrix.data, originalData);
 });
 
 test('matrix text snaps to the nearest horizontal or vertical reading direction', () => {
@@ -99,9 +129,61 @@ test('adjacency parser rejects edge counts above its supported work limit', () =
     assert.match(GraphParser.parse('x'.repeat(1000001)).error, /1 MB/);
 });
 
-test('graph weights must be finite and consistent for each destination node', () => {
+test('contest graph input stores optional weights on edges', () => {
     assert.match(GraphParser.parse('2 1\n1 2 nope').error, /finite number/);
-    assert.match(GraphParser.parse('3 2\n1 2 5\n3 2 6').error, /conflicting weights/);
+    const graph = GraphParser.parse('4 4\n1 2 5\n3 2 6\n2 4 -3\n4 1 0');
+    assert.equal(graph.error, undefined);
+    assert.deepEqual(graph.edges.map(edge => edge.w), ['5', '6', '-3', '0']);
+    assert.ok([...graph.nodes.values()].every(node => node.nodeWeight === null));
+});
+
+test('contest tree input roots undirected weighted edges at node 1', () => {
+    const input = '5\n2 1 7\n3 2 -2\n3 4\n5 4 0';
+    const tree = new TreeElement();
+    assert.equal(tree.buildFromText(input), null);
+    assert.equal(tree.root.value, '1');
+    assert.equal(tree.root.children[0].value, '2');
+    assert.equal(tree.root.children[0].meta.edgeWeight, '7');
+    assert.equal(tree.root.children[0].children[0].meta.edgeWeight, '-2');
+    assert.equal(tree.hasWeights, true);
+    assert.equal(TreeParser.autoDetectAndParse('1').root.value, '1');
+});
+
+test('contest tree input auto-detects zero-based vertex IDs', () => {
+    const tree = new TreeElement();
+    assert.equal(tree.buildFromText('4\n1 0\n1 2\n3 1'), null);
+    assert.equal(tree.root.value, '0');
+    assert.deepEqual(tree.root.children.map(child => child.value), ['1']);
+    assert.deepEqual(tree.root.children[0].children.map(child => child.value), ['2', '3']);
+});
+
+test('tree input mode survives serialization for multiline value lists', () => {
+    const tree = new TreeElement();
+    tree.treeType = 'bst';
+    assert.equal(tree.buildFromText('2\n1\n3', 'values'), null);
+    const restored = new TreeElement();
+    restored.deserialize(JSON.parse(JSON.stringify(tree.serialize())));
+    assert.equal(restored.inputMode, 'values');
+    assert.equal(restored.root.value, '2');
+    assert.equal(restored.root.children[0].value, '1');
+    assert.equal(restored.root.children[1].value, '3');
+});
+
+test('red-black tree type aliases build the same balanced tree', () => {
+    const current = TreeParser._buildByType(['10', '5', '15', '2', '7'], 'rb');
+    const legacy = TreeParser._buildByType(['10', '5', '15', '2', '7'], 'red-black');
+    assert.deepEqual(legacy.root, current.root);
+});
+
+test('unknown tree input modes fail without replacing the existing tree', () => {
+    const tree = new TreeElement();
+    assert.equal(tree.buildFromText('2\n1 2'), null);
+    const previousRoot = tree.root;
+    const previousText = tree.inputText;
+    assert.match(tree.buildFromText('1', 'unsupported'), /未知.*輸入格式/);
+    assert.equal(tree.root, previousRoot);
+    assert.equal(tree.inputText, previousText);
+    assert.equal(tree.inputMode, 'auto');
 });
 
 test('invalid graph edits leave the previous graph intact', () => {
@@ -130,6 +212,42 @@ test('parallel graph edges do not distort force-directed node positions', () => 
         [...parallelEdgeLayout.values()].map(({ x, y }) => [x, y]),
         [...singleEdgeLayout.values()].map(({ x, y }) => [x, y])
     );
+});
+
+test('a one-node graph is centered in its layout area', () => {
+    const nodes = new Map([['1', { id: '1', x: 0, y: 0 }]]);
+    GraphLayout.layout(nodes, [], { width: 360, height: 310 });
+    assert.deepEqual({ x: nodes.get('1').x, y: nodes.get('1').y }, { x: 180, y: 155 });
+});
+
+test('graph selection bounds avoid scanning nodes and edges on hover', () => {
+    const graph = new GraphElement(10, 20);
+    assert.equal(graph.buildFromText('2 1\n1 2'), null);
+    const originalNodeHitTest = GraphRenderer.hitTestNode;
+    const originalEdgeHitTest = GraphRenderer.hitTestEdge;
+    try {
+        GraphRenderer.hitTestNode = () => { throw new Error('unexpected node scan'); };
+        GraphRenderer.hitTestEdge = () => { throw new Error('unexpected edge scan'); };
+        assert.equal(graph.containsPoint(40, 40), true);
+    } finally {
+        GraphRenderer.hitTestNode = originalNodeHitTest;
+        GraphRenderer.hitTestEdge = originalEdgeHitTest;
+    }
+});
+
+test('tree selection bounds avoid scanning nodes and edges on hover', () => {
+    const tree = new TreeElement(10, 20);
+    assert.equal(tree.buildFromText('2\n1 2'), null);
+    const originalNodeHitTest = TreeRenderer.hitTestNode;
+    const originalEdgeHitTest = TreeRenderer.hitTestEdge;
+    try {
+        TreeRenderer.hitTestNode = () => { throw new Error('unexpected node scan'); };
+        TreeRenderer.hitTestEdge = () => { throw new Error('unexpected edge scan'); };
+        assert.equal(tree.containsPoint(tree.x + 1, tree.y + 1), true);
+    } finally {
+        TreeRenderer.hitTestNode = originalNodeHitTest;
+        TreeRenderer.hitTestEdge = originalEdgeHitTest;
+    }
 });
 
 test('tree edge parser rejects cycles and accepts a connected acyclic tree', () => {
@@ -255,6 +373,29 @@ test('text hydration restores scale bases so edits and resizing stay aligned', (
     assert.equal(element.height, 41.6);
 });
 
+test('maximum-length text stays within importable bounds after auto sizing', () => {
+    const element = new TextElement(0, 0);
+    element.text = 'W'.repeat(1_000_000);
+    element.autoSize({
+        save() {}, restore() {},
+        measureText: text => ({ width: text.length * 16 })
+    });
+
+    assert.equal(element._baseWidth, 16_000_000);
+    assert.equal(element.width, 10_000_000);
+    const record = element.serialize();
+    assert.doesNotThrow(() => validateWhiteboardElement(record));
+
+    const app = {
+        elements: [], camera: { x: 0, y: 0, zoom: 1 },
+        selectionManager: { clear() {} }, renderer: { markDirty() {} }
+    };
+    Serializer.loadJSONData(app, { elements: [record] });
+    assert.equal(app.elements[0].text.length, 1_000_000);
+    assert.equal(app.elements[0].width, 10_000_000);
+    assert.equal(app.elements[0]._baseWidth, 16_000_000);
+});
+
 test('pen bounds handle large strokes without argument spreading or rescanning each point', () => {
     const pen = new PenElement();
     const recalculateBounds = pen._recalcBounds.bind(pen);
@@ -291,13 +432,86 @@ test('parallel undirected graph edges render on distinct lanes', () => {
     ]);
     const edges = [
         { u: '1', v: '2', w: null, directed: false },
-        { u: '1', v: '2', w: null, directed: false }
+        { u: '2', v: '1', w: null, directed: false }
     ];
 
     GraphRenderer.draw(ctx, nodes, edges, { nodeRadius: 10 });
     const edgePaths = paths.filter(points => points.length === 2);
     assert.equal(edgePaths.length, 2);
     assert.notEqual(edgePaths[0][0][1], edgePaths[1][0][1]);
+    assert.equal(GraphRenderer.hitTestEdge(nodes, edges, 50, -4, { nodeRadius: 10 }), edges[0]);
+    assert.equal(GraphRenderer.hitTestEdge(nodes, edges, 50, 4, { nodeRadius: 10 }), edges[1]);
+
+    const loopEdges = [
+        { u: '1', v: '1', directed: false },
+        { u: '1', v: '1', directed: false }
+    ];
+    const loopNodes = new Map([['1', { id: '1', x: 0, y: 0, label: '1' }]]);
+    assert.equal(GraphRenderer.hitTestEdge(loopNodes, loopEdges, 0, -25, {
+        nodeRadius: 10
+    }), loopEdges[0]);
+    assert.equal(GraphRenderer.hitTestEdge(loopNodes, loopEdges, 0, -41, {
+        nodeRadius: 10
+    }), loopEdges[1]);
+});
+
+test('reciprocal directed graph edges keep their offset lanes and hit tests', () => {
+    const paths = [];
+    let path = null;
+    const ctx = {
+        beginPath() { path = []; paths.push(path); },
+        moveTo(x, y) { path.push([x, y]); },
+        lineTo(x, y) { path.push([x, y]); },
+        arc() {}, stroke() {}, fill() {}, fillRect() {}, strokeRect() {}, fillText() {},
+        measureText() { return { width: 0 }; }
+    };
+    const nodes = new Map([
+        ['1', { id: '1', x: 0, y: 0, label: '1' }],
+        ['2', { id: '2', x: 100, y: 0, label: '2' }]
+    ]);
+    const edges = [
+        { u: '1', v: '2', directed: true },
+        { u: '2', v: '1', directed: true }
+    ];
+
+    GraphRenderer.draw(ctx, nodes, edges, { nodeRadius: 10, directed: true });
+    const edgePaths = paths.filter(points => points.length === 2);
+    assert.equal(edgePaths.length, 2);
+    assert.notEqual(edgePaths[0][0][1], edgePaths[1][0][1]);
+    assert.equal(GraphRenderer.hitTestEdge(nodes, edges, 50, 10, {
+        nodeRadius: 10, directed: true
+    }), edges[0]);
+    assert.equal(GraphRenderer.hitTestEdge(nodes, edges, 50, -10, {
+        nodeRadius: 10, directed: true
+    }), edges[1]);
+
+    const mixedEdges = [
+        { u: '1', v: '2', directed: true },
+        { u: '2', v: '1', directed: false }
+    ];
+    paths.length = 0;
+    GraphRenderer.draw(ctx, nodes, mixedEdges, { nodeRadius: 10, directed: false });
+    const mixedEdgePaths = paths.filter(points => points.length === 2);
+    assert.equal(mixedEdgePaths.length, 2);
+    assert.equal(mixedEdgePaths[0][0][1], 10);
+    assert.equal(mixedEdgePaths[1][0][1], 0);
+
+    const customIdNodes = new Map([
+        ['a->b', { id: 'a->b', x: 0, y: 0, label: 'a->b' }],
+        ['c', { id: 'c', x: 100, y: 0, label: 'c' }],
+        ['c->a', { id: 'c->a', x: 0, y: 0, label: 'c->a' }],
+        ['b', { id: 'b', x: 100, y: 0, label: 'b' }]
+    ]);
+    const customIdEdges = [
+        { u: 'a->b', v: 'c', directed: true },
+        { u: 'c->a', v: 'b', directed: true }
+    ];
+    paths.length = 0;
+    GraphRenderer.draw(ctx, customIdNodes, customIdEdges, {
+        nodeRadius: 10, directed: true
+    });
+    const customIdPaths = paths.filter(points => points.length === 2);
+    assert.deepEqual(customIdPaths.map(points => points[0][1]), [0, 0]);
 });
 
 test('BST, AVL, and red-black builders reject values that cannot be ordered numerically', () => {
@@ -546,6 +760,46 @@ test('JSON import detaches line endpoints that reference missing elements', () =
     });
     assert.deepEqual(app.elements[0].connections, { p1: null, p2: null });
     assert.equal(app.elements[0].width, -20);
+});
+
+test('JSON import detaches line endpoints that reference unknown ports', () => {
+    const app = {
+        elements: [], camera: { x: 0, y: 0, zoom: 1 },
+        selectionManager: { clear() {} }, renderer: { markDirty() {} }
+    };
+    Serializer.loadJSONData(app, {
+        elements: [
+            { type: 'rectangle', id: 'target-1', x: 0, y: 0, width: 80, height: 60 },
+            {
+                type: 'line', id: 'line-2', x: 10, y: 10, width: 80, height: 60,
+                connections: {
+                    p1: { elementId: 'target-1', portId: 'not-a-port' },
+                    p2: { elementId: 'target-1', portId: 'right' }
+                }
+            }
+        ]
+    });
+
+    assert.deepEqual(app.elements[1].connections, {
+        p1: null,
+        p2: { elementId: 'target-1', portId: 'right' }
+    });
+});
+
+test('partial element hydration preserves connections to elements outside the batch', () => {
+    const app = {
+        elements: [], camera: { x: 0, y: 0, zoom: 1 },
+        selectionManager: { clear() {} }, renderer: { markDirty() {} }
+    };
+    const connection = { elementId: 'target-outside-batch', portId: 'node_8' };
+    Serializer.loadJSONData(app, {
+        elements: [{
+            type: 'line', id: 'line-partial', x: 0, y: 0, width: 10, height: 10,
+            connections: { p1: connection, p2: null }
+        }]
+    }, { preserveExternalConnections: true });
+
+    assert.deepEqual(app.elements[0].connections, { p1: connection, p2: null });
 });
 
 test('graph JSON import normalizes mixed numeric and string node IDs', () => {
@@ -901,6 +1155,21 @@ test('tree JSON restore can read rooted input for a non-generic display type', (
     assert.equal(tree.root.children.length, 2);
 });
 
+test('legacy tree JSON without an input mode preserves its rooted parent direction', () => {
+    const tree = new TreeElement();
+    const data = {
+        ...tree.serialize(),
+        treeType: 'bst',
+        inputText: '3\n2 1\n2 3'
+    };
+    delete data.inputMode;
+
+    tree.deserialize(data);
+    assert.equal(tree.root.value, '2');
+    assert.deepEqual(tree.root.children.map(child => child.value), ['1', '3']);
+    assert.equal(tree.inputMode, 'rooted');
+});
+
 test('tree edit history can re-find nodes after deserialization rebuilds the tree', () => {
     const tree = new TreeElement();
     assert.equal(tree.buildFromText('3\n1 2\n1 3', 'rooted'), null);
@@ -989,6 +1258,33 @@ test('duplicate tree values receive distinct connection port IDs', () => {
     }
 });
 
+test('tree connection ports stay stable after renaming nodes and survive JSON import', () => {
+    const tree = new TreeElement(80, 45);
+    assert.equal(tree.buildFromText('3\n1 2\n2 3'), null);
+    const renamedNode = tree.root.children[0];
+    const originalPort = tree.getConnectionPorts().find(port => port.id === 'node_2');
+    assert.ok(originalPort);
+    assert.equal(tree.setNodeValue(renamedNode, 'renamed'), true);
+    const renamedPort = tree.getConnectionPorts().find(port => port.id === 'node_2');
+    assert.deepEqual(renamedPort, originalPort);
+
+    const line = new ShapeElement('line', 0, 0);
+    line.connections = {
+        p1: { elementId: tree.id, portId: 'node_2' },
+        p2: null
+    };
+    const app = {
+        elements: [],
+        camera: { x: 0, y: 0, zoom: 1 },
+        history: { clear() {} },
+        selectionManager: { clear() {} },
+        renderer: { markDirty() {} }
+    };
+    Serializer.loadJSONData(app, { elements: [tree.serialize(), line.serialize()] });
+    assert.deepEqual(app.elements[1].connections.p1,
+        { elementId: tree.id, portId: 'node_2' });
+});
+
 test('resizing a graph with minimal bounds keeps node coordinates finite', () => {
     const graph = new GraphElement();
     assert.equal(graph.buildFromText('2 1\n1 2'), null);
@@ -1000,6 +1296,22 @@ test('resizing a graph with minimal bounds keeps node coordinates finite', () =>
         assert.ok(Number.isFinite(node.x));
         assert.ok(Number.isFinite(node.y));
     }
+});
+
+test('resize transforms release copied pen points after finish and cancel', () => {
+    const pen = new PenElement();
+    pen.points = Array.from({ length: 10000 }, (_, index) => ({ x: index, y: index % 17 }));
+    const transform = new Transform({ renderer: { markDirty() {} } });
+
+    transform.startResize(0, 0, 2, pen);
+    assert.equal(transform.startPoints.length, 10000);
+    transform.finish();
+    assert.equal(transform.startPoints, null);
+
+    transform.startResize(0, 0, 2, pen);
+    assert.equal(transform.startPoints.length, 10000);
+    transform.cancel();
+    assert.equal(transform.startPoints, null);
 });
 
 test('rotated line endpoint hit tests and drags stay in world coordinates', () => {

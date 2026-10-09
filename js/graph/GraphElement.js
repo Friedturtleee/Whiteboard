@@ -132,6 +132,11 @@ export class GraphElement extends Element {
     }
 
     containsPoint(wx, wy, camera) {
+        // Most pointer-move checks land inside the graph's selection box.
+        // The base hit test is sufficient there and avoids scanning every
+        // node and edge on large contest graphs just to return `true`.
+        if (super.containsPoint(wx, wy, camera)) return true;
+
         const point = this.toLocalPoint(wx, wy);
         // Check node hit first
         if (this.nodes.size > 0) {
@@ -151,7 +156,7 @@ export class GraphElement extends Element {
             });
             if (hitEdge) return true;
         }
-        return super.containsPoint(wx, wy, camera);
+        return false;
     }
 
     hitTestNode(wx, wy) {

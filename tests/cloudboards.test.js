@@ -265,3 +265,236 @@ test('undo and redo can flush a pending local cloud change before history runs',
     assert.equal(manager._flushPendingLocalChange(connection), false);
     assert.equal(manager.syncTimer, null);
 });
+
+test('opening another cloud board blocks edits while flushing and restores access on failure', async () => {
+    let resolveFlush;
+    const readOnlyStates = [];
+    const manager = Object.create(CloudBoards.prototype);
+    const app = {
+        elements: [],
+        camera: { x: 0, y: 0, zoom: 1 },
+        autosaveKey: 'cloud-a',
+        _finishInlineEditing() {},
+        _finishTextEditing() {},
+        _dismissPendingDialogs() {},
+        _flushAutosave() {}
+    };
+    Object.assign(manager, {
+        app,
+        activeBoard: { id: 'board-a', role: 'owner' },
+        activeUserId: 'user-1',
+        boardOpenRevision: 0,
+        clerkIdentityRevision: 0,
+        clerk: { user: { id: 'user-1' } },
+        isCloudBoard: true,
+        isReadOnly: false,
+        connection: { flush() { return new Promise(resolve => { resolveFlush = resolve; }); } },
+        _hasCloudRecoveryDraft() { return false; },
+        _cloudCacheKey() { return 'cloud-b'; },
+        _setReadOnly(readOnly) { readOnlyStates.push(readOnly); }
+    });
+
+    const opening = manager.openBoard({ id: 'board-b', role: 'owner' });
+    assert.equal(manager.isReadOnly, true);
+    assert.deepEqual(readOnlyStates, [true]);
+    resolveFlush(false);
+    await assert.rejects(opening, /尚未確認/);
+    assert.equal(manager.isReadOnly, false);
+    assert.deepEqual(readOnlyStates, [true, false]);
+});
+
+test('saving a cloud copy blocks edits until creation completes and unlocks after failure', async () => {
+    let resolveClerk;
+    const readOnlyStates = [];
+    const originalPrompt = globalThis.prompt;
+    globalThis.prompt = () => 'copy';
+    const manager = Object.create(CloudBoards.prototype);
+    Object.assign(manager, {
+        app: {
+            elements: [],
+            camera: { x: 0, y: 0, zoom: 1 },
+            _finishInlineEditing() {},
+            _finishTextEditing() {},
+            _dismissPendingDialogs() {}
+        },
+        accountRecoveryPending: false,
+        clerkIdentityRevision: 0,
+        isCloudBoard: false,
+        isReadOnly: false,
+        connection: null,
+        _loadClerk() { return new Promise(resolve => { resolveClerk = resolve; }); },
+        _token: async () => 'owner-token',
+        _api: async () => { throw new Error('create failed'); },
+        _setReadOnly(readOnly) { readOnlyStates.push(readOnly); },
+        _showError() {}
+    });
+
+    try {
+        const saving = manager.saveCurrentBoard();
+        assert.equal(manager.isReadOnly, true);
+        assert.deepEqual(readOnlyStates, [true]);
+        resolveClerk({ user: { id: 'user-1' } });
+        await saving;
+        assert.equal(manager.isReadOnly, false);
+        assert.deepEqual(readOnlyStates, [true, false]);
+    } finally {
+        if (originalPrompt === undefined) delete globalThis.prompt;
+        else globalThis.prompt = originalPrompt;
+    }
+});
+
+test('returning to local restores autosave state when the saved local snapshot is invalid', async () => {
+    const manager = Object.create(CloudBoards.prototype);
+    const connection = { status: 'saved', async flush() { return true; }, disconnect() {} };
+    const app = {
+        autosaveKey: 'cloud-board-key',
+        _skipAutosave: false,
+        _finishTextEditing() {},
+        _dismissPendingDialogs() {},
+        _flushAutosave() {},
+        _refreshUI() {},
+        _tryLoadAutosave() {}
+    };
+    Object.assign(manager, {
+        app,
+        boardOpenRevision: 0,
+        accountRecoveryPending: false,
+        isCloudBoard: true,
+        isReadOnly: false,
+        connection,
+        activeBoard: { id: 'board-a', role: 'owner' },
+        localSnapshot: { elements: [null] },
+        localAutosaveKey: 'local-board-key',
+        modal: null,
+        _setReadOnly() {}
+    });
+
+    await assert.rejects(manager.returnToLocal(), /invalid element record/i);
+    assert.equal(app._skipAutosave, false);
+    assert.equal(app.autosaveKey, 'cloud-board-key');
+    assert.equal(manager.isCloudBoard, true);
+    assert.equal(manager.connection, connection);
+});
+
+test('returning to local blocks edits until cloud changes are acknowledged', async () => {
+    let resolveFlush;
+    const connection = {
+        status: 'saved',
+        flush() { return new Promise(resolve => { resolveFlush = resolve; }); },
+        disconnect() {}
+    };
+    const manager = Object.create(CloudBoards.prototype);
+    Object.assign(manager, {
+        app: {
+            autosaveKey: 'cloud-board-key',
+            _finishTextEditing() {},
+            _dismissPendingDialogs() {},
+            _flushAutosave() {}
+        },
+        boardOpenRevision: 0,
+        accountRecoveryPending: false,
+        isCloudBoard: true,
+        isReadOnly: false,
+        connection,
+        localSnapshot: { elements: [] },
+        localAutosaveKey: 'local-board-key',
+        _setReadOnly() {}
+    });
+    const pendingReturn = manager.returnToLocal();
+
+    assert.equal(manager.isReadOnly, true);
+    manager.onLocalChange();
+    assert.equal(manager.syncTimer ?? null, null);
+    resolveFlush(false);
+    await assert.rejects(pendingReturn, /尚未確認/);
+    assert.equal(manager.isReadOnly, false);
+    assert.equal(manager.isCloudBoard, true);
+    assert.equal(manager.connection, connection);
+});
+
+test('returning to local restores edit access when the cloud flush rejects', async () => {
+    const flushError = new Error('socket send failed');
+    const connection = {
+        status: 'saved',
+        async flush() { throw flushError; },
+        disconnect() {}
+    };
+    const manager = Object.create(CloudBoards.prototype);
+    Object.assign(manager, {
+        app: {
+            autosaveKey: 'cloud-board-key',
+            _finishTextEditing() {},
+            _dismissPendingDialogs() {},
+            _flushAutosave() {}
+        },
+        boardOpenRevision: 0,
+        accountRecoveryPending: false,
+        isCloudBoard: true,
+        isReadOnly: false,
+        connection,
+        _setReadOnly() {}
+    });
+
+    await assert.rejects(manager.returnToLocal(), error => error === flushError);
+    assert.equal(manager.isReadOnly, false);
+    assert.equal(manager.isCloudBoard, true);
+    assert.equal(manager.connection, connection);
+});
+
+test('returning to local restores the saved board before disconnecting the cloud session', async () => {
+    let disconnected = false;
+    let inlineEditFinished = false;
+    let autosaveSawFinishedEdit = false;
+    let flushSawFinishedEdit = false;
+    const connection = {
+        status: 'saved',
+        async flush() { flushSawFinishedEdit = inlineEditFinished; return true; },
+        disconnect() { disconnected = true; }
+    };
+    const app = {
+        elements: [{ id: 'cloud-element' }],
+        camera: { x: 20, y: 30, zoom: 2 },
+        autosaveKey: 'cloud-key',
+        _skipAutosave: false,
+        selectionManager: { clear() {} },
+        history: { clear() {} },
+        renderer: { markDirty() {} },
+        layerManager: { _reindex: () => app.elements.forEach((element, index) => {
+            element.zIndex = index;
+        }) },
+        _finishTextEditing() {},
+        _finishInlineEditing() { inlineEditFinished = true; },
+        _dismissPendingDialogs() {},
+        _flushAutosave() { autosaveSawFinishedEdit = inlineEditFinished; },
+        _refreshUI() {},
+        _tryLoadAutosave() {}
+    };
+    const manager = Object.create(CloudBoards.prototype);
+    Object.assign(manager, {
+        app,
+        boardOpenRevision: 0,
+        accountRecoveryPending: false,
+        isCloudBoard: true,
+        isReadOnly: false,
+        connection,
+        activeBoard: { id: 'board-a', role: 'owner' },
+        localSnapshot: {
+            elements: [{ id: 'local-element', type: 'rectangle', x: 1, y: 2, width: 10, height: 12 }],
+            camera: { x: 3, y: 4, zoom: 1 }
+        },
+        localAutosaveKey: 'local-key',
+        _setReadOnly() {}
+    });
+
+    assert.equal(await manager.returnToLocal(), true);
+    assert.equal(inlineEditFinished, true);
+    assert.equal(autosaveSawFinishedEdit, true);
+    assert.equal(flushSawFinishedEdit, true);
+    assert.equal(disconnected, true);
+    assert.equal(manager.isCloudBoard, false);
+    assert.equal(manager.connection, null);
+    assert.equal(app.autosaveKey, 'local-key');
+    assert.deepEqual(app.elements.map(element => element.id), ['local-element']);
+    assert.deepEqual(app.camera, { x: 3, y: 4, zoom: 1 });
+    assert.equal(app._skipAutosave, false);
+});

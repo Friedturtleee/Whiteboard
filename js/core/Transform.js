@@ -283,6 +283,7 @@ export class Transform {
         this.mode = null;
         this.handleIndex = -1;
         this.startPositions = [];
+        this.startPoints = null;
         this.targetElement = null;
         this.startResizeState = null;
         this._connections = null;
@@ -332,6 +333,7 @@ export class Transform {
         this.mode = null;
         this.handleIndex = -1;
         this.startPositions = [];
+        this.startPoints = null;
         this.targetElement = null;
         this.startResizeState = null;
         this._connections = null;

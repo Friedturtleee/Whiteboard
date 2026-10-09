@@ -41,6 +41,15 @@ export class GraphLayout {
         const cy = height / 2;
         const radius = Math.min(width, height) / 3;
         const angleStep = (2 * Math.PI) / (nodesArr.length || 1);
+
+        if (nodesArr.length === 1) {
+            const node = nodesArr[0];
+            node.x = cx;
+            node.y = cy;
+            node.vx = 0;
+            node.vy = 0;
+            return;
+        }
         
         for (let i = 0; i < nodesArr.length; i++) {
             const n = nodesArr[i];

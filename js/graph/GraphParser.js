@@ -3,7 +3,7 @@
  *
  * Edge-list:
  *   N M
- *   u v [node_weight_of_v]   (exactly M edge rows)
+ *   u v [edge_weight]        (exactly M edge rows)
  *
  * Adjacency-list:
  *   N
@@ -75,11 +75,11 @@ export class GraphParser {
         for (let i = 0; i < edgeLines.length; i++) {
             const parts = edgeLines[i].split(/\s+/);
             if (parts.length < 2 || parts.length > 3) {
-                return { error: 'Line ' + (i + 2) + ': edge row must be \"u v [destination-node-weight]\".' };
+                return { error: 'Line ' + (i + 2) + ': edge row must be \"u v [edge-weight]\".' };
             }
             const uToken = parts[0];
             const vToken = parts[1];
-            const nodeWeight = parts.length === 3 ? parts[2] : null;
+            const weight = parts.length === 3 ? parts[2] : null;
             if (!/^-?\d+$/.test(uToken) || !Number.isSafeInteger(Number(uToken)) ||
                 !/^-?\d+$/.test(vToken) || !Number.isSafeInteger(Number(vToken))) {
                 return { error: 'Line ' + (i + 2) + ': node IDs must be safe integers.' };
@@ -96,17 +96,12 @@ export class GraphParser {
             const u = String(uNumber);
             const v = String(vNumber);
 
-            if (nodeWeight !== null) {
-                if (!Number.isFinite(Number(nodeWeight))) {
-                    return { error: 'Line ' + (i + 2) + ': node weight must be a finite number.' };
+            if (weight !== null) {
+                if (weight.trim() === '' || !Number.isFinite(Number(weight))) {
+                    return { error: 'Line ' + (i + 2) + ': edge weight must be a finite number.' };
                 }
-                const target = nodes.get(v);
-                if (target.nodeWeight !== null && Number(target.nodeWeight) !== Number(nodeWeight)) {
-                    return { error: 'Line ' + (i + 2) + ': conflicting weights were assigned to node ' + v + '.' };
-                }
-                target.nodeWeight = nodeWeight;
             }
-            edges.push({ u, v, w: null, directed });
+            edges.push({ u, v, w: weight, directed });
         }
 
         return { nodes, edges, directed };

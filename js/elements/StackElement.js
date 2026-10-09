@@ -2,7 +2,7 @@
  * StackElement — LIFO stack visualization.
  */
 import { Element } from '../core/Element.js';
-import { splitDataTokens } from '../core/DataTokens.js';
+import { formatDataToken, splitDataTokens } from '../core/DataTokens.js';
 
 const EMPTY_CELL = '\u3000';
 const isEmptyCell = value => value == null || value === '' || value === EMPTY_CELL;
@@ -32,7 +32,7 @@ export class StackElement extends Element {
     }
 
     updateTextFromData() {
-        this.inputText = this.items.map(v => isEmptyCell(v) ? EMPTY_CELL : v).join(' ');
+        this.inputText = this.items.map(formatDataToken).join(' ');
     }
 
     pop() {

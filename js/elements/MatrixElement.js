@@ -2,7 +2,7 @@
  * MatrixElement — 2D matrix visualization for competitive programming.
  */
 import { Element } from '../core/Element.js';
-import { splitDataTokens } from '../core/DataTokens.js';
+import { formatDataToken, splitDataTokens } from '../core/DataTokens.js';
 
 const EMPTY_CELL = '\u3000';
 const isEmptyCell = value => value == null || value === '' || value === EMPTY_CELL;
@@ -235,7 +235,8 @@ export class MatrixElement extends Element {
         for (let r = 0; r < lines.length; r++) {
             let vals = splitDataTokens(lines[r]);
             // CP char grid detection (e.g. #.#.)
-            if (vals.length === 1 && vals[0].length > 1 &&
+            const startsWithQuotedValue = /^\s*"/.test(lines[r]);
+            if (!startsWithQuotedValue && vals.length === 1 && vals[0].length > 1 &&
                 !/^\d+$/.test(vals[0])) {
                 vals = vals[0].split('');
             }
@@ -266,7 +267,7 @@ export class MatrixElement extends Element {
     updateTextFromData() {
         // Convert empty cells to the visual placeholder '　' when building the text representation
         this.inputText = this.data
-            .map(row => row.map(v => isEmptyCell(v) ? EMPTY_CELL : v).join(' '))
+            .map(row => row.map(formatDataToken).join(' '))
             .join('\n');
     }
 
