@@ -2,7 +2,7 @@
  * MatrixElement — 2D matrix visualization for competitive programming.
  */
 import { Element } from '../core/Element.js';
-import { formatDataToken, splitDataTokens } from '../core/DataTokens.js';
+import { formatDataToken, splitDataTokens, parsePastedMatrixRows } from '../core/DataTokens.js';
 import { drawCanvasCellText } from '../core/CanvasTextFit.js';
 
 const EMPTY_CELL = '\u3000';
@@ -208,12 +208,12 @@ export class MatrixElement extends Element {
             return null;
         }
 
-        // Do not call trim() on each line: U+3000 is our intentional empty-cell
-        // marker, and trimming it would silently remove leading/trailing cells.
+        // Keep tabs because they separate spreadsheet cells, including empty ones.
+        // U+3000 is also an intentional empty-cell marker.
         const lines = rawText
             .replace(/\r/g, '')
             .split('\n')
-            .filter(line => !/^[ \t]*$/.test(line));
+            .filter(line => !/^ *$/.test(line));
 
         if (lines.length === 0) {
             this.inputText = rawText;
@@ -234,7 +234,9 @@ export class MatrixElement extends Element {
         let cols = 0;
         const data = [];
         for (let r = 0; r < lines.length; r++) {
-            let vals = splitDataTokens(lines[r]);
+            let vals = lines[r].includes('\t')
+                ? parsePastedMatrixRows(lines[r])[0]
+                : splitDataTokens(lines[r]);
             // CP char grid detection (e.g. #.#.)
             const startsWithQuotedValue = /^\s*"/.test(lines[r]);
             if (!startsWithQuotedValue && vals.length === 1 && vals[0].length > 1 &&

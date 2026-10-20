@@ -2231,3 +2231,15 @@ test('layer lock state survives JSON export and import', () => {
     });
     assert.equal(app.elements[0].locked, true);
 });
+
+test('matrix text input preserves tab-separated empty cells and rows', () => {
+    const matrix = new MatrixElement();
+    assert.equal(matrix.setFromText('1\t\t3\n\t\t\n4\t5\t6'), null);
+    assert.equal(matrix.rows, 3);
+    assert.equal(matrix.cols, 3);
+    assert.deepEqual(matrix.data, [
+        ['1', '', '3'],
+        ['', '', ''],
+        ['4', '5', '6']
+    ]);
+});
