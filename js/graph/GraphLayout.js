@@ -7,6 +7,67 @@
  * boundaries or leaving nodes on top of each other.
  */
 const topologyCache = new WeakMap();
+const MAX_NODE_EDGE_CHECKS = 1_000_000;
+
+function forEachNodeEdgeConflict(nodes, firstIndexes, secondIndexes, nodeRadius, onConflict = null) {
+    if (!firstIndexes.length || nodes.length * firstIndexes.length > MAX_NODE_EDGE_CHECKS) {
+        return false;
+    }
+
+    const clearance = nodeRadius + 14;
+    const clearanceSquared = clearance * clearance;
+    let found = false;
+    for (let edgeIndex = 0; edgeIndex < firstIndexes.length; edgeIndex++) {
+        const firstIndex = firstIndexes[edgeIndex];
+        const secondIndex = secondIndexes[edgeIndex];
+        const first = nodes[firstIndex];
+        const second = nodes[secondIndex];
+        const edgeX = second.x - first.x;
+        const edgeY = second.y - first.y;
+        const edgeLength = Math.hypot(edgeX, edgeY);
+        if (edgeLength <= nodeRadius * 2 + 1) continue;
+
+        // Edges are drawn behind node circles. Test only the visible segment,
+        // trimmed at each endpoint, and leave a small corridor around it.
+        const trim = Math.min(0.45, nodeRadius / edgeLength);
+        const startX = first.x + edgeX * trim;
+        const startY = first.y + edgeY * trim;
+        const segmentX = edgeX * (1 - 2 * trim);
+        const segmentY = edgeY * (1 - 2 * trim);
+        const segmentLengthSquared = segmentX * segmentX + segmentY * segmentY;
+        if (segmentLengthSquared <= 1e-8) continue;
+
+        for (let nodeIndex = 0; nodeIndex < nodes.length; nodeIndex++) {
+            if (nodeIndex === firstIndex || nodeIndex === secondIndex) continue;
+            const node = nodes[nodeIndex];
+            const fromStartX = node.x - startX;
+            const fromStartY = node.y - startY;
+            const projection = Math.max(0, Math.min(1,
+                (fromStartX * segmentX + fromStartY * segmentY) / segmentLengthSquared
+            ));
+            const nearestX = startX + segmentX * projection;
+            const nearestY = startY + segmentY * projection;
+            const awayX = node.x - nearestX;
+            const awayY = node.y - nearestY;
+            const distanceSquared = awayX * awayX + awayY * awayY;
+            if (distanceSquared >= clearanceSquared) continue;
+
+            found = true;
+            if (!onConflict) return true;
+
+            let sideCross = segmentX * awayY - segmentY * awayX;
+            if (Math.abs(sideCross) < 1e-6) {
+                const [stableX, stableY] = GraphLayout._stableDirection(nodeIndex, edgeIndex, 1);
+                sideCross = segmentX * stableY - segmentY * stableX;
+            }
+            const side = sideCross < 0 ? -1 : 1;
+            const length = Math.sqrt(segmentLengthSquared);
+            onConflict(node, -segmentY / length * side, segmentX / length * side,
+                Math.sqrt(distanceSquared), nodeIndex, edgeIndex);
+        }
+    }
+    return found;
+}
 
 function getGraphTopology(nodes, nodesArr, edges) {
     const cached = topologyCache.get(edges);
@@ -162,7 +223,10 @@ export class GraphLayout {
             node.vy = 0;
         }
 
-        if (options.preservePositions && !GraphLayout._hasOverlaps(nodesArr, minDistance)) {
+        if (options.preservePositions && !GraphLayout._hasOverlaps(nodesArr, minDistance) &&
+            !GraphLayout._hasNodeEdgeOverlaps(
+                nodesArr, attractionFirstIndexes, attractionSecondIndexes, nodeRadius
+            )) {
             return GraphLayout._ensureBounds(nodesArr, nodeRadius + 4, width, height);
         }
 
@@ -231,7 +295,17 @@ export class GraphLayout {
         }
 
         GraphLayout._resolveOverlaps(nodesArr, minDistance, degrees, options.maxCollisionPasses);
-        if (GraphLayout._hasOverlaps(nodesArr, minDistance)) {
+        const repairPasses = Number.isFinite(options.maxCollisionPasses)
+            ? Math.max(1, Math.min(60, Math.floor(options.maxCollisionPasses)))
+            : Math.min(120, Math.max(24, nodesArr.length));
+        GraphLayout._resolveNodeAndEdgeOverlaps(
+            nodesArr, attractionFirstIndexes, attractionSecondIndexes,
+            nodeRadius, minDistance, degrees, repairPasses
+        );
+        if (GraphLayout._hasOverlaps(nodesArr, minDistance) ||
+            GraphLayout._hasNodeEdgeOverlaps(
+                nodesArr, attractionFirstIndexes, attractionSecondIndexes, nodeRadius
+            )) {
             // A very dense complete graph can keep pulling a tight cluster
             // together faster than the local collision solver can untangle
             // it. Use a spaced grid only for that unresolved case.
@@ -241,7 +315,18 @@ export class GraphLayout {
                 node.x = grid.positions[gridIndex].x;
                 node.y = grid.positions[gridIndex].y;
             }
-            return { width, height };
+            GraphLayout._resolveNodeAndEdgeOverlaps(
+                nodesArr, attractionFirstIndexes, attractionSecondIndexes,
+                nodeRadius, minDistance, degrees, repairPasses
+            );
+            // Edge avoidance can nudge nearby circles back into each other.
+            // Finish with a dedicated spacing pass so the fallback layout
+            // always preserves the node clearance even when edge constraints
+            // remain difficult to satisfy together.
+            GraphLayout._resolveOverlaps(
+                nodesArr, minDistance, degrees, Math.max(repairPasses, 160)
+            );
+            return GraphLayout._ensureBounds(nodesArr, margin, width, height);
         }
         if (options.preservePositions) {
             return GraphLayout._ensureBounds(nodesArr, margin, width, height);
@@ -396,9 +481,61 @@ export class GraphLayout {
         return false;
     }
 
+    static _hasNodeEdgeOverlaps(nodes, firstIndexes, secondIndexes, nodeRadius) {
+        return forEachNodeEdgeConflict(nodes, firstIndexes, secondIndexes, nodeRadius);
+    }
+
+    static _resolveNodeEdgeOverlaps(nodes, firstIndexes, secondIndexes, nodeRadius, requestedPasses = 4) {
+        const passes = Math.max(0, Math.floor(requestedPasses));
+        const clearance = nodeRadius + 14;
+        for (let pass = 0; pass < passes; pass++) {
+            let moved = false;
+            forEachNodeEdgeConflict(nodes, firstIndexes, secondIndexes, nodeRadius,
+                (node, normalX, normalY, distance) => {
+                    const correction = clearance - distance + 0.5;
+                    node.x += normalX * correction;
+                    node.y += normalY * correction;
+                    moved = true;
+                });
+            if (!moved) break;
+        }
+    }
+
+    static _resolveNodeAndEdgeOverlaps(
+        nodes, firstIndexes, secondIndexes, nodeRadius, minDistance, degrees, collisionPasses
+    ) {
+        // Repeat until both spacing rules hold, with a fixed cap to keep even
+        // difficult imported layouts bounded in cost.
+        for (let pass = 0; pass < 8; pass++) {
+            GraphLayout._resolveNodeEdgeOverlaps(
+                nodes, firstIndexes, secondIndexes, nodeRadius, 1
+            );
+            GraphLayout._resolveOverlaps(nodes, minDistance, degrees, collisionPasses);
+            if (!GraphLayout._hasOverlaps(nodes, minDistance) &&
+                !GraphLayout._hasNodeEdgeOverlaps(nodes, firstIndexes, secondIndexes, nodeRadius)) {
+                break;
+            }
+        }
+    }
+
     static hasOverlaps(nodes, minDistance) {
         const nodeList = nodes instanceof Map ? Array.from(nodes.values()) : nodes;
         return GraphLayout._hasOverlaps(nodeList, minDistance);
+    }
+
+    static hasNodeEdgeOverlaps(nodes, edges, nodeRadius = 20) {
+        const nodeMap = nodes instanceof Map
+            ? nodes
+            : new Map(nodes.map((node, index) => [String(index), node]));
+        const nodesArr = Array.from(nodeMap.values());
+        if (nodesArr.length < 3 || !edges?.length) return false;
+        const topology = getGraphTopology(nodeMap, nodesArr, edges);
+        return GraphLayout._hasNodeEdgeOverlaps(
+            nodesArr,
+            topology.attractionFirstIndexes,
+            topology.attractionSecondIndexes,
+            nodeRadius
+        );
     }
 
     static _normalizeAndMeasure(nodes, margin, minimumWidth, minimumHeight) {

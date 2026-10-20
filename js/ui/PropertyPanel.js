@@ -29,6 +29,7 @@ export class PropertyPanel {
             swatch.style.background = color;
             swatch.dataset.color = color;
             swatch.addEventListener('click', () => {
+                this.app.currentColor = color;
                 const sel = this.app.selectionManager;
                 const oldVals = editableSelection(sel)
                     .filter(e => e.color !== color)
@@ -58,6 +59,7 @@ export class PropertyPanel {
             // Import dynamically to avoid circular deps
             import('./ColorPicker.js').then(({ ColorPicker }) => {
                 ColorPicker._openCustomPopup(customBtn, (c) => {
+                    this.app.currentColor = c;
                     customBtn.style.background = c;
                     customBtn.dataset.color = c;
                     this._colorGrid.querySelectorAll('.color-swatch').forEach(s => s.classList.remove('selected'));

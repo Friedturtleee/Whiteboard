@@ -2,7 +2,10 @@ export class TreeLayout {
     static layout(root, options = {}) {
         if (!root || root.value === null) return;
         const nodeRadius = Math.max(1, options.nodeRadius || 18);
-        const minimumSpacing = nodeRadius * 2 + 8;
+        // Leave a visible gap between same-level nodes. Keeping each child
+        // subtree in a disjoint horizontal span also prevents its edges from
+        // running through a neighboring node.
+        const minimumSpacing = nodeRadius * 2 + 12;
         const spacingX = Math.max(options.nodeSpacingX || 40, minimumSpacing);
         const spacingY = Math.max(options.levelSpacingY || 60, minimumSpacing);
         const startX = options.startX || 0;

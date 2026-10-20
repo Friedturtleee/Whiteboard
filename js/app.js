@@ -62,6 +62,7 @@ class App {
     constructor() {
         // ── State ───────────────────────────────────────
         this.elements = [];
+        this.currentColor = '#e0e0e0';
         this._edgePreview = null;      // { x1,y1,x2,y2 } for live graph-edge feedback
         this._isPanning = false;
         this._activePointerId = null;
@@ -426,7 +427,7 @@ class App {
         // ── Pen tool: freehand drawing ────────────────
         if (tool === 'pen') {
             const penEl = new PenElement(wx, wy);
-            penEl.color = '#e0e0e0';
+            this._applyInheritedColor(penEl);
             penEl.strokeWidth = this.settings.defaultPenSize || 2;
             penEl.addPoint(wx, wy);
             this.elements.push(penEl);
@@ -807,6 +808,11 @@ class App {
             if (hit.type === 'matrix' && hit.hitTestCell) {
                 const cell = hit.hitTestCell(wx, wy);
                 if (cell) {
+                    const key = `${cell.row},${cell.col}`;
+                    if (hit.selectedCells?.size > 1 && hit.selectedCells.has(key)) {
+                        this._editSelectedMatrixCells(hit);
+                        return;
+                    }
                     this._editMatrixCell(hit, cell.row, cell.col);
                     return;
                 }
@@ -888,33 +894,43 @@ class App {
         const hit = HitTest.hitTestAll(this.elements, wx, wy, this.camera);
 
         if (hit) {
+            // A cell click should select its matrix and the cell in one step.
+            // Otherwise the first click only selects/drags the matrix, which
+            // makes Ctrl/Shift multi-cell selection appear broken.
+            if (hit.type === 'matrix' && !hit.locked && typeof hit.hitTestCell === 'function') {
+                const cell = hit.hitTestCell(wx, wy);
+                if (cell) {
+                    if (!sel.isSelected(hit)) {
+                        if (e.shiftKey || e.ctrlKey || e.metaKey) sel.addToSelection(hit);
+                        else {
+                            this._clearAllCellSelections();
+                            sel.select(hit);
+                        }
+                    }
+
+                    const key = `${cell.row},${cell.col}`;
+                    if (e.ctrlKey || e.metaKey) {
+                        if (hit.selectedCells.has(key)) hit.selectedCells.delete(key);
+                        else hit.selectedCells.add(key);
+                    } else if (e.shiftKey && hit._lastCellKey) {
+                        const [r0, c0] = hit._lastCellKey.split(',').map(Number);
+                        for (let r = Math.min(r0, cell.row); r <= Math.max(r0, cell.row); r++) {
+                            for (let c = Math.min(c0, cell.col); c <= Math.max(c0, cell.col); c++) {
+                                hit.selectedCells.add(`${r},${c}`);
+                            }
+                        }
+                    } else {
+                        hit.selectedCells.clear();
+                        hit.selectedCells.add(key);
+                    }
+                    hit._lastCellKey = key;
+                    this._refreshUI();
+                    return;
+                }
+            }
+
             // ── Cell / item selection for already-selected data structures ──
             if (sel.isSelected(hit) && ['matrix', 'stack', 'queue'].includes(hit.type)) {
-                if (hit.type === 'matrix' && typeof hit.hitTestCell === 'function') {
-                    const cell = hit.hitTestCell(wx, wy);
-                    if (cell) {
-                        const key = `${cell.row},${cell.col}`;
-                        if (e.ctrlKey || e.metaKey) {
-                            // Toggle single cell
-                            if (hit.selectedCells.has(key)) hit.selectedCells.delete(key);
-                            else hit.selectedCells.add(key);
-                        } else if (e.shiftKey && hit._lastCellKey) {
-                            // Range select
-                            const [r0, c0] = hit._lastCellKey.split(',').map(Number);
-                            for (let r = Math.min(r0, cell.row); r <= Math.max(r0, cell.row); r++) {
-                                for (let c = Math.min(c0, cell.col); c <= Math.max(c0, cell.col); c++) {
-                                    hit.selectedCells.add(`${r},${c}`);
-                                }
-                            }
-                        } else {
-                            hit.selectedCells.clear();
-                            hit.selectedCells.add(key);
-                        }
-                        hit._lastCellKey = key;
-                        this.renderer.markDirty();
-                        return; // Don't start drag
-                    }
-                }
                 if ((hit.type === 'stack' || hit.type === 'queue') && typeof hit.hitTestItem === 'function') {
                     const idx = hit.hitTestItem(wx, wy);
                     if (idx >= 0) {
@@ -1043,7 +1059,7 @@ class App {
             el = new ShapeElement(tool, wx, wy, 0, 0);
         }
 
-        el.color = '#e0e0e0';
+        this._applyInheritedColor(el);
         if (el.type !== 'text' && el.type !== 'markdown') {
             el.strokeWidth = this.settings.defaultStrokeWidth || 2;
         }
@@ -1227,9 +1243,23 @@ class App {
         if (dirty) this.renderer.markDirty();
     }
 
+    _getInheritedColor() {
+        const selected = this.selectionManager?.selectedElements || [];
+        for (let index = selected.length - 1; index >= 0; index--) {
+            const color = selected[index]?.color;
+            if (typeof color === 'string' && color) return color;
+        }
+        return this.currentColor || '#e0e0e0';
+    }
+
+    _applyInheritedColor(element) {
+        if (!element) return;
+        element.color = this._getInheritedColor();
+        this.currentColor = element.color;
+    }
+
     _deleteSelectedMatrixCells(el) {
         if (!el || el.locked) return;
-        const isEmpty = v => v == null || v === '' || v === '\u3000';
         if (!el.selectedCells || el.selectedCells.size === 0) return;
         const selectedKeys = [...el.selectedCells].filter(key => {
             const [row, col] = String(key).split(',').map(Number);
@@ -1243,82 +1273,39 @@ class App {
         }
         
         const oldData = el.data.map(row => [...row]);
-        const oldRows = el.rows;
-        const oldCols = el.cols;
         const oldHighlights = { ...el.highlights };
-        const oldElementIndex = this.elements.indexOf(el);
-        
-        // Step 1: clear values of selected cells
+
+        // Delete clears only the selected values. Row and column removal is
+        // reserved for the explicit grid controls so an empty cell never
+        // changes the shape of the matrix.
         for (const key of selectedKeys) {
             const [r, c] = key.split(',').map(Number);
             el.data[r][c] = '';
         }
         el.selectedCells.clear();
         el._lastCellKey = null;
-        // Step 2: remove fully-empty rows (from bottom up)
-        for (let r = el.rows - 1; r >= 0; r--) {
-            if (el.data[r] && el.data[r].every(v => isEmpty(v))) {
-                el.deleteRow(r);
-            }
-        }
-        // Step 3: remove fully-empty cols (from right to left)
-        for (let c = el.cols - 1; c >= 0; c--) {
-            if (el.data.every(row => isEmpty(row[c]))) {
-                el.deleteCol(c);
-            }
-        }
-        if (el.data.length > 0 && el.data.every(row => row.every(isEmpty))) {
-            el.data = [];
-            el.rows = 0;
-            el.cols = 0;
-            el.width = 0;
-            el.height = 0;
-            el.highlights = {};
-        }
         el.updateTextFromData();
-        
+
         const newData = el.data.map(row => [...row]);
-        const newRows = el.rows;
-        const newCols = el.cols;
-        const newHighlights = { ...el.highlights };
-        const newPresent = newRows > 0 && newCols > 0;
-        const applyMatrixState = (data, rows, cols, highlights, present) => {
-            if (present && !this.elements.includes(el)) {
-                const index = Math.max(0, Math.min(oldElementIndex, this.elements.length));
-                this.elements.splice(index, 0, el);
-                this.layerManager._reindex();
-            }
+        const applyMatrixState = (data, highlights) => {
             el.data = data.map(row => [...row]);
-            el.rows = rows;
-            el.cols = cols;
             el.highlights = { ...highlights };
             el.selectedCells.clear();
             el._lastCellKey = null;
-            if (present) el._updateSize();
-            else {
-                el.width = 0;
-                el.height = 0;
-            }
             el.updateTextFromData();
-            if (!present) this._deleteElement(el);
         };
-        
+
         this.history.push({
             description: 'Delete matrix cells',
             undo: () => {
-                applyMatrixState(oldData, oldRows, oldCols, oldHighlights, true);
+                applyMatrixState(oldData, oldHighlights);
                 this.renderer.markDirty();
             },
             redo: () => {
-                applyMatrixState(newData, newRows, newCols, newHighlights, newPresent);
+                applyMatrixState(newData, oldHighlights);
                 this.renderer.markDirty();
             }
         });
-        // Auto-delete element if completely empty
-        if (!newPresent) {
-            this._deleteElement(el);
-            this.selectionManager.selectedElements = this.selectionManager.selectedElements.filter(e => e !== el);
-        }
         this.renderer.markDirty();
     }
 
@@ -1460,6 +1447,7 @@ class App {
     // ═════════════════════════════════════════════════════
     _createTextAt(wx, wy) {
         const el = new TextElement(wx, wy);
+        this._applyInheritedColor(el);
         el.autoSize(this.ctx);
         this.elements.push(el);
         this.layerManager._reindex();
@@ -1641,6 +1629,7 @@ class App {
         } else {
             el = new QueueElement(wx, wy);
         }
+        this._applyInheritedColor(el);
         el.strokeWidth = this.settings.defaultStrokeWidth || 2;
         this.elements.push(el);
         this.layerManager._reindex();
@@ -1741,6 +1730,7 @@ class App {
     // ═════════════════════════════════════════════════════
     _createTree(wx, wy) {
         const el = new TreeElement(wx, wy);
+        this._applyInheritedColor(el);
         el.strokeWidth = this.settings.defaultStrokeWidth || 2;
         this.elements.push(el);
         this.layerManager._reindex();
@@ -1848,6 +1838,7 @@ class App {
     // ═════════════════════════════════════════════════════
     _createGraph(wx, wy) {
         const el = new GraphElement(wx, wy);
+        this._applyInheritedColor(el);
         el.strokeWidth = this.settings.defaultStrokeWidth || 2;
         this.elements.push(el);
         this.layerManager._reindex();
@@ -2469,6 +2460,7 @@ class App {
     // ═════════════════════════════════════════════════════
     _createMarkdown(wx, wy) {
         const el = new MarkdownElement(wx, wy, '');
+        this._applyInheritedColor(el);
         this._showMarkdownDialog(el, true);
     }
 

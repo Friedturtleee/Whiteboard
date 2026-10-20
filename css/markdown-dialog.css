@@ -22,9 +22,9 @@
 .markdown-dialog {
     width: min(90vw, 960px);
     height: min(80vh, 640px);
-    background: var(--bg-panel, #1e1e2e);
-    border: 1px solid rgba(99,102,241,0.25);
-    border-radius: 14px;
+    background: #111;
+    border: 1px solid #3a3a3a;
+    border-radius: 10px;
     box-shadow: 0 20px 60px rgba(0,0,0,0.5), 0 0 0 1px rgba(255,255,255,0.04);
     display: flex;
     flex-direction: column;
@@ -43,7 +43,7 @@
     align-items: center;
     justify-content: space-between;
     padding: 14px 20px;
-    border-bottom: 1px solid rgba(255,255,255,0.06);
+    border-bottom: 1px solid #303030;
     flex-shrink: 0;
 }
 
@@ -63,11 +63,11 @@
     justify-content: center;
     width: 26px;
     height: 26px;
-    background: rgba(99,102,241,0.15);
+    background: #292929;
     border-radius: 6px;
     font-size: 12px;
     font-weight: 700;
-    color: #818cf8;
+    color: #fff;
 }
 
 /* ── Body (split pane) ─────────────────────── */
@@ -82,7 +82,7 @@
     flex: 1;
     display: flex;
     flex-direction: column;
-    border-right: 1px solid rgba(255,255,255,0.06);
+    border-right: 1px solid #303030;
     min-width: 0;
 }
 
@@ -91,7 +91,7 @@
     font-weight: 500;
     text-transform: uppercase;
     letter-spacing: 0.6px;
-    color: #888;
+    color: #aaa;
     padding: 8px 14px 4px;
     flex-shrink: 0;
 }
@@ -112,7 +112,7 @@
 }
 
 .markdown-editor-pane textarea::placeholder {
-    color: #555;
+    color: #777;
 }
 
 .markdown-preview-pane {
@@ -127,7 +127,7 @@
     font-weight: 500;
     text-transform: uppercase;
     letter-spacing: 0.6px;
-    color: #888;
+    color: #aaa;
     padding: 8px 14px 4px;
     flex-shrink: 0;
 }
@@ -139,38 +139,38 @@
     font-family: 'Inter', 'Zen Maru Gothic', -apple-system, sans-serif;
     font-size: 14px;
     line-height: 1.7;
-    color: #e0e0e0;
-    background: transparent;
+    color: #f2f2f2;
+    background: #111;
 }
 
 /* ── Preview markdown styles ───────────────── */
 .markdown-preview-content h1 {
     font-size: 24px; font-weight: 700; margin: 0 0 10px;
-    line-height: 1.2; color: #8ecbff;
+    line-height: 1.2; color: #fff;
 }
 .markdown-preview-content h2 {
     font-size: 20px; font-weight: 600; margin: 14px 0 8px;
-    line-height: 1.25; color: #8bd5ca;
+    line-height: 1.25; color: #eee;
 }
-.markdown-preview-content h3 { font-size: 17px; font-weight: 600; margin: 12px 0 6px; color: #c3a6ff; }
-.markdown-preview-content h4 { font-size: 15px; font-weight: 600; margin: 10px 0 4px; color: #f0c987; }
+.markdown-preview-content h3 { font-size: 17px; font-weight: 600; margin: 12px 0 6px; color: #ddd; }
+.markdown-preview-content h4 { font-size: 15px; font-weight: 600; margin: 10px 0 4px; color: #ccc; }
 .markdown-preview-content p { margin: 0 0 8px; }
 .markdown-preview-content ul, .markdown-preview-content ol { margin: 0 0 8px; padding-left: 22px; }
 .markdown-preview-content li { margin: 2px 0; }
 .markdown-preview-content blockquote {
     margin: 0 0 8px; padding: 0 0 0 12px;
-    border-left: 2px solid #80cbc4;
-    color: #aebbc7;
+    border-left: 2px solid #777;
+    color: #bbb;
 }
-.markdown-preview-content a { color: #82aaff; text-decoration: underline; text-decoration-color: rgba(130,170,255,0.45); }
-.markdown-preview-content strong { color: #f0c987; }
-.markdown-preview-content em { color: #8bd5ca; }
+.markdown-preview-content a { color: #fff; text-decoration: underline; text-decoration-color: #aaa; }
+.markdown-preview-content strong { color: #fff; }
+.markdown-preview-content em { color: #ddd; }
 .markdown-preview-content code {
     font-family: 'Fira Code', 'JetBrains Mono', Consolas, monospace;
     font-size: 12.5px;
     background: transparent;
     padding: 0;
-    color: #f2a2c0;
+    color: #eee;
 }
 .markdown-preview-content pre {
     margin: 0 0 10px; padding: 0;
@@ -178,15 +178,23 @@
     overflow-x: auto;
 }
 .markdown-preview-content pre code {
-    background: none; padding: 0;
-    font-size: 12.5px; line-height: 1.55; color: #e0e0e0;
+    background: #1b1b1b; padding: 8px;
+    font-size: 12.5px; line-height: 1.55; color: #eee;
 }
 .markdown-preview-content table { border-collapse: collapse; margin: 0 0 10px; width: 100%; }
 .markdown-preview-content th,
-.markdown-preview-content td { border-bottom: 1px solid rgba(140,160,180,0.24); padding: 5px 8px 5px 0; text-align: left; }
-.markdown-preview-content th { border-bottom: 1px solid rgba(140,160,180,0.5); color: #8ecbff; font-weight: 600; }
-.markdown-preview-content hr { border: none; border-top: 1px solid rgba(140,160,180,0.45); margin: 12px 0; }
+.markdown-preview-content td { border-bottom: 1px solid #333; padding: 5px 8px 5px 0; text-align: left; }
+.markdown-preview-content th { border-bottom: 1px solid #666; color: #fff; font-weight: 600; }
+.markdown-preview-content hr { border: none; border-top: 1px solid #555; margin: 12px 0; }
 .markdown-preview-content img { max-width: 100%; height: auto; }
+.markdown-preview-content .hljs {
+    background: #1b1b1b;
+}
+.markdown-preview-content .hljs span {
+    color: #e5e5e5;
+    background: transparent;
+}
+.markdown-preview-content .hljs .hljs-comment { color: #888; font-style: italic; }
 
 
 /* ── Footer ────────────────────────────────── */
@@ -196,7 +204,7 @@
     justify-content: flex-end;
     gap: 10px;
     padding: 12px 20px;
-    border-top: 1px solid rgba(255,255,255,0.06);
+    border-top: 1px solid #303030;
     flex-shrink: 0;
 }
 
@@ -211,36 +219,36 @@
 }
 
 .markdown-dialog-footer .md-btn-cancel {
-    background: rgba(255,255,255,0.06);
-    color: #aaa;
+    background: #252525;
+    color: #ddd;
 }
 .markdown-dialog-footer .md-btn-cancel:hover {
-    background: rgba(255,255,255,0.1);
-    color: #ccc;
+    background: #333;
+    color: #fff;
 }
 
 .markdown-dialog-footer .md-btn-confirm {
-    background: #6366f1;
-    color: #fff;
+    background: #f2f2f2;
+    color: #111;
 }
 .markdown-dialog-footer .md-btn-confirm:hover {
-    background: #7c7ff7;
+    background: #d5d5d5;
 }
 
 /* ── Scrollbar ─────────────────────────────── */
 .markdown-preview-content::-webkit-scrollbar { width: 6px; }
 .markdown-preview-content::-webkit-scrollbar-track { background: transparent; }
 .markdown-preview-content::-webkit-scrollbar-thumb {
-    background: rgba(255,255,255,0.1); border-radius: 3px;
+    background: #444; border-radius: 3px;
 }
 .markdown-preview-content::-webkit-scrollbar-thumb:hover {
-    background: rgba(255,255,255,0.18);
+    background: #666;
 }
 
 .markdown-editor-pane textarea::-webkit-scrollbar { width: 6px; }
 .markdown-editor-pane textarea::-webkit-scrollbar-track { background: transparent; }
 .markdown-editor-pane textarea::-webkit-scrollbar-thumb {
-    background: rgba(255,255,255,0.1); border-radius: 3px;
+    background: #444; border-radius: 3px;
 }
 
 /* ── KaTeX (LaTeX math) ────────────────────── */
@@ -256,10 +264,10 @@
     font-size: 1.1em;
 }
 .markdown-preview-content .katex-error {
-    color: #f07178;
+    color: #eee;
     font-family: 'Fira Code', monospace;
     font-size: 13px;
-    background: rgba(240,113,120,0.08);
+    background: #222;
     padding: 2px 6px;
     border-radius: 4px;
 }

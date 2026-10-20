@@ -246,7 +246,7 @@ export class MarkdownElement extends Element {
             padding: 0;
             font-family: Inter, 'Zen Maru Gothic', -apple-system, sans-serif;
             font-size: ${this.fontSize}px; line-height: 1.5;
-            color: #e0e0e0;
+            color: ${this.color || '#e0e0e0'};
             box-sizing: border-box;
             overflow: visible;
         `;

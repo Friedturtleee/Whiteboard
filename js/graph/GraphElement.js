@@ -400,11 +400,14 @@ export class GraphElement extends Element {
         const contentWidth = this.width - 40;
         const contentHeight = this.height - 40;
         const hasOverlaps = GraphLayout.hasOverlaps(nodeList, this.nodeRadius * 2 + 8);
+        const hasNodeEdgeOverlaps = GraphLayout.hasNodeEdgeOverlaps(
+            this.nodes, this.edges, this.nodeRadius
+        );
         const hasNodesOutsideFrame = nodeList.some(node =>
             node.x < padding || node.y < padding ||
             node.x > contentWidth - padding || node.y > contentHeight - padding
         );
-        if (hasOverlaps || hasNodesOutsideFrame) {
+        if (hasOverlaps || hasNodeEdgeOverlaps || hasNodesOutsideFrame) {
             const layoutSize = GraphLayout.layout(this.nodes, this.edges, {
                 width: Math.max(1, this.width - 40),
                 height: Math.max(1, this.height - 40),

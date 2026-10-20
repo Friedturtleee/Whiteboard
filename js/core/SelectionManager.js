@@ -10,13 +10,25 @@ export class SelectionManager {
         this.rubberBand = null;  // { x, y, w, h } in world coords
     }
 
+    _rememberSelectedColor() {
+        for (let index = this.selectedElements.length - 1; index >= 0; index--) {
+            const color = this.selectedElements[index]?.color;
+            if (typeof color === 'string' && color) {
+                this.app.currentColor = color;
+                return;
+            }
+        }
+    }
+
     clear() {
+        this._rememberSelectedColor();
         this.selectedElements = [];
         this.rubberBand = null;
         this.app.renderer.markDirty();
     }
 
     select(el) {
+        this._rememberSelectedColor();
         if (!el) {
             this.selectedElements = [];
             this.app.renderer.markDirty();
@@ -36,6 +48,7 @@ export class SelectionManager {
 
     toggleSelect(el) {
         if (!el) return;
+        this._rememberSelectedColor();
         const idx = this.selectedElements.indexOf(el);
         if (el.locked) {
             if (idx >= 0) {
@@ -49,6 +62,7 @@ export class SelectionManager {
         } else {
             this.selectedElements.push(el);
         }
+        this._rememberSelectedColor();
         this.app.renderer.markDirty();
     }
 
@@ -61,6 +75,7 @@ export class SelectionManager {
         }
         if (!this.selectedElements.includes(el)) {
             this.selectedElements.push(el);
+            this.app.currentColor = el.color || this.app.currentColor;
             this.app.renderer.markDirty();
         }
     }
@@ -70,7 +85,9 @@ export class SelectionManager {
     }
 
     selectAll() {
+        this._rememberSelectedColor();
         this.selectedElements = this.app.elements.filter(e => !e.hidden && !e.locked);
+        this._rememberSelectedColor();
         this.app.renderer.markDirty();
     }
 
@@ -93,6 +110,7 @@ export class SelectionManager {
     /** Finish rubber-band: select all elements intersecting the rect */
     finishRubberBand(additive = false) {
         if (!this.rubberBand) return;
+        this._rememberSelectedColor();
         const rb = this.rubberBand;
         this.selectedElements = additive
             ? this.selectedElements.filter(el => !el.locked && this.app.elements.includes(el))
@@ -107,6 +125,7 @@ export class SelectionManager {
             }
         }
         this.rubberBand = null;
+        this._rememberSelectedColor();
         this.app.renderer.markDirty();
     }
 
@@ -138,6 +157,7 @@ export class SelectionManager {
 
     /** Delete all selected elements */
     deleteSelected() {
+        this._rememberSelectedColor();
         const removed = [];
         for (const el of this.selectedElements) {
             if (el.locked) continue;

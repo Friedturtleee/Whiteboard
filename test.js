@@ -915,11 +915,14 @@ try {
         app.history.clear();
         matrix.selectedCells.add('0,0');
         app._deleteSelectedMatrixCells(matrix);
-        const matrixDeleted = !app.elements.includes(matrix);
+        const matrixCellCleared = app.elements.includes(matrix) && matrix.data[0][0] === '' &&
+            matrix.rows === 1 && matrix.cols === 1;
         app.history.undo();
-        const matrixRestored = app.elements.includes(matrix) && matrix.data[0][0] === '7';
+        const matrixRestored = app.elements.includes(matrix) && matrix.data[0][0] === '7' &&
+            matrix.rows === 1 && matrix.cols === 1;
         app.history.redo();
-        const matrixRedone = !app.elements.includes(matrix);
+        const matrixRedone = app.elements.includes(matrix) && matrix.data[0][0] === '' &&
+            matrix.rows === 1 && matrix.cols === 1;
 
         const queue = new QueueElement(20, 20);
         queue.setFromText('7');
@@ -934,7 +937,7 @@ try {
         app.history.redo();
         const queueRedone = !app.elements.includes(queue);
         app.history.clear();
-        return { matrixDeleted, matrixRestored, matrixRedone, queueDeleted, queueRestored, queueRedone };
+        return { matrixCellCleared, matrixRestored, matrixRedone, queueDeleted, queueRestored, queueRedone };
     });
     if (Object.values(historyRoundTrip).some(value => !value)) {
         throw new Error('A data-structure delete/undo/redo browser check failed.');
