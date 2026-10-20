@@ -42,7 +42,7 @@ export class TreeElement extends Element {
      * @param {string} mode - 'auto' | 'rooted' | 'parent' | 'edge' | 'values'
      * @returns {string|null} error message if validation fails, null on success
      */
-    buildFromText(text, mode = 'auto') {
+    buildFromText(text, mode = 'auto', forceZeroBased = false) {
         const input = String(text ?? '');
         if (input.length > MAX_TREE_INPUT_LENGTH) {
             return '樹資料不可超過 1 MB。';
@@ -53,7 +53,7 @@ export class TreeElement extends Element {
         let result;
 
         if (mode === 'auto') {
-            result = TreeParser.autoDetectAndParse(input, this.treeType);
+            result = TreeParser.autoDetectAndParse(input, this.treeType, forceZeroBased);
         } else if (mode === 'rooted') {
             const lines = input
                 .replace(/\r/g, '')

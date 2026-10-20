@@ -72,6 +72,7 @@ export class TextInputDialog {
         // Checkboxes row (directed + 0-based)
         let checkbox = null;       // directed
         let zeroBasedCb = null;    // 0-based
+        let zeroBasedWrap = null;
         if (opts.showDirectedCheckbox || opts.showZeroBasedCheckbox) {
             const cbRow = document.createElement('div');
             cbRow.style.cssText = 'margin-bottom:8px;display:flex;align-items:center;gap:14px;';
@@ -93,8 +94,8 @@ export class TextInputDialog {
             }
 
             if (opts.showZeroBasedCheckbox) {
-                const wrap = document.createElement('div');
-                wrap.style.cssText = 'display:flex;align-items:center;gap:6px;';
+                zeroBasedWrap = document.createElement('div');
+                zeroBasedWrap.style.cssText = 'display:flex;align-items:center;gap:6px;';
                 zeroBasedCb = document.createElement('input');
                 zeroBasedCb.type = 'checkbox';
                 zeroBasedCb.id = 'dialog-zerobased';
@@ -103,9 +104,9 @@ export class TextInputDialog {
                 cbLabel.htmlFor = 'dialog-zerobased';
                 cbLabel.textContent = '0-based';
                 cbLabel.style.textTransform = 'none';
-                wrap.appendChild(zeroBasedCb);
-                wrap.appendChild(cbLabel);
-                cbRow.appendChild(wrap);
+                zeroBasedWrap.appendChild(zeroBasedCb);
+                zeroBasedWrap.appendChild(cbLabel);
+                cbRow.appendChild(zeroBasedWrap);
             }
 
             dialog.appendChild(cbRow);
@@ -253,6 +254,9 @@ export class TextInputDialog {
         const updatePlaceholder = () => {
             textarea.placeholder = opts.getPlaceholder?.(_getValues()) || opts.placeholder || '在此輸入…';
             formatHint.textContent = textarea.placeholder.split('\n')[0];
+            if (zeroBasedWrap && Array.isArray(opts.zeroBasedModes)) {
+                zeroBasedWrap.hidden = !opts.zeroBasedModes.includes(_getValues().mode);
+            }
         };
         updatePlaceholder();
 

@@ -41,7 +41,7 @@ export class TreeParser {
      * @param {string} treeType - 'tree' | 'bst' | 'avl' | 'rb' | 'euler'
      * @returns {{ root, nodes, error, hasWeights, format }}
      */
-    static autoDetectAndParse(text, treeType = 'tree') {
+    static autoDetectAndParse(text, treeType = 'tree', forceZeroBased = false) {
         if (typeof text !== 'string') {
             return { root: null, nodes: new Map(), error: '樹資料必須是文字。' };
         }
@@ -59,7 +59,7 @@ export class TreeParser {
         // The explicit rooted parser remains available for older saved input.
         if (tokenCounts[0] === 1 && NON_NEGATIVE_INTEGER_TOKEN.test(lines[0]) &&
             (lines.length === 1 || tokenCounts.slice(1).some(count => count >= 2))) {
-            return TreeParser.parseContestFormat(lines);
+            return TreeParser.parseContestFormat(lines, forceZeroBased);
         }
 
         // Single line with multiple values → value list for auto-build
@@ -93,7 +93,7 @@ export class TreeParser {
      * containing an undirected edge u v [weight]. Node IDs are either 1..N or
      * 0..N-1; if zero appears, it is the visual root.
      */
-    static parseContestFormat(lines) {
+    static parseContestFormat(lines, forceZeroBased = false) {
         const invalid = error => ({
             root: null, nodes: new Map(), error, hasWeights: false, format: 'contest'
         });
@@ -116,7 +116,7 @@ export class TreeParser {
         // AtCoder inputs sometimes number vertices from 0. Since vertex 0
         // cannot occur in a valid 1-based tree, use it as an unambiguous base
         // marker and otherwise keep the conventional 1-based root.
-        let startId = 1;
+        let startId = forceZeroBased ? 0 : 1;
         for (let lineIndex = 1; lineIndex < lines.length; lineIndex++) {
             const parts = String(lines[lineIndex]).trim().split(/\s+/);
             if ((NON_NEGATIVE_INTEGER_TOKEN.test(parts[0]) && Number(parts[0]) === 0) ||

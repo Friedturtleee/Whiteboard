@@ -1920,7 +1920,7 @@ class App {
         this.textInputDialog.show({
             element: el,
             title: '編輯樹',
-            placeholder: '競程格式：第一行 N，接著 N-1 行無向邊 u v（節點編號可用 1 到 N，或 0 到 N-1）\n例：\n4\n2 1\n2 3\n4 2\n\n加權樹可輸入 u v w',
+            placeholder: '競程格式：第一行 N，接著 N-1 行無向邊 u v（節點編號可用 1 到 N，或 0 到 N-1）\n例：\n4\n2 1\n2 3\n4 2\n\n加權樹可輸入 u v w。N=1 時沒有邊可判斷編號，請用 0-based 選項指定。',
             getPlaceholder: ({ mode }) => ({
                 rooted: '第一行 N，接著 N-1 行：父節點 子節點 [權重]\n例：\n4\n2 1\n2 3\n4 2',
                 parent: '每行填一個父節點編號，第 i 行代表節點 i 的父節點（根填 0）\n例：\n0\n1\n1\n2',
@@ -1929,6 +1929,9 @@ class App {
             })[mode],
             defaultText: originalText,
             showTypeSelect: true,
+            showZeroBasedCheckbox: true,
+            zeroBasedModes: ['auto'],
+            zeroBased: el.root?.value === '0',
             types: [
                 { value: 'tree', label: '一般樹', selected: el.treeType === 'tree' },
                 { value: 'binary', label: '二元樹', selected: el.treeType === 'binary' },
@@ -1942,11 +1945,11 @@ class App {
             ],
             showModeSelect: true,
             mode: el.inputMode || 'auto',
-            onInput: (text, type, mode) => {
+            onInput: (text, type, mode, _directed, zeroBased) => {
                 if (!text.trim()) return;
                 const prevType = el.treeType;
                 if (type) el.treeType = type;
-                const error = el.buildFromText(text, mode || 'auto');
+                const error = el.buildFromText(text, mode || 'auto', zeroBased);
                 if (!type || error) el.treeType = prevType;
                 this.renderer.markDirty();
                 return error;
@@ -1963,10 +1966,10 @@ class App {
                 this.renderer.markDirty();
                 this._refreshUI();
             },
-            onConfirm: (text, type, mode) => {
+            onConfirm: (text, type, mode, _directed, zeroBased) => {
                 const prevType = el.treeType;
                 if (type) el.treeType = type;
-                const error = el.buildFromText(text, mode || 'auto');
+                const error = el.buildFromText(text, mode || 'auto', zeroBased);
                 if (error) {
                     el.treeType = prevType;
                     return error;
