@@ -1,6 +1,8 @@
 /**
  * GraphRenderer — draws graph nodes and edges on canvas.
  */
+import { fitCanvasTextFontSize } from '../core/CanvasTextFit.js';
+
 const edgeMetadataCache = new WeakMap();
 const edgeLabelWidthCaches = new WeakMap();
 
@@ -30,7 +32,8 @@ function getEdgeMetadata(nodes, edges, directed) {
             if (!isCurrent) break;
             const edge = edges[index];
             if (cached.sources[index] !== edge.u ||
-                cached.targets[index] !== edge.v || cached.edgeDirections[index] !== edge.directed) {
+                cached.targets[index] !== edge.v || cached.edgeDirections[index] !== edge.directed ||
+                cached.weightedEdges[index] !== (edge.w != null && edge.w !== '')) {
                 isCurrent = false;
                 break;
             }
@@ -39,6 +42,7 @@ function getEdgeMetadata(nodes, edges, directed) {
     }
 
     const laneCounts = new Map();
+    const weightedGroups = new Set();
     const groupKeys = new Array(edges.length);
     const sourceNodes = new Array(edges.length);
     const targetNodes = new Array(edges.length);
@@ -60,17 +64,20 @@ function getEdgeMetadata(nodes, edges, directed) {
         const key = getEdgeGroupKey(edge, directed, source, target);
         groupKeys[index] = key;
         laneCounts.set(key, (laneCounts.get(key) || 0) + 1);
+        if (edge.w != null && edge.w !== '') weightedGroups.add(key);
         if (edge.directed) hasDirectedEdges = true;
     }
 
     const edgeOffsets = new Float64Array(edges.length);
     const edgeLaneIndices = new Uint32Array(edges.length);
+    const edgeSpacings = new Float64Array(edges.length);
     const laneIndices = new Map();
     for (let index = 0; index < edges.length; index++) {
         const key = groupKeys[index];
         const laneIndex = laneIndices.get(key) || 0;
         edgeLaneIndices[index] = laneIndex;
-        edgeOffsets[index] = (laneIndex - (laneCounts.get(key) - 1) / 2) * 8;
+        edgeSpacings[index] = weightedGroups.has(key) ? 22 : 8;
+        edgeOffsets[index] = (laneIndex - (laneCounts.get(key) - 1) / 2) * edgeSpacings[index];
         laneIndices.set(key, laneIndex + 1);
     }
 
@@ -99,11 +106,13 @@ function getEdgeMetadata(nodes, edges, directed) {
         targetNodes,
         edgeOffsets,
         edgeLaneIndices,
+        edgeSpacings,
         edgeOrientations,
         edgeHasReverse,
         sources: edges.map(edge => edge.u),
         targets: edges.map(edge => edge.v),
-        edgeDirections: edges.map(edge => edge.directed)
+        edgeDirections: edges.map(edge => edge.directed),
+        weightedEdges: edges.map(edge => edge.w != null && edge.w !== '')
     };
     edgeMetadataCache.set(edges, metadata);
     return metadata;
@@ -122,7 +131,89 @@ function getEdgeGroupKey(edge, directed, source = String(edge.u), target = Strin
     return `${isDirected ? 'd' : 'u'}${u.length}:${u}${v.length}:${v}`;
 }
 
+function edgePath(u, v, radius, offset) {
+    const dx = v.x - u.x, dy = v.y - u.y;
+    const length = Math.hypot(dx, dy) || 1;
+    const ux = dx / length, uy = dy / length;
+    if (Math.abs(offset) < 1e-6) {
+        const trim = Math.min(radius, length / 2);
+        return { sx: u.x + ux * trim, sy: u.y + uy * trim,
+            ex: v.x - ux * trim, ey: v.y - uy * trim, cx: null, cy: null,
+            labelX: (u.x + v.x) / 2, labelY: (u.y + v.y) / 2, angle: Math.atan2(dy, dx) };
+    }
+    const cx = (u.x + v.x) / 2 - uy * offset * 2;
+    const cy = (u.y + v.y) / 2 + ux * offset * 2;
+    const fromLength = Math.hypot(cx - u.x, cy - u.y) || 1;
+    const toLength = Math.hypot(cx - v.x, cy - v.y) || 1;
+    const sx = u.x + (cx - u.x) / fromLength * radius;
+    const sy = u.y + (cy - u.y) / fromLength * radius;
+    const ex = v.x + (cx - v.x) / toLength * radius;
+    const ey = v.y + (cy - v.y) / toLength * radius;
+    return { sx, sy, ex, ey, cx, cy, labelX: (sx + 2 * cx + ex) / 4,
+        labelY: (sy + 2 * cy + ey) / 4, angle: Math.atan2(ey - cy, ex - cx) };
+}
+
+function pointOnEdge(path, t) {
+    const a = (1 - t) ** 2, b = 2 * (1 - t) * t, c = t * t;
+    return { x: a * path.sx + b * path.cx + c * path.ex,
+        y: a * path.sy + b * path.cy + c * path.ey };
+}
+
+function pathOffset(metadata, index, edge, directed) {
+    if (edge.directed || directed) {
+        // Keep every lane of each direction on its own side. Centering both
+        // groups around +10 lets the outer lanes cross into the reverse group.
+        return metadata.edgeHasReverse[index]
+            ? Math.max(10, metadata.edgeSpacings[index] / 2) +
+                metadata.edgeLaneIndices[index] * metadata.edgeSpacings[index]
+            : metadata.edgeOffsets[index];
+    }
+    return metadata.edgeOffsets[index] * metadata.edgeOrientations[index];
+}
+
 export class GraphRenderer {
+    /** Bounds include the visible lanes, self-loops, and their weight labels. */
+    static getContentBounds(nodes, edges, opts = {}) {
+        if (!nodes.size) return null;
+        const r = opts.nodeRadius || 20;
+        const directed = opts.directed || false;
+        const metadata = getEdgeMetadata(nodes, edges, directed);
+        let minX = Infinity, minY = Infinity, maxX = -Infinity, maxY = -Infinity;
+        const include = (x, y, rx = 0, ry = rx) => {
+            minX = Math.min(minX, x - rx); minY = Math.min(minY, y - ry);
+            maxX = Math.max(maxX, x + rx); maxY = Math.max(maxY, y + ry);
+        };
+        for (const node of nodes.values()) include(node.x, node.y, r);
+        for (let index = 0; index < edges.length; index++) {
+            const edge = edges[index], u = metadata.sourceNodes[index], v = metadata.targetNodes[index];
+            if (!u || !v) continue;
+            let labelX, labelY;
+            if (edge.u === edge.v) {
+                const loopR = r * 0.75 + metadata.edgeLaneIndices[index] * metadata.edgeSpacings[index];
+                include(u.x, u.y - r - loopR, loopR + 1);
+                labelX = u.x; labelY = u.y - r - loopR * 2 - 12;
+            } else {
+                const path = edgePath(u, v, r, pathOffset(metadata, index, edge, directed));
+                include(path.sx, path.sy, 2); include(path.ex, path.ey, 2);
+                if (path.cx !== null) {
+                    for (const [s, c, e] of [[path.sx, path.cx, path.ex], [path.sy, path.cy, path.ey]]) {
+                        const denominator = s - 2 * c + e;
+                        const t = denominator ? (s - c) / denominator : -1;
+                        if (t > 0 && t < 1) {
+                            const point = pointOnEdge(path, t);
+                            include(point.x, point.y, 2);
+                        }
+                    }
+                }
+                labelX = path.labelX; labelY = path.labelY;
+            }
+            if (edge.w != null && edge.w !== '') {
+                include(labelX, labelY, String(edge.w).length * 3.1 + 5, 10);
+            }
+        }
+        return { minX, minY, maxX, maxY };
+    }
+
     /**
      * Draw the entire graph.
      * @param {CanvasRenderingContext2D} ctx
@@ -143,7 +234,7 @@ export class GraphRenderer {
         // redraws and hit tests while detecting in-place topology edits.
         const edgeMetadata = getEdgeMetadata(nodes, edges, directed);
         const {
-            edgeOffsets, edgeLaneIndices, edgeOrientations, edgeHasReverse,
+            edgeLaneIndices, edgeSpacings,
             sourceNodes, targetNodes
         } = edgeMetadata;
         const edgeLabelWidths = getEdgeLabelWidthCache(ctx);
@@ -170,7 +261,7 @@ export class GraphRenderer {
             // ── Self-loop ────────────────────────────────────────────
             if (e.u === e.v) {
                 const nx = u.x + ox, ny = u.y + oy;
-                const loopR = r * 0.75 + edgeLaneIndices[edgeIndex] * 8;
+                const loopR = r * 0.75 + edgeLaneIndices[edgeIndex] * edgeSpacings[edgeIndex];
                 // Draw the loop as a circle sitting on top of the node
                 ctx.beginPath();
                 ctx.arc(nx, ny - r - loopR, loopR, 0, Math.PI * 2);
@@ -187,39 +278,23 @@ export class GraphRenderer {
                     ctx.lineTo(tipX + 4, tipY - 8);
                     ctx.stroke();
                 }
+                GraphRenderer._drawEdgeLabel(ctx, e, nx, ny - r - loopR * 2 - 12,
+                    color, edgeAlpha, edgeLabelWidths);
                 ctx.globalAlpha = opacity;
                 continue;
             }
 
-            const x1 = u.x + ox, y1 = u.y + oy;
-            const x2 = v.x + ox, y2 = v.y + oy;
-
-            // Check if there is also a reverse edge (bidirectional pair)
-            const hasBidirectional = isDirected && edgeHasReverse[edgeIndex] === 1;
-
+            const path = edgePath(u, v, r, pathOffset(edgeMetadata, edgeIndex, e, directed));
+            ctx.beginPath();
+            ctx.moveTo(path.sx + ox, path.sy + oy);
+            if (path.cx === null) ctx.lineTo(path.ex + ox, path.ey + oy);
+            else ctx.quadraticCurveTo(path.cx + ox, path.cy + oy, path.ex + ox, path.ey + oy);
+            ctx.stroke();
             if (isDirected) {
-                const angle = Math.atan2(y2 - y1, x2 - x1);
-
-                // Offset perpendicular so bidirectional edges don't overlap
-                // The perpendicular vector reverses with edge direction, so
-                // the same signed offset places reciprocal edges on opposite
-                // physical sides of the node pair.
-                const offset = (hasBidirectional ? 10 : 0) + edgeOffsets[edgeIndex];
-                const perpX = -Math.sin(angle) * offset;
-                const perpY =  Math.cos(angle) * offset;
-
-                const sx = x1 + r * Math.cos(angle) + perpX;
-                const sy = y1 + r * Math.sin(angle) + perpY;
-                const ex = x2 - r * Math.cos(angle) + perpX;
-                const ey = y2 - r * Math.sin(angle) + perpY;
-
-                ctx.beginPath();
-                ctx.moveTo(sx, sy);
-                ctx.lineTo(ex, ey);
-                ctx.stroke();
-
                 // Arrowhead
                 const headLen = 10;
+                const { angle } = path;
+                const ex = path.ex + ox, ey = path.ey + oy;
                 ctx.beginPath();
                 ctx.moveTo(ex, ey);
                 ctx.lineTo(ex - headLen * Math.cos(angle - 0.35), ey - headLen * Math.sin(angle - 0.35));
@@ -227,26 +302,9 @@ export class GraphRenderer {
                 ctx.lineTo(ex - headLen * Math.cos(angle + 0.35), ey - headLen * Math.sin(angle + 0.35));
                 ctx.stroke();
 
-                GraphRenderer._drawEdgeLabel(
-                    ctx, e, (sx + ex) / 2, (sy + ey) / 2, color, edgeAlpha, edgeLabelWidths
-                );
-            } else {
-                const dx = x2 - x1;
-                const dy = y2 - y1;
-                const length = Math.sqrt(dx * dx + dy * dy);
-                const orientation = edgeOrientations[edgeIndex];
-                const offset = edgeOffsets[edgeIndex] * orientation;
-                const perpX = length ? -dy / length * offset : 0;
-                const perpY = length ? dx / length * offset : 0;
-                ctx.beginPath();
-                ctx.moveTo(x1 + perpX, y1 + perpY);
-                ctx.lineTo(x2 + perpX, y2 + perpY);
-                ctx.stroke();
-                GraphRenderer._drawEdgeLabel(
-                    ctx, e, (x1 + x2) / 2 + perpX, (y1 + y2) / 2 + perpY,
-                    color, edgeAlpha, edgeLabelWidths
-                );
             }
+            GraphRenderer._drawEdgeLabel(ctx, e, path.labelX + ox, path.labelY + oy,
+                color, edgeAlpha, edgeLabelWidths);
 
             ctx.globalAlpha = opacity;
         }
@@ -273,7 +331,10 @@ export class GraphRenderer {
             ctx.font = '13px Consolas, monospace';
             ctx.textAlign = 'center';
             ctx.textBaseline = 'middle';
-            ctx.fillText(node.label || id, nx, ny, r * 2 - 4);
+            const label = String(node.label || id);
+            const fontSize = fitCanvasTextFontSize(ctx, label, 13, r * 2 - 6, r * 1.5);
+            ctx.font = `${fontSize}px Consolas, monospace`;
+            ctx.fillText(label, nx, ny);
 
             // Node weight (shown below the circle)
             if (node.nodeWeight != null) {
@@ -350,7 +411,7 @@ export class GraphRenderer {
 
         const edgeMetadata = getEdgeMetadata(nodes, edges, directed);
         const {
-            edgeOffsets, edgeLaneIndices, edgeOrientations, edgeHasReverse,
+            edgeLaneIndices, edgeSpacings,
             sourceNodes, targetNodes
         } = edgeMetadata;
         let closestEdge = null;
@@ -363,11 +424,10 @@ export class GraphRenderer {
             if (!u || !v) continue;
 
             const laneIndex = edgeLaneIndices[edgeIndex];
-            const laneOffset = edgeOffsets[edgeIndex];
 
             // Self-loop: hit-test its loop circle
             if (e.u === e.v) {
-                const loopR = r * 0.75 + laneIndex * 8;
+                const loopR = r * 0.75 + laneIndex * edgeSpacings[edgeIndex];
                 const lx = u.x + ox;
                 const ly = u.y + oy - r - loopR;
                 const loopDx = wx - lx;
@@ -381,31 +441,30 @@ export class GraphRenderer {
                 continue;
             }
 
-            const x1 = u.x + ox, y1 = u.y + oy;
-            const x2 = v.x + ox, y2 = v.y + oy;
-            const isDirected = e.directed || directed;
-            const hasBidirectional = isDirected && edgeHasReverse[edgeIndex] === 1;
-            const orientation = edgeOrientations[edgeIndex];
-            const laneOffsetWithReverse = (hasBidirectional ? 10 : 0) + laneOffset;
-            const offset = isDirected ? laneOffsetWithReverse : laneOffset * orientation;
-            const boundsPadding = r + Math.abs(offset) + tol;
-            if (wx < Math.min(x1, x2) - boundsPadding ||
-                wx > Math.max(x1, x2) + boundsPadding ||
-                wy < Math.min(y1, y2) - boundsPadding ||
-                wy > Math.max(y1, y2) + boundsPadding) {
+            const path = edgePath(u, v, r, pathOffset(edgeMetadata, edgeIndex, e, directed));
+            const px = wx - ox, py = wy - oy;
+            const minX = Math.min(path.sx, path.ex, path.cx ?? path.sx) - tol;
+            const maxX = Math.max(path.sx, path.ex, path.cx ?? path.sx) + tol;
+            const minY = Math.min(path.sy, path.ey, path.cy ?? path.sy) - tol;
+            const maxY = Math.max(path.sy, path.ey, path.cy ?? path.sy) + tol;
+            if (px < minX || px > maxX || py < minY || py > maxY) {
                 continue;
             }
-
-            const angle = Math.atan2(y2 - y1, x2 - x1);
-            const perpX = -Math.sin(angle) * offset;
-            const perpY =  Math.cos(angle) * offset;
-
-            const sx = x1 + r * Math.cos(angle) + perpX;
-            const sy = y1 + r * Math.sin(angle) + perpY;
-            const ex = x2 - r * Math.cos(angle) + perpX;
-            const ey = y2 - r * Math.sin(angle) + perpY;
-
-            const distanceSquared = _ptSegDistSquared(wx, wy, sx, sy, ex, ey);
+            let distanceSquared;
+            if (path.cx === null) {
+                distanceSquared = _ptSegDistSquared(px, py, path.sx, path.sy, path.ex, path.ey);
+            } else {
+                distanceSquared = Infinity;
+                const curvature = Math.hypot(path.sx - 2 * path.cx + path.ex, path.sy - 2 * path.cy + path.ey);
+                const segments = Math.min(256, Math.max(12, Math.ceil(Math.sqrt(curvature / Math.max(0.1, tol)))));
+                let previous = { x: path.sx, y: path.sy };
+                for (let step = 1; step <= segments; step++) {
+                    const point = pointOnEdge(path, step / segments);
+                    distanceSquared = Math.min(distanceSquared,
+                        _ptSegDistSquared(px, py, previous.x, previous.y, point.x, point.y));
+                    previous = point;
+                }
+            }
             if (distanceSquared < closestDistance * closestDistance) {
                 closestEdge = e;
                 closestDistance = Math.sqrt(distanceSquared);

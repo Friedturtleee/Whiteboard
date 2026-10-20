@@ -8,6 +8,7 @@ import { Camera } from './canvas/Camera.js';
 import { Grid } from './canvas/Grid.js';
 import { Renderer } from './canvas/Renderer.js';
 import { HitTest } from './canvas/HitTest.js';
+import { layoutCanvasCellText } from './core/CanvasTextFit.js';
 
 // ── Core ────────────────────────────────────────────────
 import { SelectionManager } from './core/SelectionManager.js';
@@ -15,7 +16,7 @@ import { LayerManager } from './core/LayerManager.js';
 import { Transform } from './core/Transform.js';
 import { History } from './core/History.js';
 import { Serializer } from './core/Serializer.js';
-import { formatDataToken, splitDataTokens } from './core/DataTokens.js';
+import { formatDataToken, splitDataTokens, parsePastedMatrixRows } from './core/DataTokens.js';
 
 // ── Elements ────────────────────────────────────────────
 import { ShapeElement } from './elements/ShapeElement.js';
@@ -34,6 +35,8 @@ import { Toolbar } from './ui/Toolbar.js';
 import { PropertyPanel } from './ui/PropertyPanel.js';
 import { LayerPanel } from './ui/LayerPanel.js';
 import { TextInputDialog } from './ui/TextInputDialog.js';
+import { initInterface } from './ui/Interface.js';
+import { bindModal } from './ui/Modal.js';
 import { CloudBoards } from './network/CloudBoards.js';
 
 const isEmptyDataStructureInput = value => {
@@ -72,6 +75,7 @@ class App {
         this._lastPanScreen = null;    // { sx, sy }
         this._textEditing = null;      // element being text-edited
         this._inlineEdit = null;
+        this._matrixCellSelection = null;
         this._markdownDialogCancel = null;
         this._markdownDialogConfirm = null;
         this._markdownDialogClose = null;
@@ -102,6 +106,7 @@ class App {
         this.propertyPanel = new PropertyPanel(this);
         this.layerPanel = new LayerPanel(this);
         this.textInputDialog = new TextInputDialog(this);
+        initInterface();
 
         // ── Bind Events ─────────────────────────────────
         // ── Settings ────────────────────────────────────
@@ -120,6 +125,7 @@ class App {
         this._bindMouse();
         this._bindWheel();
         this._bindKeyboard();
+        this._bindMatrixClipboard();
         
         // Ensure web fonts are fully loaded before rendering
         if (document.fonts && document.fonts.ready) {
@@ -195,15 +201,17 @@ class App {
     }
 
     _initCamera() {
-        const hw = this.canvas.width / 2;
-        const hh = this.canvas.height / 2;
+        const hw = this.canvas.clientWidth / (2 * this.camera.zoom);
+        const hh = this.canvas.clientHeight / (2 * this.camera.zoom);
         this.camera.x = -hw;
         this.camera.y = -hh;
     }
 
     _bindResize() {
         window.addEventListener('resize', () => {
+            this._finishInlineEditing();
             this._resizeCanvas();
+            if (this._textEditing) this._updateTextEditingOverlay();
             this.renderer.markDirty();
         });
     }
@@ -212,10 +220,20 @@ class App {
     // Helper – toast notification
     // ═════════════════════════════════════════════════════
     _toast(msg, duration = 2000) {
+        let region = document.getElementById('toast-region');
+        if (!region) {
+            region = document.createElement('div');
+            region.id = 'toast-region';
+            region.setAttribute('role', 'status');
+            region.setAttribute('aria-live', 'polite');
+            document.body.appendChild(region);
+        }
         const t = document.createElement('div');
         t.className = 'toast';
         t.textContent = msg;
-        document.body.appendChild(t);
+        t.style.setProperty('--toast-duration', `${duration}ms`);
+        region.appendChild(t);
+        while (region.children.length > 3) region.firstElementChild.remove();
         setTimeout(() => t.remove(), duration + 300);
     }
 
@@ -225,7 +243,34 @@ class App {
     _updateZoomDisplay() {
         const el = document.getElementById('zoom-display');
         // 150% 實際縮放展示為 100%
-        if (el) el.textContent = Math.round(this.camera.zoom / 1.5 * 100) + '%';
+        const percent = this.camera.zoom / 1.5 * 100;
+        if (el) el.textContent = (percent < 1 ? percent.toPrecision(2) : Math.round(percent)) + '%';
+    }
+
+    _fitView(elements = this.elements) {
+        this._finishInlineEditing();
+        this._finishTextEditing();
+        const present = new Set(this.elements);
+        const bounds = elements.filter(el => !el.hidden && present.has(el)).map(el => el.getRotatedBounds());
+        if (!bounds.length) return false;
+        const minX = Math.min(...bounds.map(b => b.x)), minY = Math.min(...bounds.map(b => b.y));
+        const maxX = Math.max(...bounds.map(b => b.x + b.w)), maxY = Math.max(...bounds.map(b => b.y + b.h));
+        const canvas = this.canvas.getBoundingClientRect();
+        const toolbar = document.getElementById('toolbar').getBoundingClientRect();
+        const panels = document.getElementById('right-panels').getBoundingClientRect();
+        const topbar = document.getElementById('top-bar').getBoundingClientRect();
+        const zoombar = document.getElementById('zoom-bar').getBoundingClientRect();
+        const left = Math.max(24, toolbar.right - canvas.left + 20);
+        const top = Math.max(24, topbar.bottom - canvas.top + 20);
+        const right = Math.min(canvas.width - 24, panels.left - canvas.left - 20);
+        const bottom = Math.min(canvas.height - 24, zoombar.top - canvas.top - 20);
+        const changed = this.camera.fitBounds({ x: minX, y: minY, w: maxX - minX, h: maxY - minY }, {
+            x: left, y: top, width: Math.max(24, right - left), height: Math.max(24, bottom - top)
+        });
+        if (changed) {
+            this._updateZoomDisplay(); this.renderer.markDirty(); this._autosave();
+        }
+        return changed;
     }
 
     // ═════════════════════════════════════════════════════
@@ -236,6 +281,7 @@ class App {
 
         $('btn-undo')?.addEventListener('click', () => { this.history.undo(); this._refreshUI(); });
         $('btn-redo')?.addEventListener('click', () => { this.history.redo(); this._refreshUI(); });
+        $('btn-fit-view')?.addEventListener('click', () => this._fitView());
 
         $('btn-zoom-in')?.addEventListener('click', () => {
             const cx = this.canvas.clientWidth / 2;
@@ -254,7 +300,8 @@ class App {
             this._autosave();
         });
         $('zoom-display')?.addEventListener('click', () => {
-            this.camera.reset();
+            this._finishInlineEditing();
+            this.camera.zoomTo(1.5, this.canvas.clientWidth / 2, this.canvas.clientHeight / 2);
             this._updateZoomDisplay();
             this.renderer.markDirty();
             this._autosave();
@@ -266,9 +313,15 @@ class App {
         $('btn-import-json')?.addEventListener('click', () => $('json-file-input').click());
         $('btn-settings')?.addEventListener('click', () => {
             const modal = document.getElementById('settings-modal');
-            if (modal) {
-                modal.classList.toggle('open');
-                if (modal.classList.contains('open')) this._syncSettingsUI();
+            if (!modal) return;
+            if (modal.classList.contains('open')) this._closeSettings();
+            else {
+                this._syncSettingsUI();
+                modal.classList.add('open');
+                this._releaseSettingsModal = bindModal(document.getElementById('settings-panel'), {
+                    onCancel: () => this._closeSettings(),
+                    initialFocus: document.getElementById('settings-close')
+                });
             }
         });
         $('json-file-input')?.addEventListener('change', async (e) => {
@@ -477,6 +530,10 @@ class App {
         }
 
         // ── Transform (drag / resize / rotate) ─────
+        if (this._matrixCellSelection) {
+            this._updateMatrixCellSelection(wx, wy);
+            return;
+        }
         if (this.transform.mode) {
             this.transform.update(wx, wy, e.shiftKey);
             // Compute snap preview for endpoint drag
@@ -517,10 +574,15 @@ class App {
     }
 
     _finishPointerUp(e) {
+        const { x: wx, y: wy } = this._worldPos(e);
+        if (this._matrixCellSelection) {
+            this._updateMatrixCellSelection(wx, wy);
+            this._matrixCellSelection = null;
+            this.canvas.style.cursor = '';
+        }
         if (e.pointerId !== undefined && e.pointerId !== null) {
             try { this.canvas.releasePointerCapture(e.pointerId); } catch(err) {}
         }
-        const { x: wx, y: wy } = this._worldPos(e);
 
         // ── Revert temporary right-click tool toggle ──
         if (e.button === 2 && this._tempRightClickTool) {
@@ -716,7 +778,7 @@ class App {
             pointerId !== this._activePointerId) return;
         const hasActiveInteraction = this._isPanning || this._isPenDrawing || this._isCreating ||
             this.transform.mode || this.selectionManager.rubberBand || this._edgePreview ||
-            this._tempRightClickTool;
+            this._tempRightClickTool || this._matrixCellSelection;
         if (!hasActiveInteraction) {
             const activePointerId = this._activePointerId;
             this._activePointerId = null;
@@ -754,6 +816,7 @@ class App {
         this.transform.cancel();
         if (this.selectionManager.rubberBand) this.selectionManager.rubberBand = null;
         this._edgePreview = null;
+        this._matrixCellSelection = null;
         this._snapPreview = null;
         const activePointerId = this._activePointerId;
         this._activePointerId = null;
@@ -909,6 +972,9 @@ class App {
                     }
 
                     const key = `${cell.row},${cell.col}`;
+                    const initialCells = new Set(hit.selectedCells);
+                    const anchor = e.shiftKey && hit._lastCellKey
+                        ? hit._lastCellKey.split(',').map(Number) : [cell.row, cell.col];
                     if (e.ctrlKey || e.metaKey) {
                         if (hit.selectedCells.has(key)) hit.selectedCells.delete(key);
                         else hit.selectedCells.add(key);
@@ -920,10 +986,17 @@ class App {
                             }
                         }
                     } else {
-                        hit.selectedCells.clear();
+                        // Preserve an existing multi-selection when clicking
+                        // inside it, so a double-click can open batch editing.
+                        if (!hit.selectedCells.has(key)) hit.selectedCells.clear();
                         hit.selectedCells.add(key);
                     }
                     hit._lastCellKey = key;
+                    this._matrixCellSelection = {
+                        element: hit, row: anchor[0], col: anchor[1], endKey: key,
+                        baseCells: e.ctrlKey || e.metaKey || e.shiftKey ? initialCells : new Set()
+                    };
+                    this.canvas.style.cursor = 'cell';
                     this._refreshUI();
                     return;
                 }
@@ -1252,6 +1325,30 @@ class App {
         return this.currentColor || '#e0e0e0';
     }
 
+    _updateMatrixCellSelection(wx, wy) {
+        const drag = this._matrixCellSelection;
+        if (!drag) return;
+        const el = drag.element;
+        if (el.locked || el.hidden || !this.elements.includes(el) || !el.rows || !el.cols) {
+            this._matrixCellSelection = null;
+            return;
+        }
+        const point = el.toLocalPoint(wx, wy);
+        const row = Math.max(0, Math.min(el.rows - 1, Math.floor((point.y - el.y - 10) / el.cellSize)));
+        const col = Math.max(0, Math.min(el.cols - 1, Math.floor((point.x - el.x - 10) / el.cellSize)));
+        const key = `${row},${col}`;
+        if (key === drag.endKey) return;
+        drag.endKey = key;
+        el.selectedCells = new Set(drag.baseCells);
+        for (let r = Math.min(drag.row, row); r <= Math.max(drag.row, row); r++) {
+            for (let c = Math.min(drag.col, col); c <= Math.max(drag.col, col); c++) {
+                el.selectedCells.add(`${r},${c}`);
+            }
+        }
+        el._lastCellKey = `${drag.row},${drag.col}`;
+        this._refreshUI();
+    }
+
     _applyInheritedColor(element) {
         if (!element) return;
         element.color = this._getInheritedColor();
@@ -1306,7 +1403,7 @@ class App {
                 this.renderer.markDirty();
             }
         });
-        this.renderer.markDirty();
+        this._refreshUI();
     }
 
     _editSelectedMatrixCells(el) {
@@ -1326,39 +1423,98 @@ class App {
             placeholder: `依列、欄順序輸入 ${cells.length} 個值（空格或換行分隔）。\n只輸入一個值會套用到全部選取格；含空白的值請加雙引號。\n例：1 2 3`,
             onConfirm: text => {
                 if (text.length > MAX_DATA_STRUCTURE_INPUT_LENGTH) {
-                    this._toast('批次輸入不可超過 1 MB。', 4000);
-                    return;
+                    return '批次輸入不可超過 1 MB。';
                 }
                 const values = splitDataTokens(text, { multiline: true });
                 if (values.length !== 1 && values.length !== cells.length) {
-                    this._toast(`請輸入 1 個值（套用全部），或剛好 ${cells.length} 個值。`, 4000);
-                    return;
+                    return `請輸入 1 個值（套用全部），或剛好 ${cells.length} 個值。`;
                 }
 
-                const oldData = el.data.map(row => [...row]);
-                const newData = oldData.map(row => [...row]);
-                cells.forEach(([row, col], index) => {
-                    newData[row][col] = values.length === 1 ? values[0] : values[index];
-                });
-                const changed = cells.some(([row, col]) => oldData[row][col] !== newData[row][col]);
-                if (!changed) return;
-                const newText = newData.map(row => row.map(formatDataToken).join(' ')).join('\n');
-                if (newText.length > MAX_DATA_STRUCTURE_INPUT_LENGTH) {
-                    this._toast('資料總輸入不可超過 1 MB，已保留原值。', 4000);
-                    return;
-                }
-                const applyData = data => {
-                    el.data = data.map(row => [...row]);
-                    el.updateTextFromData();
-                    this.renderer.markDirty();
-                };
-                applyData(newData);
-                this.history.push({
-                    description: 'Batch Edit Matrix Cells',
-                    undo: () => applyData(oldData),
-                    redo: () => applyData(newData)
-                });
+                return this._applyMatrixCellValues(el, cells, values);
             }
+        });
+    }
+
+    _applyMatrixCellValues(el, cells, values) {
+        const oldData = el.data.map(row => [...row]);
+        const newData = oldData.map(row => [...row]);
+        cells.forEach(([row, col], index) => {
+            newData[row][col] = values.length === 1 ? values[0] : values[index];
+        });
+        if (cells.every(([row, col]) => oldData[row][col] === newData[row][col])) return null;
+        const newText = newData.map(row => row.map(formatDataToken).join(' ')).join('\n');
+        if (newText.length > MAX_DATA_STRUCTURE_INPUT_LENGTH) return '資料總輸入不可超過 1 MB，已保留原值。';
+        const apply = data => {
+            el.data = data.map(row => [...row]); el.updateTextFromData(); this.renderer.markDirty();
+        };
+        apply(newData);
+        this.history.push({
+            description: 'Batch Edit Matrix Cells',
+            undo: () => apply(oldData), redo: () => apply(newData)
+        });
+        return null;
+    }
+
+    _matrixClipboardTarget() {
+        const selected = this.selectionManager.selectedElements;
+        const el = selected.length === 1 ? selected[0] : null;
+        if (el?.type !== 'matrix' || el.locked || el.hidden || !el.selectedCells?.size) return null;
+        const cells = [...el.selectedCells].map(key => key.split(',').map(Number))
+            .filter(([row, col]) => Number.isInteger(row) && Number.isInteger(col) &&
+                row >= 0 && col >= 0 && row < el.rows && col < el.cols)
+            .sort(([r1, c1], [r2, c2]) => r1 - r2 || c1 - c2);
+        return cells.length ? { el, cells } : null;
+    }
+
+    _bindMatrixClipboard() {
+        const target = event => {
+            if (event.defaultPrevented || this._pendingElementDialogElement ||
+                event.target.closest?.('input, textarea, select, [contenteditable="true"], [role="dialog"]')) return null;
+            return this._matrixClipboardTarget();
+        };
+        for (const type of ['copy', 'cut']) document.addEventListener(type, event => {
+            const selected = target(event);
+            if (!selected || !event.clipboardData || (type === 'cut' && this.cloudBoards?.isReadOnly)) return;
+            const rows = new Map();
+            for (const [row, col] of selected.cells) {
+                if (!rows.has(row)) rows.set(row, []);
+                rows.get(row).push(formatDataToken(selected.el.data[row][col]));
+            }
+            event.clipboardData.setData('text/plain', [...rows.values()].map(row => row.join('\t')).join('\n'));
+            this._clipboard = null;
+            event.preventDefault();
+            if (type === 'cut') this._deleteSelectedMatrixCells(selected.el);
+        });
+        document.addEventListener('paste', event => {
+            const selected = target(event);
+            if (!selected || !event.clipboardData || this.cloudBoards?.isReadOnly) return;
+            event.preventDefault();
+            const text = event.clipboardData.getData('text/plain');
+            if (!text) return;
+            if (text.length > MAX_DATA_STRUCTURE_INPUT_LENGTH) {
+                this._toast('貼上資料不可超過 1 MB。'); return;
+            }
+            let { cells } = selected;
+            const { el } = selected;
+            const rows = parsePastedMatrixRows(text);
+            let values = rows.flat();
+            if (cells.length === 1 && values.length > 1) {
+                const [startRow, startCol] = cells[0];
+                if (rows.some(row => row.length !== rows[0].length) ||
+                    startRow + rows.length > el.rows || startCol + rows[0].length > el.cols) {
+                    this._toast('貼上範圍超出矩陣，或每列資料數量不同。'); return;
+                }
+                cells = rows.flatMap((row, r) => row.map((_, c) => [startRow + r, startCol + c]));
+                values = rows.flat();
+            }
+            if (values.length !== 1 && values.length !== cells.length) {
+                this._toast(`請貼上 1 個值，或剛好 ${cells.length} 個值。`); return;
+            }
+            if (!values.length) return;
+            const error = this._applyMatrixCellValues(el, cells, values);
+            if (error) { this._toast(error); return; }
+            el.selectedCells = new Set(cells.map(([r, c]) => `${r},${c}`));
+            this._refreshUI();
         });
     }
 
@@ -1471,22 +1627,35 @@ class App {
         const scaleY = (el._baseHeight && el._baseHeight > 0) ? el.height / el._baseHeight : 1;
         const screenTL = this.camera.worldToScreen(el.x, el.y);
         const canvasRect = this.canvas.getBoundingClientRect();
-        const effectiveFontSize = el.fontSize * scaleX * this.camera.zoom;
+        const zoom = this.camera.zoom;
+        const rawLeft = canvasRect.left + screenTL.x;
+        const rawTop = canvasRect.top + screenTL.y;
+        const cropX = el.rotation ? 0 : Math.max(0, 16 - rawLeft);
+        const cropY = el.rotation ? 0 : Math.max(0, 16 - rawTop);
+        const left = rawLeft + cropX, top = rawTop + cropY;
+        const baseWidth = el._baseWidth || el.width;
+        const baseHeight = el._baseHeight || el.height;
+        // Keep native text metrics in the element's unscaled coordinate system.
+        // The same transform as the canvas also preserves nonuniform resizing.
+        const editorHeight = Math.min(baseHeight + 2, Math.max(el.fontSize * 1.3,
+            (window.innerHeight - Math.max(16, top) - 24) / (scaleY * zoom)));
+        const editorWidth = Math.min(baseWidth + 2, Math.max(el.fontSize * 2,
+            (window.innerWidth - Math.max(16, left) - 24) / (scaleX * zoom)));
 
-        overlay.style.left = (canvasRect.left + screenTL.x) + 'px';
-        overlay.style.top = (canvasRect.top + screenTL.y) + 'px';
-        overlay.style.width = (el.width * this.camera.zoom) + 'px';
-        overlay.style.height = (el.height * this.camera.zoom) + 'px';
-        overlay.style.fontSize = effectiveFontSize + 'px';
-        overlay.style.lineHeight = (1.3 * scaleY / scaleX).toString();
-        
-        if (el.rotation) {
-            overlay.style.transformOrigin = 'center center';
-            overlay.style.transform = `rotate(${el.rotation}rad)`;
-        } else {
-            overlay.style.transformOrigin = 'center center';
-            overlay.style.transform = 'none';
-        }
+        overlay.style.left = left + 'px';
+        overlay.style.top = top + 'px';
+        overlay.style.width = editorWidth + 'px';
+        overlay.style.height = editorHeight + 'px';
+        overlay.style.fontSize = el.fontSize + 'px';
+        overlay.style.lineHeight = '1.3';
+        overlay.style.transformOrigin = '0 0';
+        const cx = el.width * zoom / 2, cy = el.height * zoom / 2;
+        overlay.style.transform = `translate(${cx}px, ${cy}px) rotate(${el.rotation || 0}rad) translate(${-cx}px, ${-cy}px) scale(${scaleX * zoom}, ${scaleY * zoom})`;
+        const nextCrop = { x: cropX / (scaleX * zoom), y: cropY / (scaleY * zoom) };
+        const previousCrop = this._textEditorViewportOffset || { x: 0, y: 0 };
+        overlay.scrollLeft += nextCrop.x - previousCrop.x;
+        overlay.scrollTop += nextCrop.y - previousCrop.y;
+        this._textEditorViewportOffset = nextCrop;
     }
 
     _startTextEditing(el) {
@@ -1494,17 +1663,23 @@ class App {
         if (!overlay) return;
 
         this._textEditing = el;
+        this._textEditorViewportOffset = null;
         el.isEditing = true;
 
         overlay.style.cssText = '';
-        overlay.className = 'transparent-selection';
+        overlay.className = 'text-element-editor';
         overlay.style.display = 'block';
-        this._updateTextEditingOverlay();
         
         overlay.style.fontFamily = el.fontFamily;
         overlay.style.textAlign = 'left';
         overlay.style.whiteSpace = 'pre';
-        overlay.style.color = 'transparent';
+        overlay.style.color = el.getEffectiveColor(el.color);
+        overlay.style.opacity = el.opacity;
+        overlay.style.overflow = 'auto';
+        overlay.style.overflowWrap = 'normal';
+        overlay.style.wordBreak = 'normal';
+        overlay.style.letterSpacing = '0px';
+        overlay.style.fontKerning = 'auto';
         overlay.style.caretColor = el.color || 'var(--text-primary)';
         
         overlay.style.fontWeight = el.isBold ? 'bold' : 'normal';
@@ -1513,8 +1688,13 @@ class App {
 
         overlay.value = el.text;
         overlay.maxLength = MAX_DATA_STRUCTURE_INPUT_LENGTH;
-        overlay.focus();
+        this._updateTextEditingOverlay();
+        overlay.setAttribute('aria-label', '編輯文字');
+        overlay.focus({ preventScroll: true });
         overlay.select();
+        overlay.scrollLeft = this._textEditorViewportOffset.x;
+        overlay.scrollTop = this._textEditorViewportOffset.y;
+        this.renderer.markDirty();
 
         // Save old text for undo
         this._textEditOld = el.text;
@@ -1529,10 +1709,6 @@ class App {
                 
                 this._updateTextEditingOverlay();
                 
-                // Reset scroll to prevent misaligned caret
-                overlay.scrollLeft = 0;
-                overlay.scrollTop = 0;
-                
                 this.renderer.markDirty();
             }
         };
@@ -1540,6 +1716,7 @@ class App {
 
         overlay.onblur = () => this._finishTextEditing();
         overlay.onkeydown = event => {
+            if (event.isComposing) return;
             if (event.key !== 'Escape') return;
             event.preventDefault();
             event.stopPropagation();
@@ -1660,6 +1837,7 @@ class App {
                 if (isEmptyDataStructureInput(text)) return;
                 const error = el.setFromText(text);
                 if (!error) this.renderer.markDirty();
+                return error;
             },
             onCancel: () => {
                 if (isNew) {
@@ -1679,21 +1857,12 @@ class App {
                     this.toolbar.setTool('select');
                     this.renderer.markDirty();
                     this._refreshUI();
+                    this._fitView([el]);
                     return;
                 }
                 const error = el.setFromText(text);
                 if (error) {
-                    if (isNew) {
-                        this._discardPendingElementCreation(el);
-                    } else if (!oldInputIsEmpty) {
-                        restoreOriginal();
-                    } else {
-                        this._deleteElement(el);
-                    }
-                    this._toast('⚠ ' + error, 4000);
-                    this.renderer.markDirty();
-                    this._refreshUI();
-                    return;
+                    return error;
                 }
                 if (isEmptyDataStructureInput(text) || (el.width === 0 && el.height === 0)) {
                     if (isNew) {
@@ -1721,6 +1890,7 @@ class App {
                 }
                 this.renderer.markDirty();
                 this._refreshUI();
+                this._fitView([el]);
             }
         });
     }
@@ -1751,6 +1921,12 @@ class App {
             element: el,
             title: '編輯樹',
             placeholder: '競程格式：第一行 N，接著 N-1 行無向邊 u v（節點編號可用 1 到 N，或 0 到 N-1）\n例：\n4\n2 1\n2 3\n4 2\n\n加權樹可輸入 u v w',
+            getPlaceholder: ({ mode }) => ({
+                rooted: '第一行 N，接著 N-1 行：父節點 子節點 [權重]\n例：\n4\n2 1\n2 3\n4 2',
+                parent: '每行填一個父節點編號，第 i 行代表節點 i 的父節點（根填 0）\n例：\n0\n1\n1\n2',
+                edge: '每行一條邊：u v [權重]，不填節點數標頭\n例：\n1 2\n1 3\n2 4',
+                values: '依序輸入數值，以空格或換行分隔\n例：\n5 2 8 1 3 7 9'
+            })[mode],
             defaultText: originalText,
             showTypeSelect: true,
             types: [
@@ -1770,9 +1946,10 @@ class App {
                 if (!text.trim()) return;
                 const prevType = el.treeType;
                 if (type) el.treeType = type;
-                el.buildFromText(text, mode || 'auto');
-                if (!type) el.treeType = prevType;
+                const error = el.buildFromText(text, mode || 'auto');
+                if (!type || error) el.treeType = prevType;
                 this.renderer.markDirty();
+                return error;
             },
             onCancel: () => {
                 if (isNew) {
@@ -1787,8 +1964,13 @@ class App {
                 this._refreshUI();
             },
             onConfirm: (text, type, mode) => {
+                const prevType = el.treeType;
                 if (type) el.treeType = type;
                 const error = el.buildFromText(text, mode || 'auto');
+                if (error) {
+                    el.treeType = prevType;
+                    return error;
+                }
                 if (!text.trim() || (el.width === 0 && el.height === 0)) {
                     if (isNew) {
                         this._discardPendingElementCreation(el);
@@ -1800,19 +1982,6 @@ class App {
                         });
                     }
                     this._deleteElement(el);
-                    this.renderer.markDirty();
-                    this._refreshUI();
-                    return;
-                }
-                if (error) {
-                    if (isNew) {
-                        this._discardPendingElementCreation(el);
-                    } else if (originalText.trim()) {
-                        restoreOriginal();
-                    } else {
-                        this._deleteElement(el);
-                    }
-                    this._toast('⚠ ' + error, 4000);
                     this.renderer.markDirty();
                     this._refreshUI();
                     return;
@@ -1829,6 +1998,7 @@ class App {
                 }
                 this.renderer.markDirty();
                 this._refreshUI();
+                this._fitView([el]);
             }
         });
     }
@@ -1861,6 +2031,14 @@ class App {
             element: el,
             title: '編輯圖',
             placeholder: '第一行: N M (節點數、邊數)\n之後每行: u v [邊權重]\n例：\n4 5\n1 2\n2 3 7\n3 4 2\n4 1\n1 3 5',
+            getPlaceholder: ({ graphMode, zeroBased }) => {
+                if (graphMode === 'adj-list') {
+                    return '第一行 N，接著 N 行：鄰居數 M，接 M 個鄰居編號\n例：\n4\n' +
+                        (zeroBased ? '2 1 2\n1 0\n2 0 3\n1 2' : '2 2 3\n1 1\n2 1 4\n1 3');
+                }
+                return '第一行 N M（節點數、邊數），接著 M 行：u v [權重]\n例：\n4 3\n' +
+                    (zeroBased ? '0 1\n1 2 7\n2 3' : '1 2\n2 3 7\n3 4');
+            },
             defaultText: originalText,
             showDirectedCheckbox: true,
             showZeroBasedCheckbox: true,
@@ -1870,8 +2048,9 @@ class App {
             graphMode: originalGraphMode,
             onInput: (text, _type, _mode, directed, zeroBased, graphMode) => {
                 if (!text.trim()) return;
-                el.buildFromText(text, directed, zeroBased, graphMode);
+                const error = el.buildFromText(text, directed, zeroBased, graphMode);
                 this.renderer.markDirty();
+                return error;
             },
             onCancel: () => {
                 if (isNew) {
@@ -1887,6 +2066,7 @@ class App {
             },
             onConfirm: (text, _type, _mode, directed, zeroBased, graphMode) => {
                 const error = el.buildFromText(text, directed, zeroBased, graphMode);
+                if (error) return error;
                 
                 if (!text.trim() || (el.width === 0 && el.height === 0)) {
                     if (isNew) {
@@ -1899,19 +2079,6 @@ class App {
                         });
                     }
                     this._deleteElement(el);
-                    this.renderer.markDirty();
-                    this._refreshUI();
-                    return;
-                }
-                if (error) {
-                    if (isNew) {
-                        this._discardPendingElementCreation(el);
-                    } else if (originalText.trim()) {
-                        restoreOriginal();
-                    } else {
-                        this._deleteElement(el);
-                    }
-                    this._toast('⚠ ' + error, 4000);
                     this.renderer.markDirty();
                     this._refreshUI();
                     return;
@@ -1931,6 +2098,7 @@ class App {
                 }
                 this.renderer.markDirty();
                 this._refreshUI();
+                this._fitView([el]);
             }
         });
     }
@@ -1938,6 +2106,29 @@ class App {
     // ═════════════════════════════════════════════════════
     // Matrix Cell Inline Edit
     // ═════════════════════════════════════════════════════
+    _fitCellEditor(overlay, element, width, height, baseFontSize) {
+        overlay.setAttribute('aria-label', '編輯儲存格內容');
+        const fit = () => {
+            this.ctx.save();
+            this.ctx.font = `${baseFontSize}px Consolas, monospace`;
+            const layout = layoutCanvasCellText(this.ctx, overlay.value, baseFontSize, width, height);
+            this.ctx.restore();
+            const zoom = this.camera.zoom;
+            overlay.style.fontSize = `${layout.fontSize * zoom}px`;
+            overlay.style.lineHeight = `${layout.lineHeight * zoom}px`;
+            const editorHeight = Number.parseFloat(overlay.style.height);
+            overlay.style.paddingTop = `${Math.max(0, (editorHeight - 3 - layout.height * zoom) / 2)}px`;
+            overlay.style.paddingBottom = '0';
+            overlay.scrollLeft = overlay.scrollTop = 0;
+        };
+        overlay.style.whiteSpace = 'pre';
+        overlay.style.overflowWrap = 'normal';
+        overlay.style.color = element.getEffectiveColor(element.color);
+        overlay.style.opacity = element.opacity;
+        overlay.oninput = fit;
+        fit();
+    }
+
     _editMatrixCell(matrixEl, row, col) {
         if (this._inlineEdit) this._inlineEdit.finish();
         const pad = 10;
@@ -1972,11 +2163,14 @@ class App {
         overlay.style.border = `1.5px solid ${cellColor}`;
         overlay.style.boxSizing = 'border-box';
         overlay.style.transformOrigin = 'center center';
-        overlay.style.transform = matrixEl.rotation ? `rotate(${matrixEl.rotation}rad)` : 'none';
+        const textAngle = Math.abs(Math.sin(matrixEl.rotation)) > Math.abs(Math.cos(matrixEl.rotation))
+            ? Math.PI / 2 : 0;
+        overlay.style.transform = `rotate(${textAngle}rad)`;
         overlay.maxLength = MAX_DATA_STRUCTURE_INPUT_LENGTH;
         // Strip full-width space sentinel when entering edit mode
         const rawVal = String(matrixEl.data[row]?.[col] ?? '');
         overlay.value = (rawVal === '' || rawVal === '\u3000') ? '' : rawVal;
+        this._fitCellEditor(overlay, matrixEl, matrixEl.cellSize - 8, matrixEl.cellSize - 8, matrixEl.fontSize);
         overlay.focus();
         overlay.select();
 
@@ -2018,6 +2212,7 @@ class App {
             overlay.style.display = 'none';
             resetOverlayStyle();
             overlay.onblur = null;
+            overlay.oninput = null;
             overlay.onkeydown = null;
             if (document.activeElement === overlay) overlay.blur();
             if (oldValue !== newValue) {
@@ -2047,6 +2242,7 @@ class App {
         // as the boolean cancellation flag accepted by finishEdit.
         overlay.onblur = () => finishEdit(false);
         overlay.onkeydown = (e) => {
+            if (e.isComposing) return;
             if (e.key === 'Enter') { e.preventDefault(); overlay.blur(); }
             if (e.key === 'Escape') { e.preventDefault(); finishEdit(true); }
             // Tab to next cell
@@ -2129,6 +2325,10 @@ class App {
         overlay.style.transform = element.rotation ? `rotate(${element.rotation}rad)` : 'none';
         overlay.maxLength = MAX_DATA_STRUCTURE_INPUT_LENGTH;
         overlay.value = oldText;
+        const innerWidth = cell.width - (element.type === 'queue' ? 6 : 0);
+        const innerHeight = cell.height - (element.type === 'stack' ? 6 : 0);
+        const baseSize = Math.max(8, Math.min(element.fontSize, innerWidth * 0.6, innerHeight * 0.5, 36));
+        this._fitCellEditor(overlay, element, innerWidth, innerHeight, baseSize);
         overlay.focus();
         overlay.select();
 
@@ -2155,6 +2355,7 @@ class App {
             overlay.style.display = 'none';
             overlay.style.transform = '';
             overlay.onblur = null;
+            overlay.oninput = null;
             overlay.onkeydown = null;
             if (document.activeElement === overlay) overlay.blur();
             if (oldValue !== newValue) {
@@ -2180,6 +2381,7 @@ class App {
         };
         overlay.onblur = finishEdit;
         overlay.onkeydown = event => {
+            if (event.isComposing) return;
             if (event.key === 'Enter') {
                 event.preventDefault();
                 overlay.blur();
@@ -2299,6 +2501,7 @@ class App {
         overlay.oninput = updatePreview;
         overlay.onblur = finishEdit;
         overlay.onkeydown = (e) => {
+            if (e.isComposing) return;
             if (e.key === 'Enter') { e.preventDefault(); overlay.blur(); }
             if (e.key === 'Escape') {
                 e.preventDefault();
@@ -2333,6 +2536,7 @@ class App {
         const applyEdgeWeight = value => {
             const currentNode = treeEl.getNodeAtPath(nodePath);
             if (currentNode) treeEl.setEdgeWeight(currentNode, value ?? '');
+            this._updateConnectedLines([treeEl.id]);
         };
         const overlay = document.getElementById('text-edit-overlay');
         if (!overlay) return;
@@ -2397,6 +2601,8 @@ class App {
             }
             const newWeightOverrides = { ...treeEl._edgeWeightOverrides };
             treeEl.isEditingEdge = false;
+            treeEl._layoutTree();
+            this._updateConnectedLines([treeEl.id]);
             overlay.style.display = 'none';
             overlay.onblur = null;
             overlay.oninput = null;
@@ -2439,6 +2645,7 @@ class App {
         overlay.oninput = updatePreview;
         overlay.onblur = finishEdit;
         overlay.onkeydown = event => {
+            if (event.isComposing) return;
             if (event.key === 'Enter') {
                 event.preventDefault();
                 overlay.blur();
@@ -2531,7 +2738,9 @@ class App {
         const header = document.createElement('div');
         header.className = 'markdown-dialog-header';
         const h3 = document.createElement('h3');
+        h3.id = 'markdown-dialog-title';
         h3.innerHTML = '<span class="md-icon">MD</span> Markdown 編輯器';
+        dialog.setAttribute('aria-labelledby', h3.id);
         header.appendChild(h3);
         dialog.appendChild(header);
 
@@ -2546,6 +2755,8 @@ class App {
         editorLabel.className = 'pane-label';
         editorLabel.textContent = '編輯';
         const textarea = document.createElement('textarea');
+        textarea.setAttribute('aria-label', 'Markdown 原始碼');
+        textarea.dataset.tabIndent = '';
         textarea.value = el.markdownText || '';
         textarea.maxLength = MarkdownElement.MAX_SOURCE_LENGTH;
         textarea.placeholder = '在此輸入 Markdown…\n\n# 標題\n## 副標題\n\n- 列表項目\n- **粗體** 和 *斜體*\n\n```python\nprint("Hello")\n```';
@@ -2553,7 +2764,7 @@ class App {
 
         // Tab key inserts spaces
         textarea.addEventListener('keydown', (e) => {
-            if (e.key === 'Tab') {
+            if (e.key === 'Tab' && !e.shiftKey && !e.isComposing) {
                 e.preventDefault();
                 const s = textarea.selectionStart, end = textarea.selectionEnd;
                 const available = Math.max(0, MarkdownElement.MAX_SOURCE_LENGTH -
@@ -2576,6 +2787,11 @@ class App {
         previewLabel.textContent = '預覽';
         const previewContent = document.createElement('div');
         previewContent.className = 'markdown-preview-content';
+        previewContent.setAttribute('aria-label', 'Markdown 預覽');
+        previewContent.addEventListener('click', event => {
+            // Preview links must not navigate away from an unfinished edit.
+            if (event.target.closest('a')) event.preventDefault();
+        });
         previewPane.appendChild(previewLabel);
         previewPane.appendChild(previewContent);
 
@@ -2614,7 +2830,7 @@ class App {
 
         // Debounced preview updates
         let previewTimer = null;
-        let onKey = null;
+        let releaseModal = null;
         textarea.addEventListener('input', () => {
             clearTimeout(previewTimer);
             previewTimer = setTimeout(updatePreview, 80);
@@ -2622,6 +2838,7 @@ class App {
 
         // Focus textarea
         requestAnimationFrame(() => {
+            if (!textarea.isConnected) return;
             textarea.focus();
             if (textarea.value) textarea.select();
         });
@@ -2629,10 +2846,8 @@ class App {
         // ── Close helper ────────────────────────────
         const closeDialog = () => {
             clearTimeout(previewTimer);
-            if (onKey) {
-                document.removeEventListener('keydown', onKey, true);
-                onKey = null;
-            }
+            releaseModal?.();
+            releaseModal = null;
             this._markdownDialogCancel = null;
             this._markdownDialogConfirm = null;
             this._markdownDialogClose = null;
@@ -2701,19 +2916,13 @@ class App {
         confirmBtn.addEventListener('click', confirm);
         cancelBtn.addEventListener('click', cancel);
 
-        // Click overlay background to confirm
+        // Background clicks cancel so unfinished edits are never saved silently.
         overlay.addEventListener('click', (e) => {
-            if (e.target === overlay) confirm();
+            if (e.target === overlay) cancel();
         });
-
-        // ESC to cancel
-        onKey = (e) => {
-            if (e.key === 'Escape') {
-                e.stopPropagation();
-                cancel();
-            }
-        };
-        document.addEventListener('keydown', onKey, true);
+        releaseModal = bindModal(dialog, {
+            onCancel: cancel, onConfirm: confirm, initialFocus: textarea
+        });
     }
 
     // ═════════════════════════════════════════════════════
@@ -2759,6 +2968,8 @@ class App {
     _bindWheel() {
         this.canvas.addEventListener('wheel', e => {
             e.preventDefault();
+            if (e.deltaX === 0 && e.deltaY === 0) return;
+            this._finishInlineEditing();
             const { sx, sy } = this._screenPos(e);
 
             if (e.ctrlKey) {
@@ -2787,6 +2998,7 @@ class App {
     // ═════════════════════════════════════════════════════
     _bindKeyboard() {
         document.addEventListener('keydown', e => {
+            if (e.defaultPrevented || e.isComposing || e.target.closest?.('[role="dialog"]')) return;
             // Ignore when typing in inputs
             if (e.target.tagName === 'INPUT' || e.target.tagName === 'TEXTAREA' ||
                 e.target.tagName === 'SELECT' || e.target.isContentEditable) return;
@@ -2796,6 +3008,12 @@ class App {
             if (this.cloudBoards?.isReadOnly && e.key !== 'Escape') return;
 
             const ctrl = e.ctrlKey || e.metaKey;
+
+            if (!ctrl && !e.altKey && e.shiftKey && (e.code === 'Digit1' || e.code === 'Digit2')) {
+                e.preventDefault();
+                this._fitView(e.code === 'Digit2' ? this.selectionManager.selectedElements : this.elements);
+                return;
+            }
 
 
             if (e.key === 'Enter') {
@@ -2874,6 +3092,7 @@ class App {
 
             // ── Ctrl+C  Copy ──────────────────────
             if (ctrl && isCopy) {
+                if (this._matrixClipboardTarget()) return;
                 e.preventDefault();
                 this._copyToClipboard();
                 return;
@@ -2881,6 +3100,7 @@ class App {
 
             // ── Ctrl+X  Cut ───────────────────────
             if (ctrl && isCut) {
+                if (this._matrixClipboardTarget()) return;
                 e.preventDefault();
                 this._copyToClipboard();
                 const toRemove = this.selectionManager.selectedElements.filter(el => !el.locked);
@@ -2894,6 +3114,7 @@ class App {
 
             // ── Ctrl+V  Paste ─────────────────────
             if (ctrl && isPaste) {
+                if (this._matrixClipboardTarget()) return;
                 e.preventDefault();
                 this._pasteFromClipboard();
                 return;
@@ -2936,7 +3157,7 @@ class App {
 
             // ── Escape ──────────────────────────
             if (e.key === 'Escape') {
-                document.getElementById('settings-modal')?.classList.remove('open');
+                this._closeSettings();
                 this._clearAllCellSelections();
                 this.selectionManager.clear();
                 this._finishTextEditing();
@@ -3075,7 +3296,6 @@ class App {
         if (!hit) { menu.style.display = 'none'; return; }
 
         // Show all element-specific items
-        const hasEl = true;
         ['ctx-rename', 'ctx-duplicate', 'ctx-bring-front', 'ctx-send-back',
          'ctx-layer-up', 'ctx-layer-down',
          'ctx-delete', 'ctx-sep1', 'ctx-sep2'].forEach(id => {
@@ -3092,14 +3312,11 @@ class App {
         if (mDiff) mDiff.style.display = (hit.type === 'matrix') ? '' : 'none';
 
         // Position (clamp inside viewport)
-        const vw = window.innerWidth, vh = window.innerHeight;
-        const mw = 180, mh = hasEl ? 270 : 8;
-        let mx = e.clientX, my = e.clientY;
-        if (mx + mw > vw) mx = vw - mw - 4;
-        if (my + mh > vh) my = vh - mh - 4;
-        menu.style.left = mx + 'px';
-        menu.style.top = my + 'px';
         menu.style.display = 'block';
+        const bounds = menu.getBoundingClientRect();
+        menu.style.left = Math.max(4, Math.min(e.clientX, innerWidth - bounds.width - 4)) + 'px';
+        menu.style.top = Math.max(4, Math.min(e.clientY, innerHeight - bounds.height - 4)) + 'px';
+        menu.querySelector('.ctx-item:not([style*="display: none"])')?.focus({ preventScroll: true });
     }
 
     _hideContextMenu() {
@@ -3119,6 +3336,9 @@ class App {
         inp.style.left = Math.max(4, rect.left + sp.x - 80) + 'px';
         inp.style.top = Math.max(4, rect.top + sp.y - 16) + 'px';
         inp.style.display = 'block';
+        const inputBounds = inp.getBoundingClientRect();
+        inp.style.left = Math.max(4, Math.min(parseFloat(inp.style.left), innerWidth - inputBounds.width - 4)) + 'px';
+        inp.style.top = Math.max(4, Math.min(parseFloat(inp.style.top), innerHeight - inputBounds.height - 4)) + 'px';
         inp.focus();
         inp.select();
 
@@ -3146,6 +3366,23 @@ class App {
 
     _bindContextMenu() {
         this._ctxTarget = null;
+        document.getElementById('context-menu')?.addEventListener('keydown', event => {
+            event.stopPropagation();
+            const menu = event.currentTarget;
+            const items = [...menu.querySelectorAll('.ctx-item')].filter(item => item.getClientRects().length);
+            const index = items.indexOf(document.activeElement);
+            let next = null;
+            if (event.key === 'ArrowDown') next = items[(index + 1) % items.length];
+            if (event.key === 'ArrowUp') next = items[(index - 1 + items.length) % items.length];
+            if (event.key === 'Home') next = items[0];
+            if (event.key === 'End') next = items.at(-1);
+            if (next) { event.preventDefault(); next.focus(); }
+            if (event.key === 'Escape' || event.key === 'Tab') {
+                event.preventDefault();
+                this._hideContextMenu();
+                this.canvas.focus({ preventScroll: true });
+            }
+        });
 
         // Click outside menu → hide
         document.addEventListener('pointerdown', (e) => {
@@ -3436,11 +3673,11 @@ class App {
         // Close on backdrop click
         document.getElementById('settings-modal')?.addEventListener('click', (e) => {
             if (e.target.id === 'settings-modal') {
-                e.currentTarget.classList.remove('open');
+                this._closeSettings();
             }
         });
         document.getElementById('settings-close')?.addEventListener('click', () => {
-            document.getElementById('settings-modal')?.classList.remove('open');
+            this._closeSettings();
         });
 
         const $s = id => document.getElementById(id);
@@ -3495,6 +3732,12 @@ class App {
         setRange('settings-pen-size',      s.defaultPenSize  || 2,  'settings-pen-size-val');
         setRange('settings-pen-smoothing', s.defaultPenSmoothing || 3, 'settings-pen-smoothing-val');
         setRange('settings-stroke-width',  s.defaultStrokeWidth ?? 2, 'settings-stroke-width-val');
+    }
+
+    _closeSettings() {
+        this._releaseSettingsModal?.();
+        this._releaseSettingsModal = null;
+        document.getElementById('settings-modal')?.classList.remove('open');
     }
 
     _saveSettings() {

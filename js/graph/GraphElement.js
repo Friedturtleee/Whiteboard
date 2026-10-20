@@ -31,6 +31,7 @@ export class GraphElement extends Element {
         const result = GraphParser.parse(text, directed, zeroBased, graphMode);
         if (!result) return null;
         if (result.error) return result.error;
+        this._resizeInProgress = false;
 
         this.inputText = text;
         this.directed = directed;
@@ -51,10 +52,22 @@ export class GraphElement extends Element {
         });
         this.width = layoutSize.width + 40;
         this.height = layoutSize.height + 40;
+        this._fitRenderedBounds();
 
         // Offset node positions so they are relative to element origin
         // (layout gives positions in 0..width-40 range)
         return null;
+    }
+
+    _fitRenderedBounds() {
+        const bounds = GraphRenderer.getContentBounds(this.nodes, this.edges, {
+            nodeRadius: this.nodeRadius, directed: this.directed
+        });
+        if (!bounds) return;
+        const dx = Math.max(0, 4 - bounds.minX), dy = Math.max(0, 4 - bounds.minY);
+        if (dx || dy) for (const node of this.nodes.values()) { node.x += dx; node.y += dy; }
+        this.width = Math.max(this.width, bounds.maxX + dx + 44);
+        this.height = Math.max(this.height, bounds.maxY + dy + 44);
     }
 
     /**
@@ -250,7 +263,9 @@ export class GraphElement extends Element {
     /**
      * Snapshot node positions before a resize drag begins.
      */
-    onResizeStart() {
+    onResizeStart({ interactive = false } = {}) {
+        this._resizeInProgress = interactive;
+        this._didResize = false;
         this._origResizeW = this.width;
         this._origResizeH = this.height;
         this._origNodePos = new Map();
@@ -271,6 +286,7 @@ export class GraphElement extends Element {
 
     restoreResizeState(state) {
         if (!state) return;
+        this._resizeInProgress = false;
         if (state.layoutBaseSize) {
             this._layoutBaseWidth = state.layoutBaseSize.width;
             this._layoutBaseHeight = state.layoutBaseSize.height;
@@ -287,6 +303,7 @@ export class GraphElement extends Element {
      * Scale node positions proportionally when the element bounding box is resized.
      */
     onResize(newW, newH) {
+        this._didResize = true;
         this._layoutBaseWidth = Number.isFinite(newW)
             ? Math.max(40, newW)
             : this.width;
@@ -328,11 +345,28 @@ export class GraphElement extends Element {
                 // The collision scan exits after one pass when scaled
                 // positions stay clear. If they overlap, bound pointer-move
                 // repair work and let the grid fallback separate any remaining nodes.
-                maxCollisionPasses: 40
+                maxCollisionPasses: 40,
+                avoidNodeEdges: !this._resizeInProgress
             });
             this.width = layoutSize.width + 40;
             this.height = layoutSize.height + 40;
+            this._fitRenderedBounds();
         }
+    }
+
+    onResizeEnd() {
+        if (!this._resizeInProgress) return;
+        this._resizeInProgress = false;
+        if (!this._didResize || !this.nodes.size) return;
+        const size = GraphLayout.layout(this.nodes, this.edges, {
+            width: this.width - 40, height: this.height - 40,
+            aspectRatio: this._layoutBaseWidth / this._layoutBaseHeight,
+            nodeRadius: this.nodeRadius, iterations: 0,
+            maxCollisionPasses: 40, preservePositions: true
+        });
+        this.width = Math.max(this.width, size.width + 40);
+        this.height = Math.max(this.height, size.height + 40);
+        this._fitRenderedBounds();
     }
 
     serialize() {
@@ -360,6 +394,7 @@ export class GraphElement extends Element {
         this._origResizeW = undefined;
         this._origResizeH = undefined;
         this._origNodePos = null;
+        this._resizeInProgress = false;
         this.directed = data.directed || false;
         this.zeroBased = data.zeroBased || false;
         this.graphMode = data.graphMode || 'edge-list';
@@ -423,6 +458,7 @@ export class GraphElement extends Element {
             this.width = Math.max(this.width, layoutSize.width + 40);
             this.height = Math.max(this.height, layoutSize.height + 40);
         }
+        this._fitRenderedBounds();
         return this;
     }
 

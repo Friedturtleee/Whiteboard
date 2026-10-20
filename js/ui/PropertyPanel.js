@@ -10,6 +10,7 @@ export class PropertyPanel {
         this._colorGrid = document.getElementById('color-grid');
         this._bindInputs();
         this._buildColorGrid();
+        this._bindSelectionActions();
     }
 
     /** 14 muted colors + custom picker */
@@ -24,7 +25,9 @@ export class PropertyPanel {
         if (!this._colorGrid) return;
         this._colorGrid.innerHTML = '';
         for (const color of PropertyPanel.COLORS) {
-            const swatch = document.createElement('div');
+            const swatch = document.createElement('button');
+            swatch.type = 'button';
+            swatch.setAttribute('aria-label', `顏色 ${color}`);
             swatch.className = 'color-swatch';
             swatch.style.background = color;
             swatch.dataset.color = color;
@@ -49,7 +52,9 @@ export class PropertyPanel {
             this._colorGrid.appendChild(swatch);
         }
         // Custom "+" swatch that opens dark popup
-        const customBtn = document.createElement('div');
+        const customBtn = document.createElement('button');
+        customBtn.type = 'button';
+        customBtn.setAttribute('aria-label', '自訂顏色');
         customBtn.className = 'color-swatch color-swatch-custom';
         customBtn.textContent = '+';
         customBtn.title = '自訂顏色';
@@ -62,8 +67,7 @@ export class PropertyPanel {
                     this.app.currentColor = c;
                     customBtn.style.background = c;
                     customBtn.dataset.color = c;
-                    this._colorGrid.querySelectorAll('.color-swatch').forEach(s => s.classList.remove('selected'));
-                    customBtn.classList.add('selected');
+                    this._updateColorSelection(c);
                     const sel = this.app.selectionManager;
                     const oldVals = editableSelection(sel)
                         .filter(e => e.color !== c)
@@ -87,7 +91,53 @@ export class PropertyPanel {
     _updateColorSelection(activeColor) {
         this._colorGrid.querySelectorAll('.color-swatch').forEach(s => {
             s.classList.toggle('selected', s.dataset.color === activeColor);
+            s.setAttribute('aria-pressed', String(s.dataset.color === activeColor));
         });
+    }
+
+    _bindSelectionActions() {
+        const getElement = () => {
+            const selected = editableSelection(this.app.selectionManager);
+            return selected.length === 1 && !this.app.cloudBoards?.isReadOnly ? selected[0] : null;
+        };
+        document.getElementById('edit-element-data')?.addEventListener('click', () => {
+            const el = getElement();
+            if (!el) return;
+            if (el.type === 'tree') this.app._showTreeDialog(el);
+            else if (el.type === 'graph') this.app._showGraphDialog(el);
+            else if (el.type === 'markdown') this.app._showMarkdownDialog(el);
+            else if (['matrix', 'stack', 'queue'].includes(el.type)) this.app._showDataStructureDialog(el);
+        });
+        document.getElementById('edit-selected-cells')?.addEventListener('click', () => {
+            const el = getElement();
+            if (el?.type !== 'matrix' || !el.selectedCells.size) return;
+            if (el.selectedCells.size > 1) this.app._editSelectedMatrixCells(el);
+            else {
+                const [row, col] = [...el.selectedCells][0].split(',').map(Number);
+                this.app._editMatrixCell(el, row, col);
+            }
+        });
+        document.getElementById('clear-selected-cells')?.addEventListener('click', () => {
+            const el = getElement();
+            if (el?.type !== 'matrix') return;
+            this.app._deleteSelectedMatrixCells(el);
+            this.app._refreshUI();
+        });
+    }
+
+    _updateSelectionActions(selected) {
+        const section = document.getElementById('selection-actions');
+        if (!section) return;
+        const el = selected[0];
+        const editable = selected.length === 1 && ['matrix', 'stack', 'queue', 'tree', 'graph', 'markdown'].includes(el.type);
+        section.hidden = !editable;
+        const cells = document.getElementById('matrix-selection-actions');
+        cells.hidden = !editable || el.type !== 'matrix';
+        if (cells.hidden) return;
+        const count = el.selectedCells?.size || 0;
+        document.getElementById('selected-cells-status').textContent = count ? `已選取 ${count} 格` : '尚未選取儲存格';
+        document.getElementById('edit-selected-cells').disabled = count === 0;
+        document.getElementById('clear-selected-cells').disabled = count === 0;
     }
 
     _bindInputs() {
@@ -140,12 +190,35 @@ export class PropertyPanel {
                 }));
             };
 
+            const cancelEdit = () => {
+                const entries = (oldVals || []).filter(item => !item.el.locked);
+                for (const item of entries) {
+                    item.el[prop] = item.old;
+                    if (prop === 'width' || prop === 'height') {
+                        Object.assign(item.el, item.bounds);
+                        if (item.points && Array.isArray(item.el.points)) {
+                            item.el.points = item.points.map(point => ({ ...point }));
+                        }
+                        if (item.resizeState && typeof item.el.restoreResizeState === 'function') {
+                            item.el.restoreResizeState(item.resizeState);
+                        } else item.el.onResize?.(item.bounds.width, item.bounds.height);
+                    }
+                }
+                if (geometryProp) this.app._updateConnectedLines(entries.map(item => item.el.id));
+                oldVals = null;
+                el.removeAttribute('aria-invalid');
+                this.app.renderer.markDirty();
+                this.update();
+            };
             el.addEventListener('pointerdown', startEdit);
             el.addEventListener('focus', startEdit);
 
             el.addEventListener('input', () => {
+                startEdit();
                 const val = transform(el.value);
-                if (!isValidValue(val)) return;
+                const valid = el.value.trim() !== '' && isValidValue(val);
+                el.setAttribute('aria-invalid', String(!valid));
+                if (!valid) return;
                 const selected = oldVals
                     ? oldVals.map(item => item.el).filter(item => !item.locked)
                     : editableSelection(this.app.selectionManager);
@@ -161,30 +234,8 @@ export class PropertyPanel {
 
             el.addEventListener('change', () => {
                 const val = transform(el.value);
-                if (!isValidValue(val)) {
-                    if (oldVals?.length) {
-                        for (const item of oldVals.filter(item => !item.el.locked)) {
-                            item.el[prop] = item.old;
-                            if (prop === 'width' || prop === 'height') {
-                                Object.assign(item.el, item.bounds);
-                                if (item.points && Array.isArray(item.el.points)) {
-                                    item.el.points = item.points.map(point => ({ ...point }));
-                                }
-                                if (item.resizeState && typeof item.el.restoreResizeState === 'function') {
-                                    item.el.restoreResizeState(item.resizeState);
-                                } else if (typeof item.el.onResize === 'function') {
-                                    item.el.onResize(item.bounds.width, item.bounds.height);
-                                }
-                            }
-                        }
-                        if (geometryProp) {
-                            this.app._updateConnectedLines(oldVals
-                                .filter(item => !item.el.locked).map(item => item.el.id));
-                        }
-                        this.app.renderer.markDirty();
-                    }
-                    oldVals = null;
-                    this.update();
+                if (el.value.trim() === '' || !isValidValue(val)) {
+                    cancelEdit();
                     return;
                 }
                 if (oldVals?.length) {
@@ -270,6 +321,19 @@ export class PropertyPanel {
                     });
                 }
                 oldVals = null;
+                el.removeAttribute('aria-invalid');
+            });
+            // A focus with no value change does not emit change on blur.
+            // Release that snapshot before the next object is selected.
+            el.addEventListener('blur', () => { oldVals = null; });
+            el.addEventListener('keydown', event => {
+                if (event.isComposing) return;
+                if (event.key === 'Enter') { event.preventDefault(); el.blur(); }
+                if (event.key === 'Escape') {
+                    event.preventDefault();
+                    cancelEdit();
+                    el.blur();
+                }
             });
         };
 
@@ -551,6 +615,7 @@ export class PropertyPanel {
     update() {
         const sel = this.app.selectionManager;
         const selected = editableSelection(sel);
+        this._updateSelectionActions(selected);
         if (selected.length === 0) {
             this._panel.classList.remove('visible');
             return;

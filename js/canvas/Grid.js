@@ -12,9 +12,9 @@ export class Grid {
     draw(ctx, camera, canvasWidth, canvasHeight) {
         // Determine adaptive spacing
         let spacing = this.baseSpacing;
-        if (camera.zoom < 0.25) spacing *= 4;
-        else if (camera.zoom < 0.5) spacing *= 2;
-        else if (camera.zoom > 4) spacing /= 2;
+        if (!Number.isFinite(spacing) || spacing <= 0 || !Number.isFinite(camera.zoom) || camera.zoom <= 0) return;
+        while (spacing * camera.zoom < 20) spacing *= 2;
+        while (spacing * camera.zoom > 80) spacing /= 2;
 
         // Visible world bounds
         const topLeft = camera.screenToWorld(0, 0);

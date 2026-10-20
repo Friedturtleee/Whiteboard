@@ -12,6 +12,7 @@ import { MarkdownElement } from '../elements/MarkdownElement.js';
 import { TreeElement } from '../tree/TreeElement.js';
 import { GraphElement } from '../graph/GraphElement.js';
 import { validateWhiteboardElement } from './WhiteboardElementValidation.js';
+import { MIN_CAMERA_ZOOM, MAX_CAMERA_ZOOM } from '../canvas/Camera.js';
 
 const MAX_IMPORT_FILE_BYTES = 25 * 1024 * 1024;
 const MAX_IMPORTED_ELEMENTS = 10000;
@@ -23,8 +24,6 @@ const MAX_ELEMENT_DIMENSION = 10_000_000;
 const MAX_TEXT_BASE_DIMENSION = 1_000_000_000;
 const MAX_EXPORT_CANVAS_DIMENSION = 16384;
 const MAX_EXPORT_CANVAS_PIXELS = 16_000_000;
-const MIN_CAMERA_ZOOM = 0.45;
-const MAX_CAMERA_ZOOM = 10;
 
 function isSafeDisplayValue(value) {
     return value === null || typeof value === 'boolean' ||

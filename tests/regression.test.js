@@ -3,7 +3,8 @@ import assert from 'node:assert/strict';
 import { QueueElement } from '../js/elements/QueueElement.js';
 import { StackElement } from '../js/elements/StackElement.js';
 import { MatrixElement } from '../js/elements/MatrixElement.js';
-import { fitCanvasTextFontSize } from '../js/core/CanvasTextFit.js';
+import { fitCanvasTextFontSize, drawCanvasCellText } from '../js/core/CanvasTextFit.js';
+import { parsePastedMatrixRows } from '../js/core/DataTokens.js';
 import { TextElement } from '../js/elements/TextElement.js';
 import { PenElement } from '../js/elements/PenElement.js';
 import { Serializer } from '../js/core/Serializer.js';
@@ -13,6 +14,8 @@ import { SelectionManager } from '../js/core/SelectionManager.js';
 import { Transform } from '../js/core/Transform.js';
 import { HitTest } from '../js/canvas/HitTest.js';
 import { Renderer } from '../js/canvas/Renderer.js';
+import { Camera } from '../js/canvas/Camera.js';
+import { Grid } from '../js/canvas/Grid.js';
 import { ShapeElement } from '../js/elements/ShapeElement.js';
 import { GraphElement } from '../js/graph/GraphElement.js';
 import { GraphParser } from '../js/graph/GraphParser.js';
@@ -25,6 +28,122 @@ import { TreeRenderer } from '../js/tree/TreeRenderer.js';
 import { MarkdownElement } from '../js/elements/MarkdownElement.js';
 import { authorizeRequest, getRoomId } from '../server/src/auth.mjs';
 import { formatDataToken, splitDataTokens } from '../js/core/DataTokens.js';
+
+test('explicit zoom preserves its screen pivot and ignores zero wheel deltas', () => {
+    const camera = new Camera();
+    camera.x = 300; camera.y = -200; camera.zoom = 4;
+    const before = camera.screenToWorld(480, 320);
+    camera.zoomTo(1.5, 480, 320);
+    const after = camera.screenToWorld(480, 320);
+    assert.ok(Math.hypot(after.x - before.x, after.y - before.y) < 1e-9);
+    const state = { x: camera.x, y: camera.y, zoom: camera.zoom };
+    camera.zoomAt(0, 480, 320);
+    camera.zoomAt(NaN, 480, 320);
+    camera.zoomTo(Infinity, 480, 320);
+    assert.deepEqual({ x: camera.x, y: camera.y, zoom: camera.zoom }, state);
+});
+
+test('fit view uses one scale for both axes and frames large bounds', () => {
+    const camera = new Camera();
+    const bounds = { x: -5000, y: 10000, w: 500000, h: 300000 };
+    const viewport = { x: 80, y: 70, width: 620, height: 540 };
+    assert.equal(camera.fitBounds(bounds, viewport), true);
+    const topLeft = camera.worldToScreen(bounds.x, bounds.y);
+    const bottomRight = camera.worldToScreen(bounds.x + bounds.w, bounds.y + bounds.h);
+    assert.ok(topLeft.x >= viewport.x - 1e-8 && topLeft.y >= viewport.y - 1e-8);
+    assert.ok(bottomRight.x <= viewport.x + viewport.width + 1e-8);
+    assert.ok(bottomRight.y <= viewport.y + viewport.height + 1e-8);
+    assert.ok(Math.abs((bottomRight.x - topLeft.x) / (bottomRight.y - topLeft.y) - bounds.w / bounds.h) < 1e-9);
+    const state = { x: camera.x, y: camera.y, zoom: camera.zoom };
+    assert.equal(camera.fitBounds(bounds, { ...viewport, width: 0 }), false);
+    assert.deepEqual({ x: camera.x, y: camera.y, zoom: camera.zoom }, state);
+});
+
+test('overview grid keeps a bounded number of lines at very small zoom', () => {
+    const grid = new Grid(), camera = new Camera();
+    camera.zoom = camera.minZoom;
+    let lines = 0;
+    grid.draw({ beginPath() {}, moveTo() {}, lineTo() {}, stroke() { lines++; } }, camera, 1200, 800);
+    assert.ok(lines > 0 && lines < 110, `Unexpected grid work: ${lines}`);
+});
+
+test('weighted star trees leave enough room between long sibling edge labels', () => {
+    const tree = new TreeElement();
+    tree.buildFromText(['7', ...Array.from({ length: 6 }, (_, i) => `1 ${i + 2} ${i + 1}000000000`)].join('\n'));
+    const midpoints = tree.root.children.map(node => (tree.root.x + node.x) / 2).sort((a, b) => a - b);
+    for (let i = 1; i < midpoints.length; i++) assert.ok(midpoints[i] - midpoints[i - 1] >= 76);
+    const restored = new TreeElement().deserialize(tree.serialize());
+    assert.equal(restored.width, tree.width);
+    tree.setEdgeWeight(tree.root.children[0], '123456789012345');
+    assert.ok(tree.width > restored.width);
+});
+
+test('weighted parallel graph lanes stay attached and are selectable at their labels', () => {
+    const paths = [], labels = [];
+    let path;
+    const ctx = {
+        beginPath() { path = []; }, moveTo(x, y) { path.push([x, y]); },
+        lineTo(x, y) { path.push([x, y]); },
+        quadraticCurveTo(cx, cy, x, y) { path.push([cx, cy], [x, y]); },
+        stroke() { if (path.length === 2 || path.length === 3) paths.push(path); },
+        arc() {}, fill() {}, fillRect() {}, strokeRect() {}, save() {}, restore() {},
+        measureText() { return { width: 8 }; },
+        fillText(text, x, y) { if (this.font === '10px Consolas, monospace') labels.push({ text, x, y }); }
+    };
+    const nodes = new Map([['1', { x: 0, y: 0 }], ['2', { x: 200, y: 0 }]]);
+    const edges = Array.from({ length: 15 }, (_, index) => ({ u: '1', v: '2', w: String(index + 1) }));
+    GraphRenderer.draw(ctx, nodes, edges, { nodeRadius: 20 });
+    assert.equal(paths.length, edges.length);
+    for (const points of paths) {
+        assert.ok(Math.abs(Math.hypot(...points[0]) - 20) < 1e-6);
+        const end = points.at(-1);
+        assert.ok(Math.abs(Math.hypot(end[0] - 200, end[1]) - 20) < 1e-6);
+    }
+    labels.forEach((label, index) => {
+        assert.equal(GraphRenderer.hitTestEdge(nodes, edges, label.x, label.y, { nodeRadius: 20 }), edges[index]);
+        if (index) assert.ok(label.y - labels[index - 1].y >= 18);
+    });
+});
+
+test('graph frames contain weighted self-loops after shrinking and JSON restore', () => {
+    const graph = new GraphElement();
+    assert.equal(graph.buildFromText('1 2\n1 1 5\n1 1 6'), null);
+    graph.onResizeStart();
+    graph.width = graph.height = 80;
+    graph.onResize(80, 80);
+    for (const element of [graph, new GraphElement().deserialize(graph.serialize())]) {
+        const bounds = GraphRenderer.getContentBounds(element.nodes, element.edges, { nodeRadius: element.nodeRadius });
+        assert.ok(bounds.minX >= 4 && bounds.minY >= 4);
+        assert.ok(bounds.maxX <= element.width - 44 && bounds.maxY <= element.height - 44);
+    }
+});
+
+test('parallel edges in opposite directions have separated selectable label lanes', () => {
+    const labels = [];
+    const ctx = {
+        beginPath() {}, moveTo() {}, lineTo() {}, quadraticCurveTo() {}, stroke() {},
+        arc() {}, fill() {}, fillRect() {}, strokeRect() {}, save() {}, restore() {},
+        measureText() { return { width: 8 }; },
+        fillText(text, x, y) {
+            if (this.font === '10px Consolas, monospace') labels.push({ text, x, y });
+        }
+    };
+    const nodes = new Map([['1', { x: 0, y: 0 }], ['2', { x: 200, y: 0 }]]);
+    const edges = Array.from({ length: 12 }, (_, index) => ({
+        u: index < 6 ? '1' : '2', v: index < 6 ? '2' : '1', w: String(index), directed: true
+    }));
+    GraphRenderer.draw(ctx, nodes, edges, { nodeRadius: 20, directed: true });
+    assert.equal(labels.length, 12);
+    for (let index = 0; index < labels.length; index++) {
+        const label = labels[index];
+        assert.equal(GraphRenderer.hitTestEdge(nodes, edges, label.x, label.y, {
+            nodeRadius: 20, directed: true
+        }), edges[index]);
+        for (let other = index + 1; other < labels.length; other++) {
+            assert.ok(Math.hypot(label.x - labels[other].x, label.y - labels[other].y) > 18);
+        }
+    }
+});
 
 test('array placeholders remain distinct from ordinary user data', () => {
     const input = 'left\u3000__WHITEBOARD_EMPTY__\u3000right';
@@ -48,6 +167,32 @@ test('long cell values shrink proportionally without changing cell widths', () =
     assert.equal(shortSize, 14);
     assert.ok(longSize < shortSize);
     assert.ok(longSize > 0);
+});
+
+test('matrix clipboard rows retain blanks, quoted values, and tabular newlines', () => {
+    assert.deepEqual(parsePastedMatrixRows('1 2 3\r\n4 5 6\r\n'), [['1', '2', '3'], ['4', '5', '6']]);
+    assert.deepEqual(parsePastedMatrixRows('1\t\t3\n4\ttext with spaces\t6\n'),
+        [['1', '', '3'], ['4', 'text with spaces', '6']]);
+    assert.deepEqual(parsePastedMatrixRows('　\t"a b"\n"line\\nbreak"\t"say ""hi"""'),
+        [['', 'a b'], ['line\nbreak', 'say "hi"']]);
+    assert.deepEqual(parsePastedMatrixRows('"first\nsecond"\t9'), [['first\nsecond', '9']]);
+    assert.deepEqual(parsePastedMatrixRows('a"b\t9'), [['a"b', '9']]);
+});
+
+test('multiline cell values fit as a centered block with consistent row spacing', () => {
+    const drawn = [];
+    const ctx = {
+        measureText(value) {
+            const size = Number.parseFloat(this.font);
+            return { width: value.length * size * 0.6, fontBoundingBoxAscent: size, fontBoundingBoxDescent: size * 0.25 };
+        },
+        fillText(value, x, y) { drawn.push({ value, x, y }); }
+    };
+    const layout = drawCanvasCellText(ctx, 'first row\nsecond row\nthird row', 14, 34, 34, 100, 100);
+    assert.equal(drawn.length, 3);
+    assert.ok(layout.height <= 34 && layout.fontSize < 14);
+    assert.ok(Math.abs(drawn[1].y - drawn[0].y - layout.lineHeight) < 1e-9);
+    assert.ok(drawn.every(line => line.x === 100 && line.y > 83 && line.y < 117));
 });
 
 test('matrix, queue, and stack draw long values with smaller proportional fonts', () => {
@@ -770,6 +915,43 @@ test('text hydration normalizes legacy fonts without mutating saved data', () =>
     assert.equal(data.fontFamily, 'Segoe UI');
 });
 
+test('long text draws only visible rows and leaves editing glyphs to the native editor', () => {
+    const text = new TextElement(0, 0);
+    text.text = Array.from({ length: 50_000 }, (_, index) => String(index)).join('\n');
+    const drawn = [];
+    const ctx = {
+        canvas: { width: 800, height: 600 },
+        save() {}, restore() {}, translate() {}, scale() {},
+        measureText: () => ({ width: 50, fontBoundingBoxAscent: 18, fontBoundingBoxDescent: 5 }),
+        getTransform: () => ({ a: 1, b: 0, c: 0, d: 1, e: 0, f: -20_000 }),
+        fillText: value => drawn.push(Number(value))
+    };
+    text.draw(ctx);
+    assert.ok(drawn.length < 35);
+    assert.ok(drawn[0] > 950);
+    drawn.length = 0;
+    text.isEditing = true;
+    text.draw(ctx);
+    assert.equal(drawn.length, 0);
+});
+
+test('dense seven-node layouts preserve node-to-edge clearance', () => {
+    let seed = 1234;
+    const random = () => ((seed = (Math.imul(seed, 1664525) + 1013904223) >>> 0) / 4294967296);
+    for (let sample = 0; sample < 100; sample++) {
+        const edges = [];
+        const probability = 0.1 + (sample % 10) * 0.09;
+        for (let u = 1; u <= 7; u++) for (let v = u + 1; v <= 7; v++) {
+            if (random() < probability) edges.push(`${u} ${v}`);
+        }
+        const graph = new GraphElement();
+        graph.buildFromText([`7 ${edges.length}`, ...edges].join('\n'));
+        assert.equal(GraphLayout.hasOverlaps(graph.nodes, graph.nodeRadius * 2 + 8), false);
+        assert.equal(GraphLayout.hasNodeEdgeOverlaps(graph.nodes, graph.edges, graph.nodeRadius), false,
+            `Nodes must clear unrelated edges in sample ${sample}.`);
+    }
+});
+
 test('text hydration restores scale bases so edits and resizing stay aligned', () => {
     const data = {
         type: 'text', x: 0, y: 0, width: 200, height: 48,
@@ -838,6 +1020,7 @@ test('parallel undirected graph edges render on distinct lanes', () => {
         beginPath() { path = []; paths.push(path); },
         moveTo(x, y) { path.push([x, y]); },
         lineTo(x, y) { path.push([x, y]); },
+        quadraticCurveTo(cx, cy, x, y) { path.push([cx, cy], [x, y]); },
         arc() {}, stroke() {}, fill() {}, fillRect() {}, strokeRect() {}, fillText() {},
         measureText() { return { width: 0 }; }
     };
@@ -851,7 +1034,7 @@ test('parallel undirected graph edges render on distinct lanes', () => {
     ];
 
     GraphRenderer.draw(ctx, nodes, edges, { nodeRadius: 10 });
-    const edgePaths = paths.filter(points => points.length === 2);
+    const edgePaths = paths.filter(points => points.length === 2 || points.length === 3);
     assert.equal(edgePaths.length, 2);
     assert.notEqual(edgePaths[0][0][1], edgePaths[1][0][1]);
     assert.equal(GraphRenderer.hitTestEdge(nodes, edges, 50, -4, { nodeRadius: 10 }), edges[0]);
@@ -873,9 +1056,9 @@ test('parallel undirected graph edges render on distinct lanes', () => {
 test('graph rendering measures repeated edge-weight labels once per frame', () => {
     let measureCalls = 0;
     const ctx = {
-        beginPath() {}, moveTo() {}, lineTo() {}, arc() {}, stroke() {}, fill() {},
+        beginPath() {}, moveTo() {}, lineTo() {}, quadraticCurveTo() {}, arc() {}, stroke() {}, fill() {},
         fillRect() {}, strokeRect() {}, fillText() {}, save() {}, restore() {},
-        measureText() { measureCalls++; return { width: 10 }; }
+        measureText(text) { if (text === '7' || text === '8') measureCalls++; return { width: 10 }; }
     };
     const nodes = new Map([
         ['1', { id: '1', x: 0, y: 0, label: '1' }],
@@ -979,6 +1162,7 @@ test('reciprocal directed graph edges keep their offset lanes and hit tests', ()
         beginPath() { path = []; paths.push(path); },
         moveTo(x, y) { path.push([x, y]); },
         lineTo(x, y) { path.push([x, y]); },
+        quadraticCurveTo(cx, cy, x, y) { path.push([cx, cy], [x, y]); },
         arc() {}, stroke() {}, fill() {}, fillRect() {}, strokeRect() {}, fillText() {},
         measureText() { return { width: 0 }; }
     };
@@ -992,7 +1176,7 @@ test('reciprocal directed graph edges keep their offset lanes and hit tests', ()
     ];
 
     GraphRenderer.draw(ctx, nodes, edges, { nodeRadius: 10, directed: true });
-    const edgePaths = paths.filter(points => points.length === 2);
+    const edgePaths = paths.filter(points => points.length === 2 || points.length === 3);
     assert.equal(edgePaths.length, 2);
     assert.notEqual(edgePaths[0][0][1], edgePaths[1][0][1]);
     assert.equal(GraphRenderer.hitTestEdge(nodes, edges, 50, 10, {
@@ -1008,9 +1192,9 @@ test('reciprocal directed graph edges keep their offset lanes and hit tests', ()
     ];
     paths.length = 0;
     GraphRenderer.draw(ctx, nodes, mixedEdges, { nodeRadius: 10, directed: false });
-    const mixedEdgePaths = paths.filter(points => points.length === 2);
+    const mixedEdgePaths = paths.filter(points => points.length === 2 || points.length === 3);
     assert.equal(mixedEdgePaths.length, 2);
-    assert.equal(mixedEdgePaths[0][0][1], 10);
+    assert.ok(mixedEdgePaths[0][0][1] > 0);
     assert.equal(mixedEdgePaths[1][0][1], 0);
 
     const customIdNodes = new Map([
@@ -1027,7 +1211,7 @@ test('reciprocal directed graph edges keep their offset lanes and hit tests', ()
     GraphRenderer.draw(ctx, customIdNodes, customIdEdges, {
         nodeRadius: 10, directed: true
     });
-    const customIdPaths = paths.filter(points => points.length === 2);
+    const customIdPaths = paths.filter(points => points.length === 2 || points.length === 3);
     assert.deepEqual(customIdPaths.map(points => points[0][1]), [0, 0]);
 });
 

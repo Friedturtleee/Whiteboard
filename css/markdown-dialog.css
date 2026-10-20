@@ -12,6 +12,7 @@
     justify-content: center;
     z-index: 10000;
     animation: md-fade-in 0.15s ease;
+    padding: 16px;
 }
 
 @keyframes md-fade-in {
@@ -22,6 +23,7 @@
 .markdown-dialog {
     width: min(90vw, 960px);
     height: min(80vh, 640px);
+    max-height: calc(100dvh - 32px);
     background: #111;
     border: 1px solid #3a3a3a;
     border-radius: 10px;
@@ -109,6 +111,7 @@
     line-height: 1.65;
     resize: none;
     tab-size: 4;
+    min-height: 0;
 }
 
 .markdown-editor-pane textarea::placeholder {
@@ -141,6 +144,9 @@
     line-height: 1.7;
     color: #f2f2f2;
     background: #111;
+    min-height: 0;
+    user-select: text;
+    overflow-wrap: anywhere;
 }
 
 /* ── Preview markdown styles ───────────────── */
@@ -180,6 +186,7 @@
 .markdown-preview-content pre code {
     background: #1b1b1b; padding: 8px;
     font-size: 12.5px; line-height: 1.55; color: #eee;
+    display: block;
 }
 .markdown-preview-content table { border-collapse: collapse; margin: 0 0 10px; width: 100%; }
 .markdown-preview-content th,
@@ -195,6 +202,19 @@
     background: transparent;
 }
 .markdown-preview-content .hljs .hljs-comment { color: #888; font-style: italic; }
+
+@media (max-width: 600px) {
+    .markdown-dialog { width: 100%; height: calc(100dvh - 32px); }
+    .markdown-dialog-body { flex-direction: column; }
+    .markdown-editor-pane {
+        min-height: 0;
+        border-right: none;
+        border-bottom: 1px solid #303030;
+    }
+    .markdown-preview-pane { min-height: 0; }
+    .markdown-dialog-header { padding: 10px 14px; }
+    .markdown-dialog-footer { padding: 10px 14px; }
+}
 
 
 /* ── Footer ────────────────────────────────── */

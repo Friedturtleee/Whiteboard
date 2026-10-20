@@ -60,7 +60,7 @@ export class Transform {
         this.startPoints = el.points ? el.points.map(p => ({ x: p.x, y: p.y })) : null;
         this.targetElement = el;
         // Let element snapshot any internal state it needs for proportional resize
-        if (el.onResizeStart) el.onResizeStart();
+        if (el.onResizeStart) el.onResizeStart({ interactive: true });
         this.startResizeState = el.captureResizeState?.() ?? null;
     }
 
@@ -264,6 +264,7 @@ export class Transform {
             }));
         }
         if (this.mode === 'resize') {
+            this.targetElement.onResizeEnd?.();
             info.element = this.targetElement;
             info.fromBounds = { ...this.startBounds };
             info.toBounds = { x: this.targetElement.x, y: this.targetElement.y, w: this.targetElement.width, h: this.targetElement.height };

@@ -20,20 +20,24 @@ export class ColorPicker {
         grid.className = 'color-grid';
 
         for (const color of ColorPicker.COLORS) {
-            const swatch = document.createElement('div');
+            const swatch = document.createElement('button');
+            swatch.type = 'button';
+            swatch.setAttribute('aria-label', `顏色 ${color}`);
+            swatch.setAttribute('aria-pressed', 'false');
             swatch.className = 'color-swatch';
             swatch.style.background = color;
             swatch.dataset.color = color;
             swatch.addEventListener('click', () => {
-                grid.querySelectorAll('.color-swatch').forEach(s => s.classList.remove('selected'));
-                swatch.classList.add('selected');
+                ColorPicker.setActive(grid, color);
                 if (onChange) onChange(color);
             });
             grid.appendChild(swatch);
         }
 
         // Custom color "+ " button that opens a dark popup
-        const customBtn = document.createElement('div');
+        const customBtn = document.createElement('button');
+        customBtn.type = 'button';
+        customBtn.setAttribute('aria-label', '自訂顏色');
         customBtn.className = 'color-swatch color-swatch-custom';
         customBtn.title = '自訂顏色';
         customBtn.textContent = '+';
@@ -44,8 +48,7 @@ export class ColorPicker {
                 customBtn.style.background = c;
                 customBtn.style.color = ColorPicker._contrastColor(c);
                 customBtn.dataset.color = c;
-                grid.querySelectorAll('.color-swatch').forEach(s => s.classList.remove('selected'));
-                customBtn.classList.add('selected');
+                ColorPicker.setActive(grid, c);
                 if (onChange) onChange(c);
             });
         });
@@ -58,6 +61,7 @@ export class ColorPicker {
     static setActive(grid, color) {
         grid.querySelectorAll('.color-swatch').forEach(s => {
             s.classList.toggle('selected', s.dataset.color === color);
+            s.setAttribute('aria-pressed', String(s.dataset.color === color));
         });
     }
 
@@ -72,10 +76,12 @@ export class ColorPicker {
     /** Open a small dark custom-color popup near `anchor` */
     static _openCustomPopup(anchor, onApply) {
         // Remove any existing popup
-        document.querySelectorAll('.custom-color-popup').forEach(p => p.remove());
+        ColorPicker._closeCustomPopup?.();
 
         const popup = document.createElement('div');
         popup.className = 'custom-color-popup';
+        popup.setAttribute('role', 'dialog');
+        popup.setAttribute('aria-label', '自訂顏色');
 
         // --- Hex row ---
         const hexRow = document.createElement('div');
@@ -86,6 +92,9 @@ export class ColorPicker {
         const hexInput = document.createElement('input');
         hexInput.type = 'text';
         hexInput.className = 'ccp-hex';
+        hexInput.setAttribute('aria-label', '十六進位色碼');
+        hexInput.maxLength = 7;
+        hexInput.spellcheck = false;
         hexInput.placeholder = '#e0e0e0';
         hexInput.value = anchor.dataset.color || '#e0e0e0';
         hexRow.appendChild(hexLabel);
@@ -110,6 +119,7 @@ export class ColorPicker {
             const sl = document.createElement('input');
             sl.type = 'range';
             sl.min = 0; sl.max = 255; sl.step = 1;
+            sl.setAttribute('aria-label', `${ch} 色彩分量`);
             const val = document.createElement('span');
             val.className = 'ccp-val';
             sliderEls[ch] = { sl, val };
@@ -120,9 +130,16 @@ export class ColorPicker {
         }
 
         // Sync helpers
+        const normalizeHex = value => {
+            const digits = value.trim().replace(/^#/, '');
+            if (/^[0-9a-f]{6}$/i.test(digits)) return '#' + digits.toLowerCase();
+            if (/^[0-9a-f]{3}$/i.test(digits)) return '#' + [...digits].map(c => c + c).join('').toLowerCase();
+            return null;
+        };
         const hexToRgb = (h) => {
-            const c = h.replace('#', '');
-            if (c.length !== 6) return null;
+            const hex = normalizeHex(h);
+            if (!hex) return null;
+            const c = hex.slice(1);
             return { R: parseInt(c.slice(0,2),16), G: parseInt(c.slice(2,4),16), B: parseInt(c.slice(4,6),16) };
         };
         const rgbToHex = (r, g, b) => '#' + [r,g,b].map(v => v.toString(16).padStart(2,'0')).join('');
@@ -138,12 +155,6 @@ export class ColorPicker {
         };
         applyHex(hexInput.value);
 
-        hexInput.addEventListener('input', () => {
-            const v = hexInput.value.trim();
-            const hex = v.startsWith('#') ? v : '#' + v;
-            if (/^#[0-9a-fA-F]{6}$/.test(hex)) applyHex(hex);
-        });
-
         for (const ch of sliders) {
             sliderEls[ch].sl.addEventListener('input', () => {
                 const r = +sliderEls['R'].sl.value;
@@ -153,40 +164,65 @@ export class ColorPicker {
                 const hex = rgbToHex(r, g, b);
                 hexInput.value = hex;
                 preview.style.background = hex;
+                validateHex();
             });
         }
 
         // --- Apply button ---
         const applyBtn = document.createElement('button');
         applyBtn.className = 'ccp-apply';
+        applyBtn.type = 'button';
         applyBtn.textContent = '套用';
+        const validateHex = () => {
+            const hex = normalizeHex(hexInput.value);
+            applyBtn.disabled = !hex;
+            hexInput.setAttribute('aria-invalid', String(!hex));
+            if (hex) applyHex(hex);
+            return hex;
+        };
+        hexInput.addEventListener('input', validateHex);
         applyBtn.addEventListener('click', (e) => {
             e.stopPropagation();
-            onApply(hexInput.value);
-            popup.remove();
+            const hex = validateHex();
+            if (!hex) return;
+            onApply(hex);
+            close();
         });
         popup.appendChild(applyBtn);
 
-        // Position popup near anchor
-        const rect = anchor.getBoundingClientRect();
-        popup.style.top = (rect.bottom + 6) + 'px';
-        popup.style.left = Math.max(4, rect.left - 120) + 'px';
-
         document.body.appendChild(popup);
-
-        // Adjust if it goes off the right edge of the screen
-        const popupRect = popup.getBoundingClientRect();
-        if (popupRect.right > window.innerWidth - 10) {
-            popup.style.left = (window.innerWidth - popupRect.width - 10) + 'px';
-        }
-
-        // Close on outside click
-        const close = (e) => {
-            if (!popup.contains(e.target) && e.target !== anchor) {
-                popup.remove();
-                document.removeEventListener('mousedown', close);
-            }
+        const position = () => {
+            const rect = anchor.getBoundingClientRect();
+            const box = popup.getBoundingClientRect();
+            const top = rect.bottom + 6 + box.height > innerHeight - 8
+                ? rect.top - box.height - 6 : rect.bottom + 6;
+            popup.style.left = `${Math.max(8, Math.min(innerWidth - box.width - 8, rect.right - box.width))}px`;
+            popup.style.top = `${Math.max(8, Math.min(innerHeight - box.height - 8, top))}px`;
         };
-        setTimeout(() => document.addEventListener('mousedown', close), 0);
+        const close = (restoreFocus = true) => {
+            document.removeEventListener('pointerdown', outside, true);
+            document.removeEventListener('scroll', onScroll, true);
+            window.removeEventListener('resize', position);
+            popup.remove();
+            if (ColorPicker._closeCustomPopup === close) ColorPicker._closeCustomPopup = null;
+            if (restoreFocus && anchor.isConnected) anchor.focus({ preventScroll: true });
+        };
+        const outside = e => { if (!popup.contains(e.target) && !anchor.contains(e.target)) close(false); };
+        const onScroll = e => { if (!popup.contains(e.target)) close(false); };
+        popup.addEventListener('keydown', e => {
+            if (e.key === 'Escape') { e.preventDefault(); e.stopPropagation(); close(); }
+            if (e.key === 'Enter' && e.target === hexInput) { e.preventDefault(); applyBtn.click(); }
+        });
+        popup.addEventListener('focusout', e => {
+            if (e.relatedTarget && !popup.contains(e.relatedTarget)) close(false);
+        });
+        ColorPicker._closeCustomPopup = close;
+        document.addEventListener('pointerdown', outside, true);
+        document.addEventListener('scroll', onScroll, true);
+        window.addEventListener('resize', position);
+        position();
+        validateHex();
+        hexInput.focus({ preventScroll: true });
+        hexInput.select();
     }
 }

@@ -21,10 +21,12 @@ export class Toolbar {
 
         // Keyboard shortcuts
         document.addEventListener('keydown', (e) => {
-            if (e.target.tagName === 'INPUT' || e.target.tagName === 'TEXTAREA' || e.target.tagName === 'SELECT') return;
+            if (e.defaultPrevented || e.isComposing || e.target.isContentEditable ||
+                e.target.closest?.('input, textarea, select, [role="dialog"], .modal-overlay, .markdown-dialog-overlay, #settings-modal.open') ||
+                this.app._pendingElementDialogElement) return;
             const map = { v: 'select', h: 'pan', r: 'rectangle', c: 'circle', l: 'line', a: 'arrow', t: 'text', m: 'markdown', p: 'pen' };
             const tool = map[e.key.toLowerCase()];
-            if (tool && !e.ctrlKey && !e.metaKey) this.setTool(tool);
+            if (tool && !e.ctrlKey && !e.metaKey && !e.altKey) this.setTool(tool);
         });
     }
 
@@ -35,6 +37,7 @@ export class Toolbar {
         // Update button states
         document.querySelectorAll('.toolbar-btn').forEach(btn => {
             btn.classList.toggle('active', btn.dataset.tool === tool);
+            btn.setAttribute('aria-pressed', String(btn.dataset.tool === tool));
         });
 
         // Update cursor

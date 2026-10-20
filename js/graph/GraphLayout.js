@@ -158,6 +158,7 @@ export class GraphLayout {
         if (nodes.size === 0) return { width: requestedWidth, height: requestedHeight };
 
         const nodesArr = Array.from(nodes.values());
+        const avoidNodeEdges = options.avoidNodeEdges !== false;
         const nodeRadius = Number.isFinite(options.nodeRadius)
             ? Math.max(1, options.nodeRadius)
             : 20;
@@ -224,9 +225,9 @@ export class GraphLayout {
         }
 
         if (options.preservePositions && !GraphLayout._hasOverlaps(nodesArr, minDistance) &&
-            !GraphLayout._hasNodeEdgeOverlaps(
+            (!avoidNodeEdges || !GraphLayout._hasNodeEdgeOverlaps(
                 nodesArr, attractionFirstIndexes, attractionSecondIndexes, nodeRadius
-            )) {
+            ))) {
             return GraphLayout._ensureBounds(nodesArr, nodeRadius + 4, width, height);
         }
 
@@ -298,14 +299,14 @@ export class GraphLayout {
         const repairPasses = Number.isFinite(options.maxCollisionPasses)
             ? Math.max(1, Math.min(60, Math.floor(options.maxCollisionPasses)))
             : Math.min(120, Math.max(24, nodesArr.length));
-        GraphLayout._resolveNodeAndEdgeOverlaps(
+        if (avoidNodeEdges) GraphLayout._resolveNodeAndEdgeOverlaps(
             nodesArr, attractionFirstIndexes, attractionSecondIndexes,
             nodeRadius, minDistance, degrees, repairPasses
         );
         if (GraphLayout._hasOverlaps(nodesArr, minDistance) ||
-            GraphLayout._hasNodeEdgeOverlaps(
+            (avoidNodeEdges && GraphLayout._hasNodeEdgeOverlaps(
                 nodesArr, attractionFirstIndexes, attractionSecondIndexes, nodeRadius
-            )) {
+            ))) {
             // A very dense complete graph can keep pulling a tight cluster
             // together faster than the local collision solver can untangle
             // it. Use a spaced grid only for that unresolved case.
@@ -315,7 +316,7 @@ export class GraphLayout {
                 node.x = grid.positions[gridIndex].x;
                 node.y = grid.positions[gridIndex].y;
             }
-            GraphLayout._resolveNodeAndEdgeOverlaps(
+            if (avoidNodeEdges) GraphLayout._resolveNodeAndEdgeOverlaps(
                 nodesArr, attractionFirstIndexes, attractionSecondIndexes,
                 nodeRadius, minDistance, degrees, repairPasses
             );
@@ -326,6 +327,26 @@ export class GraphLayout {
             GraphLayout._resolveOverlaps(
                 nodesArr, minDistance, degrees, Math.max(repairPasses, 160)
             );
+            if (avoidNodeEdges && nodesArr.length <= 32 && GraphLayout._hasNodeEdgeOverlaps(
+                nodesArr, attractionFirstIndexes, attractionSecondIndexes, nodeRadius
+            )) {
+                // On a convex polygon every nonincident chord stays away from
+                // the other vertices. Give its closest chord (between the two
+                // neighboring vertices) enough clearance for the node circle.
+                const angle = 2 * Math.PI / nodesArr.length;
+                const radius = Math.max(
+                    (nodeRadius + 15) / (1 - Math.cos(angle)),
+                    minDistance / (2 * Math.sin(angle / 2))
+                );
+                const radiusX = Math.max(radius, (width - margin * 2) / 2);
+                const radiusY = Math.max(radius, (height - margin * 2) / 2);
+                for (let index = 0; index < nodesArr.length; index++) {
+                    const node = nodesArr[placementOrder[index]];
+                    const phase = index * angle - Math.PI / 2;
+                    node.x = margin + radiusX + Math.cos(phase) * radiusX;
+                    node.y = margin + radiusY + Math.sin(phase) * radiusY;
+                }
+            }
             return GraphLayout._ensureBounds(nodesArr, margin, width, height);
         }
         if (options.preservePositions) {
@@ -504,9 +525,13 @@ export class GraphLayout {
     static _resolveNodeAndEdgeOverlaps(
         nodes, firstIndexes, secondIndexes, nodeRadius, minDistance, degrees, collisionPasses
     ) {
-        // Repeat until both spacing rules hold, with a fixed cap to keep even
-        // difficult imported layouts bounded in cost.
-        for (let pass = 0; pass < 8; pass++) {
+        const pairs = nodes.length * firstIndexes.length;
+        if (!pairs || pairs > MAX_NODE_EDGE_CHECKS) return;
+        // Small diagrams get several repair rounds. Bound the total work on
+        // large graphs so each pointer move cannot repeat a full V×E scan
+        // eight times; the final spacing pass still separates node circles.
+        const passes = Math.max(1, Math.min(8, Math.floor(400_000 / pairs)));
+        for (let pass = 0; pass < passes; pass++) {
             GraphLayout._resolveNodeEdgeOverlaps(
                 nodes, firstIndexes, secondIndexes, nodeRadius, 1
             );

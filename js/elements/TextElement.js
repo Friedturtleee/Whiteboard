@@ -25,6 +25,14 @@ export class TextElement extends Element {
         return `${style}${weight}${this.fontSize}px ${this.fontFamily}`;
     }
 
+    _getLines() {
+        if (this._linesText !== this.text) {
+            this._linesText = this.text;
+            this._lines = this.text.split('\n');
+        }
+        return this._lines;
+    }
+
     draw(ctx, camera) {
         this.applyStyle(ctx);
         const { x, y, width: w, height: h, rotation } = this;
@@ -40,6 +48,10 @@ export class TextElement extends Element {
         if (this.fillColor !== 'transparent') {
             ctx.fillRect(x, y, w, h);
         }
+        if (this.isEditing) {
+            ctx.restore();
+            return;
+        }
 
         const baseW = this._baseWidth || w;
         const baseH = this._baseHeight || h;
@@ -51,15 +63,33 @@ export class TextElement extends Element {
 
         ctx.fillStyle = this.getEffectiveColor(this.color);
         ctx.font = this.getFontString();
-        ctx.textBaseline = 'top';
+        ctx.textBaseline = 'alphabetic';
         ctx.textAlign = 'left';
 
-        const lines = this.text.split('\n');
+        const lines = this._getLines();
         const lineHeight = this.fontSize * 1.3;
+        const metrics = ctx.measureText('Mg');
+        const ascent = metrics.fontBoundingBoxAscent ?? this.fontSize;
+        const descent = metrics.fontBoundingBoxDescent ?? this.fontSize * 0.25;
+        const baseline = (lineHeight - ascent - descent) / 2 + ascent;
 
-        for (let i = 0; i < lines.length; i++) {
+        // Skip offscreen rows, including rotated and nonuniformly scaled text.
+        let firstLine = 0, lastLine = lines.length;
+        const transform = ctx.getTransform?.();
+        if (transform && ctx.canvas) {
+            const { a, b, c, d, e, f } = transform;
+            const determinant = a * d - b * c;
+            if (Math.abs(determinant) > 1e-12) {
+                const ys = [[0, 0], [ctx.canvas.width, 0], [0, ctx.canvas.height],
+                    [ctx.canvas.width, ctx.canvas.height]]
+                    .map(([sx, sy]) => (a * (sy - f) - b * (sx - e)) / determinant);
+                firstLine = Math.max(0, Math.floor(Math.min(...ys) / lineHeight) - 1);
+                lastLine = Math.min(lines.length, Math.ceil(Math.max(...ys) / lineHeight) + 1);
+            }
+        }
+        for (let i = firstLine; i < lastLine; i++) {
             const lineY = i * lineHeight;
-            ctx.fillText(lines[i], 0, lineY);
+            ctx.fillText(lines[i], 0, lineY + baseline);
             
             if (this.isUnderline) {
                 const m = ctx.measureText(lines[i]);
@@ -78,7 +108,7 @@ export class TextElement extends Element {
     autoSize(ctx) {
         ctx.save();
         ctx.font = this.getFontString();
-        const lines = this.text.split('\n');
+        const lines = this._getLines();
         const lineHeight = this.fontSize * 1.3;
         let maxWidth = 0;
         for (const line of lines) {

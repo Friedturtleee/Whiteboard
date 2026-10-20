@@ -1,6 +1,8 @@
 /**
  * TreeRenderer — draws tree nodes and edges on a canvas context.
  */
+import { fitCanvasTextFontSize } from '../core/CanvasTextFit.js';
+
 export class TreeRenderer {
     /**
      * Draw the entire tree.
@@ -72,6 +74,8 @@ export class TreeRenderer {
                 const hasWeight = rawWeight != null && String(rawWeight).trim() !== '';
                 const label = hasWeight ? String(rawWeight) : '?';
                 ctx.save();
+                const labelSize = fitCanvasTextFontSize(ctx, label, 11, 320, 16);
+                ctx.font = `${labelSize}px Consolas, monospace`;
                 ctx.textAlign = 'center';
                 ctx.textBaseline = 'middle';
                 if (typeof ctx.strokeText === 'function') {
@@ -140,7 +144,10 @@ export class TreeRenderer {
             ctx.font = '13px Consolas, monospace';
             ctx.textAlign = 'center';
             ctx.textBaseline = 'middle';
-            ctx.fillText(String(current.value), nx, ny, r * 2 - 4);
+            const label = String(current.value);
+            const fontSize = fitCanvasTextFontSize(ctx, label, 13, r * 2 - 6, r * 1.5);
+            ctx.font = `${fontSize}px Consolas, monospace`;
+            ctx.fillText(label, nx, ny);
 
             // AVL balance factor
             if (treeType === 'avl' && current.meta && current.meta.bf !== undefined) {

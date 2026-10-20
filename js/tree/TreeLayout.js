@@ -6,7 +6,24 @@ export class TreeLayout {
         // subtree in a disjoint horizontal span also prevents its edges from
         // running through a neighboring node.
         const minimumSpacing = nodeRadius * 2 + 12;
-        const spacingX = Math.max(options.nodeSpacingX || 40, minimumSpacing);
+        let weightSpacing = 0;
+        if (options.hasWeights) {
+            const pending = [root], seen = new Set();
+            while (pending.length) {
+                const node = pending.pop();
+                if (!node || seen.has(node)) continue;
+                seen.add(node);
+                const weight = node.meta?.edgeWeight;
+                if (weight != null && String(weight).trim()) {
+                    const labelWidth = Math.min(320, String(weight).length * 6.7);
+                    // Sibling edge midpoints are only half as far apart as
+                    // their child nodes. Reserve room for the full labels.
+                    weightSpacing = Math.max(weightSpacing, 2 * (labelWidth + 10));
+                }
+                for (const child of node.children || []) pending.push(child);
+            }
+        }
+        const spacingX = Math.max(options.nodeSpacingX || 40, minimumSpacing, weightSpacing);
         const spacingY = Math.max(options.levelSpacingY || 60, minimumSpacing);
         const startX = options.startX || 0;
         const startY = options.startY || 0;

@@ -4,6 +4,7 @@ import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import express from 'express';
 import puppeteer from 'puppeteer';
+import { checkInterface } from './tests/interface-browser.js';
 
 const app = express();
 app.use(express.static(fileURLToPath(new URL('.', import.meta.url))));
@@ -1659,6 +1660,7 @@ try {
     if (!pointerCaptureCancellation) {
         throw new Error('Pointer cancellation must clear its active ID before releasing capture.');
     }
+    await checkInterface(page);
     if (pageErrors.length) {
         throw new AggregateError(pageErrors, 'The page reported uncaught JavaScript errors.');
     }

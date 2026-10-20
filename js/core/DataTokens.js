@@ -56,3 +56,33 @@ export function formatDataToken(value) {
     const text = String(value);
     return /[\s,"\u3000]/u.test(text) ? JSON.stringify(text) : text;
 }
+
+/** Read CP whitespace input or tabular clipboard text, retaining empty cells. */
+export function parsePastedMatrixRows(text) {
+    const input = String(text).replace(/\r\n?/g, '\n').replace(/\n+$/, '');
+    if (!input.includes('\t')) return input.split('\n').map(row => splitDataTokens(row));
+    const rows = [], row = [];
+    let field = '', quoted = false, escaped = false;
+    const flush = () => {
+        let value = field;
+        if (field.startsWith('"') && field.endsWith('"')) {
+            try { value = JSON.parse(field); }
+            catch { value = field.slice(1, -1).replace(/""/g, '"'); }
+        }
+        row.push(value === '\u3000' ? '' : value);
+        field = ''; escaped = false;
+    };
+    for (const char of input) {
+        if (!quoted && (char === '\t' || char === '\n')) {
+            flush();
+            if (char === '\n') { rows.push(row.splice(0)); }
+            continue;
+        }
+        if (char === '"' && !escaped && (quoted || field === '' ||
+            (field.startsWith('"') && field.endsWith('"')))) quoted = !quoted;
+        field += char;
+        escaped = char === '\\' && !escaped;
+    }
+    flush(); rows.push(row);
+    return rows;
+}

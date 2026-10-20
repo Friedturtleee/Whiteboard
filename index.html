@@ -39,7 +39,7 @@
     </div>
 
     <!-- Main Canvas -->
-    <canvas id="main-canvas"></canvas>
+    <canvas id="main-canvas" tabindex="0" aria-label="白板畫布"></canvas>
     <!-- Text editing overlay -->
 
 
@@ -71,7 +71,7 @@
     </div>
 
     <!-- Left Toolbar -->
-    <div id="toolbar">
+    <div id="toolbar" role="toolbar" aria-label="繪圖工具（可捲動）" aria-orientation="vertical">
         <button class="toolbar-btn active" data-tool="select" data-tooltip="選取 (V)">
             <span class="material-symbols-outlined">near_me</span>
         </button>
@@ -120,7 +120,26 @@
     </div>
 
     <!-- Property Panel (right) -->
+    <aside id="right-panels" aria-label="物件屬性與圖層">
     <div id="property-panel">
+        <div class="property-panel-header">
+            <span>屬性</span>
+            <button id="toggle-properties" type="button" aria-label="收合屬性" aria-expanded="true" aria-controls="property-panel-content">
+                <span class="material-symbols-outlined" aria-hidden="true">expand_less</span>
+            </button>
+        </div>
+        <div id="property-panel-content">
+        <div class="panel-section selection-actions" id="selection-actions" hidden>
+            <button id="edit-element-data" type="button">編輯資料</button>
+            <div id="matrix-selection-actions" hidden>
+                <p id="selected-cells-status" role="status"></p>
+                <div class="selection-action-buttons">
+                    <button id="edit-selected-cells" type="button">編輯選取格</button>
+                    <button id="clear-selected-cells" type="button">清空選取格</button>
+                </div>
+                <p class="selection-help">拖曳框選 · Ctrl / ⌘ 多選<br>Shift 範圍 · Enter 編輯<br>Ctrl / ⌘ C、X、V 複製／剪下／貼上格子</p>
+            </div>
+        </div>
         <div class="panel-section">
             <div class="panel-section-title">位置 & 大小</div>
             <div class="panel-row">
@@ -231,6 +250,7 @@
                 </div>
             </div>
         </div>
+        </div>
     </div>
 
     <!-- Layer Panel (bottom-right) -->
@@ -240,20 +260,22 @@
             <div style="display:flex;gap:2px">
                 <button id="layer-up" title="上移"><span class="material-symbols-outlined">keyboard_arrow_up</span></button>
                 <button id="layer-down" title="下移"><span class="material-symbols-outlined">keyboard_arrow_down</span></button>
+                <button id="toggle-layers" type="button" aria-label="收合圖層" aria-expanded="true" aria-controls="layer-list"><span class="material-symbols-outlined" aria-hidden="true">expand_more</span></button>
             </div>
         </div>
         <div class="layer-list" id="layer-list"></div>
     </div>
+    </aside>
 
     <!-- Hidden file input for JSON import -->
     <input type="file" id="json-file-input" accept=".json" style="display:none">
 
     <!-- Settings Modal -->
     <div id="settings-modal">
-        <div id="settings-panel">
+        <div id="settings-panel" aria-labelledby="settings-title">
             <div class="settings-header">
-                <span>設定</span>
-                <button id="settings-close"><span class="material-symbols-outlined">close</span></button>
+                <span id="settings-title">設定</span>
+                <button id="settings-close" aria-label="關閉設定"><span class="material-symbols-outlined" aria-hidden="true">close</span></button>
             </div>
             <div class="settings-body">
                 <div class="settings-section-title">格線</div>
@@ -296,30 +318,33 @@
         <button class="zoom-bar-btn" id="btn-zoom-out" data-tooltip="縮小 (Ctrl+-)">
             <span class="material-symbols-outlined">remove</span>
         </button>
-        <span class="zoom-display" id="zoom-display" data-tooltip="點擊重置縮放">100%</span>
+        <button type="button" class="zoom-display" id="zoom-display" data-tooltip="重置縮放為 100%">100%</button>
         <button class="zoom-bar-btn" id="btn-zoom-in" data-tooltip="放大 (Ctrl+=)">
             <span class="material-symbols-outlined">add</span>
+        </button>
+        <button type="button" class="zoom-bar-btn" id="btn-fit-view" data-tooltip="顯示全部 (Shift+1；Shift+2 顯示選取)">
+            <span class="material-symbols-outlined">fit_screen</span>
         </button>
     </div>
 
     <!-- Right-click Context Menu -->
-    <div id="context-menu">
-        <div class="ctx-item" id="ctx-rename"><span class="material-symbols-outlined">edit</span> 重新命名</div>
-        <div class="ctx-item" id="ctx-duplicate"><span class="material-symbols-outlined">content_copy</span> 複製</div>
-        <div class="ctx-item" id="ctx-matrix-prefix" style="display:none;"><span class="material-symbols-outlined">functions</span> 轉換為前綴和</div>
-        <div class="ctx-item" id="ctx-matrix-diff" style="display:none;"><span class="material-symbols-outlined">difference</span> 轉換為差分</div>
+    <div id="context-menu" role="menu" aria-label="物件操作">
+        <button type="button" role="menuitem" class="ctx-item" id="ctx-rename"><span class="material-symbols-outlined">edit</span> 重新命名</button>
+        <button type="button" role="menuitem" class="ctx-item" id="ctx-duplicate"><span class="material-symbols-outlined">content_copy</span> 複製</button>
+        <button type="button" role="menuitem" class="ctx-item" id="ctx-matrix-prefix" style="display:none;"><span class="material-symbols-outlined">functions</span> 轉換為前綴和</button>
+        <button type="button" role="menuitem" class="ctx-item" id="ctx-matrix-diff" style="display:none;"><span class="material-symbols-outlined">difference</span> 轉換為差分</button>
         <div class="ctx-separator"></div>
-        <div class="ctx-item" id="ctx-layer-up"><span class="material-symbols-outlined">keyboard_arrow_up</span> 上移一層</div>
-        <div class="ctx-item" id="ctx-layer-down"><span class="material-symbols-outlined">keyboard_arrow_down</span> 下移一層</div>
+        <button type="button" role="menuitem" class="ctx-item" id="ctx-layer-up"><span class="material-symbols-outlined">keyboard_arrow_up</span> 上移一層</button>
+        <button type="button" role="menuitem" class="ctx-item" id="ctx-layer-down"><span class="material-symbols-outlined">keyboard_arrow_down</span> 下移一層</button>
         <div class="ctx-separator" id="ctx-sep1"></div>
-        <div class="ctx-item" id="ctx-bring-front"><span class="material-symbols-outlined">flip_to_front</span> 移至最上層</div>
-        <div class="ctx-item" id="ctx-send-back"><span class="material-symbols-outlined">flip_to_back</span> 移至最下層</div>
+        <button type="button" role="menuitem" class="ctx-item" id="ctx-bring-front"><span class="material-symbols-outlined">flip_to_front</span> 移至最上層</button>
+        <button type="button" role="menuitem" class="ctx-item" id="ctx-send-back"><span class="material-symbols-outlined">flip_to_back</span> 移至最下層</button>
         <div class="ctx-separator" id="ctx-sep2"></div>
-        <div class="ctx-item ctx-danger" id="ctx-delete"><span class="material-symbols-outlined">delete</span> 刪除</div>
+        <button type="button" role="menuitem" class="ctx-item ctx-danger" id="ctx-delete"><span class="material-symbols-outlined">delete</span> 刪除</button>
     </div>
 
     <!-- Inline Rename Input -->
-    <input type="text" id="rename-input" autocomplete="off">
+    <input type="text" id="rename-input" autocomplete="off" aria-label="物件名稱">
 
     <!-- Inline Text Editor -->
     <textarea id="text-edit-overlay" autocomplete="off" spellcheck="false" wrap="off"></textarea>

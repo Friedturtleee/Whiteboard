@@ -1,3 +1,5 @@
+import { bindModal } from './Modal.js';
+
 /**
  * TextInputDialog — modal dialog for tree/graph text input, matrix input, etc.
  */
@@ -5,7 +7,6 @@ export class TextInputDialog {
     constructor(app) {
         this.app = app;
         this._overlay = null;
-        this._escHandler = null;
         this._cancelHandler = null;
         this._previewTimer = null;
         this._flushPreview = null;
@@ -27,7 +28,9 @@ export class TextInputDialog {
         dialog.className = 'modal-dialog';
 
         const title = document.createElement('h3');
+        title.id = 'text-input-dialog-title';
         title.textContent = opts.title || '輸入資料';
+        dialog.setAttribute('aria-labelledby', title.id);
 
         dialog.appendChild(title);
 
@@ -35,6 +38,7 @@ export class TextInputDialog {
         let typeSelect = null;
         if (opts.showTypeSelect && opts.types) {
             typeSelect = document.createElement('select');
+            typeSelect.setAttribute('aria-label', '樹的類型');
             for (const t of opts.types) {
                 const opt = document.createElement('option');
                 opt.value = t.value;
@@ -49,6 +53,7 @@ export class TextInputDialog {
         let graphModeSelect = null;
         if (opts.showGraphModeSelect) {
             graphModeSelect = document.createElement('select');
+            graphModeSelect.setAttribute('aria-label', '圖的輸入格式');
             graphModeSelect.style.marginBottom = '8px';
             const graphModes = [
                 { value: 'edge-list', label: '邊列表 (N M, 再列 edges)' },
@@ -110,6 +115,7 @@ export class TextInputDialog {
         let modeSelect = null;
         if (opts.showModeSelect) {
             modeSelect = document.createElement('select');
+            modeSelect.setAttribute('aria-label', '樹的輸入格式');
             modeSelect.style.marginBottom = '8px';
             const modes = [
                 { value: 'auto',   label: '自動偵測（CP 樹：N，接 N-1 條無向邊）' },
@@ -155,6 +161,9 @@ export class TextInputDialog {
         textareaBackdrop.style.pointerEvents = 'none';
 
         const textarea = document.createElement('textarea');
+        textarea.setAttribute('aria-label', `${opts.title || '輸入資料'}內容`);
+        textarea.maxLength = 1_000_000;
+        textarea.spellcheck = false;
         textarea.placeholder = opts.placeholder || '在此輸入...';
         textarea.value = opts.defaultText || '';
         textarea.style.position = 'absolute';
@@ -174,6 +183,10 @@ export class TextInputDialog {
         textarea.style.caretColor = 'var(--text-primary, #fff)';
         textarea.style.resize = 'none';
         textarea.style.outline = 'none';
+        textarea.style.scrollbarGutter = 'stable';
+        textareaBackdrop.style.scrollbarGutter = 'stable';
+        textareaBackdrop.style.overflowY = 'scroll';
+        textareaBackdrop.setAttribute('aria-hidden', 'true');
 
         textareaContainer.appendChild(textareaBackdrop);
         textareaContainer.appendChild(textarea);
@@ -190,7 +203,7 @@ export class TextInputDialog {
         };
 
         textarea.addEventListener('keydown', (e) => {
-            if (e.key.length === 1 && !e.ctrlKey && !e.altKey && !e.metaKey) {
+            if (!e.isComposing && e.key.length === 1 && !e.ctrlKey && !e.altKey && !e.metaKey) {
                 const start = textarea.selectionStart;
                 const end = textarea.selectionEnd;
                 if (start === end && textarea.value[start] === '　') {
@@ -210,9 +223,22 @@ export class TextInputDialog {
         textarea.addEventListener('input', updateBackdrop);
         textarea.addEventListener('scroll', () => {
             textareaBackdrop.scrollTop = textarea.scrollTop;
+            textareaBackdrop.scrollLeft = textarea.scrollLeft;
         });
         // Initial render
         updateBackdrop();
+
+        const errorMessage = document.createElement('p');
+        errorMessage.id = 'text-input-dialog-error';
+        errorMessage.className = 'dialog-error';
+        errorMessage.setAttribute('role', 'alert');
+        errorMessage.hidden = true;
+        textarea.setAttribute('aria-describedby', errorMessage.id);
+        const showError = error => {
+            errorMessage.textContent = typeof error === 'string' ? error : '';
+            errorMessage.hidden = !errorMessage.textContent;
+            textarea.setAttribute('aria-invalid', String(!errorMessage.hidden));
+        };
 
         const _getValues = () => ({
             text:      textarea.value,
@@ -222,24 +248,34 @@ export class TextInputDialog {
             zeroBased: zeroBasedCb     ? zeroBasedCb.checked   : false,
             graphMode: graphModeSelect ? graphModeSelect.value : 'edge-list'
         });
+        const formatHint = document.createElement('p');
+        formatHint.className = 'dialog-format-hint';
+        const updatePlaceholder = () => {
+            textarea.placeholder = opts.getPlaceholder?.(_getValues()) || opts.placeholder || '在此輸入…';
+            formatHint.textContent = textarea.placeholder.split('\n')[0];
+        };
+        updatePlaceholder();
 
         // Real-time preview — debounced
         const _fireInput = () => {
+            updatePlaceholder();
+            showError(null);
             if (!opts.onInput) return;
             if (this._previewTimer) clearTimeout(this._previewTimer);
             this._previewTimer = setTimeout(() => {
                 this._previewTimer = null;
                 if (this._overlay !== overlay) return;
                 const v = _getValues();
-                opts.onInput(v.text, v.type, v.mode, v.directed, v.zeroBased, v.graphMode);
+                showError(opts.onInput(v.text, v.type, v.mode, v.directed, v.zeroBased, v.graphMode));
             }, 180);
         };
         const _fireImmediate = () => {
+            updatePlaceholder();
             if (this._previewTimer) clearTimeout(this._previewTimer);
             this._previewTimer = null;
             if (opts.onInput) {
                 const v = _getValues();
-                opts.onInput(v.text, v.type, v.mode, v.directed, v.zeroBased, v.graphMode);
+                showError(opts.onInput(v.text, v.type, v.mode, v.directed, v.zeroBased, v.graphMode));
             }
         };
         this._flushPreview = _fireImmediate;
@@ -264,9 +300,14 @@ export class TextInputDialog {
         const fireConfirm = () => {
             if (this._overlay !== overlay) return;
             const values = _getValues();
-            this.close();
-            opts.onConfirm?.(values.text, values.type, values.mode,
+            const error = opts.onConfirm?.(values.text, values.type, values.mode,
                 values.directed, values.zeroBased, values.graphMode);
+            if (typeof error === 'string' && error) {
+                showError(error);
+                textarea.focus();
+                return;
+            }
+            if (error !== false && this._overlay === overlay) this.close();
         };
 
         const cancelBtn = document.createElement('button');
@@ -281,37 +322,33 @@ export class TextInputDialog {
         actions.appendChild(cancelBtn);
         actions.appendChild(confirmBtn);
         dialog.appendChild(textareaContainer);
+        dialog.insertBefore(formatHint, textareaContainer);
+        dialog.appendChild(errorMessage);
+        const hint = document.createElement('p');
+        hint.className = 'dialog-keyboard-hint';
+        hint.textContent = 'Ctrl / ⌘ + Enter 確認 · Esc 取消';
+        dialog.appendChild(hint);
         dialog.appendChild(actions);
         overlay.appendChild(dialog);
 
-        // Close on overlay click (confirm)
+        // A background click must not silently save unfinished input.
         overlay.addEventListener('click', (e) => {
-            if (e.target === overlay) fireConfirm();
+            if (e.target === overlay) fireCancel();
         });
-
-        // ESC to close
-        const escHandler = (e) => {
-            if (e.key === 'Escape' && this._overlay === overlay) {
-                e.preventDefault();
-                fireCancel();
-            }
-        };
-        this._escHandler = escHandler;
-        document.addEventListener('keydown', escHandler);
 
         document.body.appendChild(overlay);
         this._overlay = overlay;
-        textarea.focus();
+        this._releaseModal = bindModal(dialog, {
+            onCancel: fireCancel, onConfirm: fireConfirm, initialFocus: textarea
+        });
     }
 
     close() {
+        this._releaseModal?.();
+        this._releaseModal = null;
         if (this._previewTimer) {
             clearTimeout(this._previewTimer);
             this._previewTimer = null;
-        }
-        if (this._escHandler) {
-            document.removeEventListener('keydown', this._escHandler);
-            this._escHandler = null;
         }
         if (this._overlay) {
             this._overlay.remove();

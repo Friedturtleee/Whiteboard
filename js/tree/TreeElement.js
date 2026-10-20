@@ -105,6 +105,7 @@ export class TreeElement extends Element {
         if (!this.root) return;
         TreeLayout.layout(this.root, {
             nodeRadius: this.nodeRadius,
+            hasWeights: this.hasWeights,
             nodeSpacingX: this.nodeRadius * 2.5,
             levelSpacingY: this.nodeRadius * 3.5,
             startX: 0,
@@ -560,6 +561,7 @@ export class TreeElement extends Element {
             this._edgeWeightOverrides[path] = null;
         }
         this.hasWeights = true;
+        if (!this.isEditingEdge) this._layoutTree();
         return true;
     }
 
@@ -607,7 +609,10 @@ export class TreeElement extends Element {
             else node.meta.edgeWeight = String(value);
         }
         this._edgeWeightOverrides = Object.fromEntries(entries);
-        if (entries.length) this.hasWeights = true;
+        if (entries.length) {
+            this.hasWeights = true;
+            this._layoutTree();
+        }
     }
 
     serialize() {

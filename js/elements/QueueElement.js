@@ -3,7 +3,7 @@
  */
 import { Element } from '../core/Element.js';
 import { formatDataToken, splitDataTokens } from '../core/DataTokens.js';
-import { fitCanvasTextFontSize } from '../core/CanvasTextFit.js';
+import { drawCanvasCellText } from '../core/CanvasTextFit.js';
 
 const EMPTY_CELL = '\u3000';
 const isEmptyCell = value => value == null || value === '' || value === EMPTY_CELL;
@@ -161,12 +161,8 @@ export class QueueElement extends Element {
             if (i < displayItems.length && !isEmptyCell(displayItems[i])) {
                 ctx.fillStyle = this.getEffectiveColor(this.color);
                 const text = String(displayItems[i]);
-                const fittedFontSize = fitCanvasTextFontSize(
-                    ctx, text, baseFontSize, cellInnerW, cellInnerH
-                );
                 ctx.save();
-                ctx.font = `${fittedFontSize}px Consolas, monospace`;
-                ctx.fillText(text, cx, cy);
+                drawCanvasCellText(ctx, text, baseFontSize, cellInnerW, cellInnerH, cx, cy);
                 ctx.restore();
             }
 

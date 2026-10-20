@@ -23,6 +23,12 @@ export class LayerPanel {
 
     update() {
         if (!this._list) return;
+        const scrollTop = this._list.scrollTop;
+        const focused = document.activeElement;
+        const focusedItem = focused?.closest?.('.layer-item');
+        const focusedId = this._list.contains(focusedItem) ? focusedItem.dataset.elId : null;
+        const focusedControl = ['layer-name', 'layer-visibility', 'layer-lock']
+            .find(className => focused?.classList?.contains(className));
         this._list.innerHTML = '';
 
         const panel = document.getElementById('layer-panel');
@@ -51,10 +57,14 @@ export class LayerPanel {
             colorDot.className = 'layer-color';
             colorDot.style.background = el.color;
 
-            const name = document.createElement('span');
+            const name = document.createElement('button');
+            name.type = 'button';
             name.className = 'layer-name';
             const layerName = `${el.label || el.type} #${el.id}`;
             name.textContent = layerName;
+            name.title = layerName;
+            name.setAttribute('aria-label', `選取 ${layerName}`);
+            name.setAttribute('aria-pressed', String(this.app.selectionManager.isSelected(el)));
 
             const vis = document.createElement('button');
             vis.type = 'button';
@@ -179,6 +189,11 @@ export class LayerPanel {
             });
 
             this._list.appendChild(item);
+        }
+        this._list.scrollTop = scrollTop;
+        if (focusedId && focusedControl) {
+            const item = [...this._list.children].find(row => row.dataset.elId === focusedId);
+            item?.querySelector(`.${focusedControl}`)?.focus({ preventScroll: true });
         }
     }
 
