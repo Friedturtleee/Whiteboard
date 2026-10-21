@@ -1,6 +1,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { CloudBoards } from '../js/network/CloudBoards.js';
+import { i18n } from '../js/ui/I18n.js';
 
 function deferred() {
     let resolve;
@@ -11,8 +12,31 @@ function deferred() {
 function fakeNode() {
     return {
         children: [],
+        listeners: {},
         hidden: false,
-        replaceChildren(...children) { this.children = children; }
+        append(...children) {
+            for (const child of children) if (child && typeof child === 'object') child.parentElement = this;
+            this.children.push(...children);
+        },
+        replaceChildren(...children) {
+            for (const child of this.children) {
+                if (child && typeof child === 'object') child.parentElement = null;
+            }
+            this.children = [];
+            this.append(...children);
+        },
+        insertBefore(child, anchor) {
+            const index = this.children.indexOf(anchor);
+            if (child && typeof child === 'object') child.parentElement = this;
+            if (index < 0) this.children.push(child);
+            else this.children.splice(index, 0, child);
+        },
+        addEventListener(name, callback) { this.listeners[name] = callback; },
+        remove() {
+            if (!this.parentElement) return;
+            this.parentElement.children = this.parentElement.children.filter(child => child !== this);
+            this.parentElement = null;
+        }
     };
 }
 
@@ -67,6 +91,298 @@ test('a stale cloud-board list response cannot replace the newly signed-in accou
         await oldRender;
 
         assert.deepEqual(nodes.get('cloud-board-list').children, ['board:B private board']);
+        assert.equal(nodes.get('cloud-identity').children[0].textContent, 'Account B');
+    } finally {
+        if (previousDocument === undefined) delete globalThis.document;
+        else globalThis.document = previousDocument;
+    }
+});
+
+test('cloud account names are wrapped as user content', () => {
+    const previousDocument = globalThis.document;
+    globalThis.document = { createElement: () => fakeNode() };
+    try {
+        const manager = Object.create(CloudBoards.prototype);
+        const identity = fakeNode();
+        manager._setIdentity(identity, { fullName: '設定' }, '已登入');
+        assert.equal(identity.children.length, 1);
+        assert.equal(identity.children[0].className, 'whiteboard-user-content');
+        assert.equal(identity.children[0].textContent, '設定');
+
+        manager._setIdentity(identity, null, '已登入');
+        assert.equal(identity.children.length, 0);
+        assert.equal(identity.textContent, '已登入');
+    } finally {
+        if (previousDocument === undefined) delete globalThis.document;
+        else globalThis.document = previousDocument;
+    }
+});
+
+test('cloud board roles follow the selected language without translating the title or date', () => {
+    const previousDocument = globalThis.document;
+    const previousLocale = i18n.locale;
+    globalThis.document = { createElement: () => fakeNode() };
+    try {
+        i18n.locale = 'zh-TW';
+        const manager = Object.create(CloudBoards.prototype);
+        const row = manager._boardRow({
+            id: 'board_a', title: 'Owner', role: 'owner', updated_at: 0
+        });
+        const [title, metadata] = row.children[0].children;
+
+        assert.equal(title.textContent, 'Owner');
+        assert.equal(metadata.children[0].textContent, '擁有者');
+        assert.equal(metadata.children[1].textContent, ' · ');
+        assert.ok(metadata.children[2].textContent);
+        assert.equal(manager._roleLabel('editor'), '編輯者');
+        i18n.locale = 'en';
+        assert.equal(manager._roleLabel('viewer'), 'Viewer');
+    } finally {
+        i18n.locale = previousLocale;
+        if (previousDocument === undefined) delete globalThis.document;
+        else globalThis.document = previousDocument;
+    }
+});
+
+test('cloud status labels follow the selected language while preserving board titles', () => {
+    const previousDocument = globalThis.document;
+    const previousLocale = i18n.locale;
+    const status = fakeNode(); status.dataset = {};
+    const trigger = fakeNode(); trigger.dataset = {};
+    globalThis.document = {
+        getElementById: id => id === 'cloud-status' ? status : id === 'btn-cloud-boards' ? trigger : null,
+        createElement: () => fakeNode()
+    };
+    try {
+        const manager = Object.create(CloudBoards.prototype);
+        Object.assign(manager, {
+            isCloudBoard: true,
+            isReadOnly: true,
+            connection: { status: 'saved' },
+            activeBoard: { title: 'Owner' },
+            statusOverride: ''
+        });
+
+        i18n.locale = 'en';
+        manager._renderStatus();
+        assert.deepEqual(status.children.map(child => child.textContent), [
+            'Cloud board synced', ' · ', 'Owner', ' · ', 'Viewer'
+        ]);
+        assert.equal(status.children[2].className, 'whiteboard-user-content');
+
+        i18n.locale = 'zh-TW';
+        manager._renderStatus();
+        assert.deepEqual(status.children.map(child => child.textContent), [
+            '雲端已同步', ' · ', 'Owner', ' · ', '檢視者'
+        ]);
+    } finally {
+        i18n.locale = previousLocale;
+        if (previousDocument === undefined) delete globalThis.document;
+        else globalThis.document = previousDocument;
+    }
+});
+
+test('signing out clears the previously rendered account board list', async () => {
+    const previousDocument = globalThis.document;
+    const nodes = new Map([
+        ['cloud-board-list', fakeNode()],
+        ['cloud-identity', fakeNode()],
+        ['cloud-error', fakeNode()],
+        ['cloud-save-current', fakeNode()],
+        ['cloud-return-local', fakeNode()],
+        ['cloud-signout', fakeNode()]
+    ]);
+    globalThis.document = {
+        getElementById: id => nodes.get(id) || null,
+        createElement: () => fakeNode()
+    };
+
+    try {
+        const manager = Object.create(CloudBoards.prototype);
+        Object.assign(manager, {
+            panelRenderRevision: 0,
+            clerkUserId: 'user_a',
+            clerkIdentityRevision: 4,
+            clerk: { user: { id: 'user_a', fullName: 'Account A' } },
+            activeUserId: null,
+            modal: { isConnected: true },
+            isCloudBoard: false,
+            accountRecoveryPending: false,
+            _loadClerk: async function () { return this.clerk; },
+            _localRecoveryRows: () => [],
+            _api: async () => ({ boards: [{ id: 'private-board', title: 'Private board' }] }),
+            _boardRow: board => `private:${board.title}`,
+            _showError: error => { throw error; }
+        });
+
+        await manager._renderPanel();
+        assert.ok(nodes.get('cloud-board-list').children.includes('private:Private board'));
+
+        manager.clerk.user = null;
+        manager._handleClerkIdentityChange(null);
+        await new Promise(resolve => setImmediate(resolve));
+
+        assert.equal(manager.clerkUserId, null);
+        assert.equal(manager.clerkIdentityRevision, 5);
+        assert.equal(nodes.get('cloud-identity').textContent, '登入後查看雲端白板。');
+        assert.equal(nodes.get('cloud-board-list').children.includes('private:Private board'), false);
+    } finally {
+        if (previousDocument === undefined) delete globalThis.document;
+        else globalThis.document = previousDocument;
+    }
+});
+
+test('a pending board-list response cannot restore private boards after sign-out', async () => {
+    const previousDocument = globalThis.document;
+    const nodes = new Map([
+        ['cloud-board-list', fakeNode()],
+        ['cloud-identity', fakeNode()],
+        ['cloud-error', fakeNode()],
+        ['cloud-save-current', fakeNode()],
+        ['cloud-return-local', fakeNode()],
+        ['cloud-signout', fakeNode()]
+    ]);
+    globalThis.document = {
+        getElementById: id => nodes.get(id) || null,
+        createElement: () => fakeNode()
+    };
+
+    try {
+        const manager = Object.create(CloudBoards.prototype);
+        Object.assign(manager, {
+            panelRenderRevision: 0,
+            clerkIdentityRevision: 0,
+            clerkUserId: 'user_a',
+            clerk: { user: { id: 'user_a', fullName: 'Account A' } },
+            modal: { isConnected: true },
+            isCloudBoard: false,
+            accountRecoveryPending: false,
+            _loadClerk: async function () { return this.clerk; },
+            _localRecoveryRows: () => [],
+            _boardRow: board => `private:${board.title}`,
+            _showError: error => { throw error; }
+        });
+        const request = deferred();
+        manager._api = () => request.promise;
+
+        const oldRender = manager._renderPanel();
+        await new Promise(resolve => setImmediate(resolve));
+        manager.clerk.user = null;
+        manager._handleClerkIdentityChange(null);
+        await new Promise(resolve => setImmediate(resolve));
+        request.resolve({ boards: [{ title: 'Private account board' }] });
+        await oldRender;
+
+        assert.equal(nodes.get('cloud-identity').textContent, '登入後查看雲端白板。');
+        assert.equal(
+            nodes.get('cloud-board-list').children.includes('private:Private account board'),
+            false
+        );
+    } finally {
+        if (previousDocument === undefined) delete globalThis.document;
+        else globalThis.document = previousDocument;
+    }
+});
+
+test('cloud board pages load before recovery drafts until the list is complete', async () => {
+    const previousDocument = globalThis.document;
+    const errorBox = fakeNode();
+    globalThis.document = {
+        createElement: () => fakeNode(),
+        getElementById: id => id === 'cloud-error' ? errorBox : null
+    };
+    try {
+        const manager = Object.create(CloudBoards.prototype);
+        const list = fakeNode();
+        const firstBoard = fakeNode(); firstBoard.textContent = 'Board 1';
+        const recovery = fakeNode(); recovery.textContent = 'Recovery draft';
+        list.append(firstBoard, recovery);
+        const requests = [];
+        let failFirstPageRequest = true;
+        manager._api = async path => {
+            requests.push(path);
+            if (path.endsWith('offset=200') && failFirstPageRequest) {
+                failFirstPageRequest = false;
+                throw new Error('temporary network failure');
+            }
+            if (path.endsWith('offset=200')) {
+                return { boards: [{ id: '201', title: 'Board 201' }], hasMore: true, nextOffset: 400 };
+            }
+            return { boards: [{ id: '401', title: 'Board 401' }], hasMore: false, nextOffset: null };
+        };
+        manager._showError = error => { errorBox.textContent = error.message; };
+        manager._boardRow = board => {
+            const row = fakeNode(); row.textContent = board.title; return row;
+        };
+        const seenBoardIds = new Set(['1']);
+        const recoveryRows = [recovery];
+
+        manager._appendBoardPageControl(list, recoveryRows, 200, () => true, seenBoardIds);
+        let moreButton = list.children.find(node => node.textContent === '載入更多白板');
+        await moreButton.listeners.click();
+        assert.equal(moreButton.disabled, false);
+        assert.equal(errorBox.textContent, 'temporary network failure');
+        await moreButton.listeners.click();
+        assert.equal(errorBox.textContent, '');
+        moreButton = list.children.find(node => node.textContent === '載入更多白板');
+        assert.ok(moreButton);
+        await moreButton.listeners.click();
+
+        assert.deepEqual(requests, [
+            '/api/boards?offset=200', '/api/boards?offset=200', '/api/boards?offset=400'
+        ]);
+        assert.deepEqual(list.children.map(node => node.textContent), [
+            'Board 1', 'Board 201', 'Board 401', 'Recovery draft'
+        ]);
+    } finally {
+        if (previousDocument === undefined) delete globalThis.document;
+        else globalThis.document = previousDocument;
+    }
+});
+
+test('initial cloud board render offers the next page when more boards exist', async () => {
+    const previousDocument = globalThis.document;
+    const nodes = new Map([
+        ['cloud-board-list', fakeNode()],
+        ['cloud-identity', fakeNode()],
+        ['cloud-error', fakeNode()],
+        ['cloud-save-current', fakeNode()],
+        ['cloud-return-local', fakeNode()],
+        ['cloud-signout', fakeNode()]
+    ]);
+    globalThis.document = {
+        getElementById: id => nodes.get(id) || null,
+        createElement: () => fakeNode()
+    };
+
+    try {
+        const manager = Object.create(CloudBoards.prototype);
+        Object.assign(manager, {
+            panelRenderRevision: 0,
+            clerkIdentityRevision: 0,
+            clerk: { user: { id: 'user_a', fullName: 'Account A' } },
+            modal: { isConnected: true },
+            isCloudBoard: false,
+            accountRecoveryPending: false,
+            _loadClerk: async function () { return this.clerk; },
+            _localRecoveryRows: () => [],
+            _api: async () => ({
+                boards: [{ id: '1', title: 'Board 1' }],
+                hasMore: true,
+                nextOffset: 200
+            }),
+            _boardRow: board => {
+                const row = fakeNode(); row.textContent = board.title; return row;
+            },
+            _showError: error => { throw error; }
+        });
+
+        await manager._renderPanel();
+
+        assert.deepEqual(
+            nodes.get('cloud-board-list').children.map(row => row.textContent),
+            ['Board 1', '載入更多白板']
+        );
     } finally {
         if (previousDocument === undefined) delete globalThis.document;
         else globalThis.document = previousDocument;
@@ -505,3 +821,4 @@ test('returning to local restores the saved board before disconnecting the cloud
     assert.deepEqual(app.camera, { x: 3, y: 4, zoom: 1 });
     assert.equal(app._skipAutosave, false);
 });
+

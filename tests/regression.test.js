@@ -28,10 +28,48 @@ import { TreeRenderer } from '../js/tree/TreeRenderer.js';
 import { MarkdownElement } from '../js/elements/MarkdownElement.js';
 import { authorizeRequest, getRoomId } from '../server/src/auth.mjs';
 import { formatDataToken, splitDataTokens } from '../js/core/DataTokens.js';
-import { translateText } from '../js/ui/I18n.js';
+import { i18n, translateText } from '../js/ui/I18n.js';
+
+function fakeI18nElement(className = '', childNodes = []) {
+    const element = {
+        nodeType: 1,
+        className,
+        childNodes,
+        parentElement: null,
+        matches: () => false,
+        getAttribute: () => null,
+        setAttribute() {},
+        closest(selector) {
+            const classes = new Set([...selector.matchAll(/\.([\w-]+)/g)].map(match => match[1]));
+            for (let current = this; current; current = current.parentElement) {
+                if (current.className.split(/\s+/).some(name => classes.has(name))) return current;
+            }
+            return null;
+        },
+        querySelectorAll() {
+            const descendants = [];
+            const visit = parent => {
+                for (const child of parent.childNodes) {
+                    if (child.nodeType !== 1) continue;
+                    descendants.push(child);
+                    visit(child);
+                }
+            };
+            visit(this);
+            return descendants;
+        }
+    };
+    for (const child of childNodes) child.parentElement = element;
+    return element;
+}
 
 test('English is the default UI language and Traditional Chinese is selectable', () => {
     assert.equal(translateText('設定'), 'Settings');
+    assert.equal(translateText('載入更多白板'), 'Load more boards');
+    assert.equal(translateText('Owner', 'zh-TW'), '擁有者');
+    assert.equal(translateText('編輯者', 'en'), 'Editor');
+    assert.equal(translateText('Viewer', 'zh-TW'), '檢視者');
+    assert.equal(translateText('帳號已切換。請先匯出尚未同步的白板 JSON。', 'en'), 'Account changed. Export the unsynced board as JSON first.');
     assert.equal(translateText('Settings', 'zh-TW'), '設定');
     assert.equal(translateText('N 後接 N−1 行：u v [w]', 'en'), 'N followed by N−1 edges: u v [w]');
     assert.equal(translateText('第 2 行格式錯誤，應為 u v [w]。', 'en'), 'Invalid format on line 2. Expected u v [w].');
@@ -47,6 +85,113 @@ test('English is the default UI language and Traditional Chinese is selectable',
     assert.equal(translateText('Markdown is too large to render. Shorten it to show the canvas preview.', 'zh-TW'), 'Markdown 資料過大，無法產生畫布預覽；請縮短內容。');
     assert.equal(translateText('確定清除「草稿」的未同步草稿？此操作無法復原。', 'en'), 'Clear unsynced draft “草稿”? This cannot be undone.');
     assert.equal(translateText('N 後接 N−1 行：u v [w]\n例：\n4\n1 2', 'en'), 'N followed by N−1 edges: u v [w]\nExample:\n4\n1 2');
+});
+
+test('changing the interface language updates and persists the setting', () => {
+    const previousDocument = globalThis.document;
+    const previousNodeFilter = globalThis.NodeFilter;
+    const previousMutationObserver = globalThis.MutationObserver;
+    const previousLocalStorage = globalThis.localStorage;
+    const previousWindow = globalThis.window;
+    const previousLocale = i18n.locale;
+    const previousObserver = i18n.observer;
+    const selector = {
+        value: '',
+        addEventListener(name, handler) { if (name === 'change') this.onChange = handler; }
+    };
+    const root = fakeI18nElement();
+    let storedLanguage = null;
+    let statusRenderCount = 0;
+    globalThis.NodeFilter = { SHOW_TEXT: 4 };
+    globalThis.document = {
+        body: {},
+        documentElement: root,
+        getElementById: id => id === 'settings-language' ? selector : null,
+        createTreeWalker: () => ({ nextNode: () => null })
+    };
+    globalThis.MutationObserver = class {
+        constructor(callback) { this.callback = callback; }
+        observe() {}
+    };
+    globalThis.localStorage = { setItem: (key, value) => { if (key === 'wb_language') storedLanguage = value; } };
+    globalThis.window = { appInstance: { cloudBoards: { _renderStatus() { statusRenderCount++; } } } };
+
+    try {
+        i18n.start();
+        assert.equal(selector.value, previousLocale);
+
+        selector.value = 'zh-TW';
+        selector.onChange();
+        assert.equal(root.lang, 'zh-TW');
+        assert.equal(selector.value, 'zh-TW');
+        assert.equal(storedLanguage, 'zh-TW');
+        assert.equal(statusRenderCount, 1);
+
+        selector.value = 'en';
+        selector.onChange();
+        assert.equal(root.lang, 'en');
+        assert.equal(selector.value, 'en');
+        assert.equal(storedLanguage, 'en');
+        assert.equal(statusRenderCount, 2);
+    } finally {
+        i18n.locale = previousLocale;
+        i18n.observer = previousObserver;
+        if (previousDocument === undefined) delete globalThis.document;
+        else globalThis.document = previousDocument;
+        if (previousNodeFilter === undefined) delete globalThis.NodeFilter;
+        else globalThis.NodeFilter = previousNodeFilter;
+        if (previousMutationObserver === undefined) delete globalThis.MutationObserver;
+        else globalThis.MutationObserver = previousMutationObserver;
+        if (previousLocalStorage === undefined) delete globalThis.localStorage;
+        else globalThis.localStorage = previousLocalStorage;
+        if (previousWindow === undefined) delete globalThis.window;
+        else globalThis.window = previousWindow;
+    }
+});
+
+test('cloud identity labels translate while account names remain unchanged', () => {
+    const previousDocument = globalThis.document;
+    const previousNodeFilter = globalThis.NodeFilter;
+    const previousLocale = i18n.locale;
+    const label = { nodeType: 3, data: '登入後查看雲端白板。', parentElement: null };
+    const accountName = { nodeType: 3, data: '設定', parentElement: null };
+    const account = fakeI18nElement('whiteboard-user-content', [accountName]);
+    const identity = fakeI18nElement('cloud-identity', [label, account]);
+    label.parentElement = identity;
+
+    globalThis.NodeFilter = { SHOW_TEXT: 4 };
+    globalThis.document = {
+        createTreeWalker(root) {
+            const textNodes = [];
+            const visit = parent => {
+                for (const child of parent.childNodes) {
+                    if (child.nodeType === 3) textNodes.push(child);
+                    else visit(child);
+                }
+            };
+            visit(root);
+            return { nextNode: () => textNodes.shift() || null };
+        }
+    };
+    i18n.locale = 'en';
+    try {
+        i18n.apply(identity);
+        assert.equal(label.data, 'Sign in to view cloud boards.');
+        assert.equal(accountName.data, '設定');
+
+        label.data = 'Sign in to view cloud boards.';
+        accountName.data = 'Settings';
+        i18n.locale = 'zh-TW';
+        i18n.apply(identity);
+        assert.equal(label.data, '登入後查看雲端白板。');
+        assert.equal(accountName.data, 'Settings');
+    } finally {
+        i18n.locale = previousLocale;
+        if (previousDocument === undefined) delete globalThis.document;
+        else globalThis.document = previousDocument;
+        if (previousNodeFilter === undefined) delete globalThis.NodeFilter;
+        else globalThis.NodeFilter = previousNodeFilter;
+    }
 });
 
 test('explicit zoom preserves its screen pivot and ignores zero wheel deltas', () => {
@@ -404,6 +549,16 @@ test('contest tree input auto-detects zero-based vertex IDs', () => {
     assert.equal(tree.root.value, '0');
     assert.deepEqual(tree.root.children.map(child => child.value), ['1']);
     assert.deepEqual(tree.root.children[0].children.map(child => child.value), ['2', '3']);
+});
+
+test('single-node contest trees honor explicit zero-based numbering', () => {
+    const zeroBased = new TreeElement();
+    assert.equal(zeroBased.buildFromText('1', 'auto', true), null);
+    assert.equal(zeroBased.root.value, '0');
+
+    const oneBased = new TreeElement();
+    assert.equal(oneBased.buildFromText('1'), null);
+    assert.equal(oneBased.root.value, '1');
 });
 
 test('tree input mode survives serialization for multiline value lists', () => {
@@ -2322,3 +2477,4 @@ test('oversized single-character fills leave the matrix unchanged', () => {
     assert.equal(matrix.cols, 100);
     assert.deepEqual(matrix.data, previous);
 });
+

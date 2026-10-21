@@ -142,10 +142,21 @@ N 後接 N 行：M 和 M 個鄰點|N followed by N rows: M and M neighbors
 請先登入帳號。|Sign in first.
 無法取得登入憑證。請重新登入。|Could not get an access token. Sign in again.
 帳號已切換|Account changed
+帳號已切換。請先匯出尚未同步的白板 JSON。|Account changed. Export the unsynced board as JSON first.
 載入白板清單…|Loading boards…
 登入後查看雲端白板。|Sign in to view cloud boards.
 登入視窗已開啟。|Sign-in window opened.
 已登入|Signed in
+擁有者|Owner
+編輯者|Editor
+檢視者|Viewer
+連線中…|Connecting…
+同步中…|Syncing…
+雲端已同步|Cloud board synced
+同步失敗|Sync failed
+連線中斷|Disconnected
+存取權已變更|Access changed
+載入更多白板|Load more boards
 尚無雲端白板。可將目前白板另存至雲端。|No cloud boards yet. Save the current board to get started.
 白板已封鎖，尚未完成清除。|Board access is blocked until cleanup is complete.
 重試清除|Retry cleanup
@@ -487,7 +498,7 @@ class I18n {
     }
 
     shouldSkip(element) {
-        return !element || Boolean(element.closest("script, style, textarea, code, pre, [contenteditable='true'], [data-no-i18n], .markdown-preview, .markdown-preview-content, .md-render-container, .layer-name, .cloud-identity, .whiteboard-user-content"));
+        return !element || Boolean(element.closest("script, style, textarea, code, pre, [contenteditable='true'], [data-no-i18n], .markdown-preview, .markdown-preview-content, .md-render-container, .layer-name, .whiteboard-user-content"));
     }
 
     apply(root) {
@@ -532,6 +543,7 @@ class I18n {
         this.apply(document.documentElement);
         const app = window.appInstance;
         if (app) {
+            app.cloudBoards?._renderStatus();
             for (const element of app.elements || []) {
                 if (element.type === "markdown" && element._renderLimitNotice) element._render();
             }
@@ -550,3 +562,4 @@ class I18n {
 }
 
 export const i18n = new I18n();
+

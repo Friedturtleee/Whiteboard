@@ -2,6 +2,7 @@ import { i18n } from '../ui/I18n.js';
 import { Serializer } from '../core/Serializer.js';
 
 const CLOUD_CACHE_PREFIX = 'cp_whiteboard_cloud_v1';
+const CLOUD_ROLE_LABELS = { owner: 'Owner', editor: 'Editor', viewer: 'Viewer' };
 
 function make(tag, className, text) {
     const element = document.createElement(tag);
@@ -118,22 +119,23 @@ export class CloudBoards {
             }
             this.clerk = clerk;
             this.clerkUserId = clerk.user?.id || null;
-            clerk.addListener?.(() => {
-                const nextUserId = clerk.user?.id || null;
-                const previousUserId = this.clerkUserId;
-                this.clerkUserId = nextUserId;
-                if (previousUserId !== nextUserId) this.clerkIdentityRevision++;
-                if (previousUserId !== nextUserId && this.activeUserId &&
-                    this.activeUserId !== nextUserId) {
-                    this._handleAccountChange(this.activeUserId).catch(error => this._showError(error));
-                }
-                if (this.modal?.isConnected && clerk.user) {
-                    this._renderPanel().catch(error => this._showError(error));
-                }
-            });
+            clerk.addListener?.(() => this._handleClerkIdentityChange(clerk.user?.id || null));
             return clerk;
         })().finally(() => { this.clerkLoadPromise = null; });
         return this.clerkLoadPromise;
+    }
+
+    _handleClerkIdentityChange(nextUserId) {
+        const previousUserId = this.clerkUserId;
+        this.clerkUserId = nextUserId;
+        if (previousUserId !== nextUserId) this.clerkIdentityRevision++;
+        if (previousUserId !== nextUserId && this.activeUserId &&
+            this.activeUserId !== nextUserId) {
+            this._handleAccountChange(this.activeUserId).catch(error => this._showError(error));
+        }
+        if (this.modal?.isConnected) {
+            this._renderPanel().catch(error => this._showError(error));
+        }
     }
 
     async openPanel() {
@@ -247,6 +249,19 @@ export class CloudBoards {
         return payload;
     }
 
+    _setIdentity(identity, user, fallback) {
+        const accountLabel = user?.fullName || user?.primaryEmailAddress?.emailAddress;
+        if (accountLabel) identity.replaceChildren(make('span', 'whiteboard-user-content', accountLabel));
+        else {
+            identity.replaceChildren();
+            identity.textContent = fallback;
+        }
+    }
+
+    _roleLabel(role) {
+        return i18n.t(CLOUD_ROLE_LABELS[role] || role);
+    }
+
     async _renderPanel() {
         const renderRevision = ++this.panelRenderRevision;
         const modal = this.modal;
@@ -255,7 +270,7 @@ export class CloudBoards {
         const isCurrentRender = () => this.panelRenderRevision === renderRevision &&
             this.modal === modal && modal?.isConnected &&
             this.clerkIdentityRevision === identityRevision &&
-            (!this.clerk || this.clerk.user?.id === renderedUserId);
+            (!this.clerk || (this.clerk.user?.id || null) === renderedUserId);
         const list = document.getElementById('cloud-board-list');
         const identity = document.getElementById('cloud-identity');
         const errorBox = document.getElementById('cloud-error');
@@ -266,8 +281,7 @@ export class CloudBoards {
         errorBox.textContent = '';
         if (localButton) localButton.hidden = !this.isCloudBoard;
         if (this.accountRecoveryPending) {
-            identity.textContent = this.clerk?.user?.fullName ||
-                this.clerk?.user?.primaryEmailAddress?.emailAddress || '帳號已切換';
+            this._setIdentity(identity, this.clerk?.user, '帳號已切換');
             if (signOutButton) signOutButton.hidden = !this.clerk?.user;
             errorBox.textContent = '舊帳號仍有未匯出的白板草稿。請先匯出 JSON，或返回本機並放棄草稿。';
             if (saveButton) saveButton.disabled = true;
@@ -285,12 +299,13 @@ export class CloudBoards {
             list.replaceChildren(make('p', 'cloud-muted', '登入視窗已開啟。'));
             return;
         }
-        identity.textContent = clerk.user.fullName || clerk.user.primaryEmailAddress?.emailAddress || '已登入';
+        this._setIdentity(identity, clerk.user, '已登入');
         const recoveryRows = this._localRecoveryRows(clerk.user.id);
         let boards = [];
+        let boardListResponse = null;
         try {
-            const response = await this._api('/api/boards');
-            boards = response.boards || [];
+            boardListResponse = await this._api('/api/boards');
+            boards = boardListResponse.boards || [];
         } catch (error) {
             if (!isCurrentRender()) return;
             if (!recoveryRows.length) throw error;
@@ -302,12 +317,60 @@ export class CloudBoards {
             return;
         }
         list.replaceChildren(...boards.map(board => this._boardRow(board)), ...recoveryRows);
+        if (boardListResponse?.hasMore && Number.isSafeInteger(boardListResponse.nextOffset)) {
+            this._appendBoardPageControl(
+                list,
+                recoveryRows,
+                boardListResponse.nextOffset,
+                isCurrentRender,
+                new Set(boards.map(board => board.id))
+            );
+        }
+    }
+
+    _appendBoardPageControl(list, recoveryRows, nextOffset, isCurrentRender, seenBoardIds) {
+        const button = make('button', 'cloud-secondary', '載入更多白板');
+        button.type = 'button';
+        const recoveryAnchor = () => recoveryRows.find(row => row.parentElement === list) || button;
+        button.addEventListener('click', async () => {
+            button.disabled = true;
+            const errorBox = document.getElementById('cloud-error');
+            if (errorBox) errorBox.textContent = '';
+            try {
+                const response = await this._api(`/api/boards?offset=${encodeURIComponent(nextOffset)}`);
+                if (!isCurrentRender()) return;
+                for (const board of response.boards || []) {
+                    if (seenBoardIds.has(board.id)) continue;
+                    seenBoardIds.add(board.id);
+                    list.insertBefore(this._boardRow(board), recoveryAnchor());
+                }
+                button.remove();
+                if (response.hasMore && Number.isSafeInteger(response.nextOffset)) {
+                    this._appendBoardPageControl(
+                        list, recoveryRows, response.nextOffset, isCurrentRender, seenBoardIds
+                    );
+                }
+            } catch (error) {
+                if (!isCurrentRender()) return;
+                button.disabled = false;
+                this._showError(error);
+            }
+        });
+        const firstRecoveryRow = recoveryRows.find(row => row.parentElement === list);
+        if (firstRecoveryRow) list.insertBefore(button, firstRecoveryRow);
+        else list.append(button);
     }
 
     _boardRow(board) {
         const row = make('article', 'cloud-board-row');
         const info = make('div', 'cloud-board-info');
-        info.append(make('strong', 'whiteboard-user-content', board.title), make('span', 'cloud-muted', `${board.role} · ${new Date(board.updated_at).toLocaleString()}`));
+        const metadata = make('span', 'cloud-muted');
+        metadata.append(
+            make('span', '', this._roleLabel(board.role)),
+            make('span', '', ' · '),
+            make('span', '', new Date(board.updated_at).toLocaleString())
+        );
+        info.append(make('strong', 'whiteboard-user-content', board.title), metadata);
         const buttons = make('div', 'cloud-board-actions');
         if (board.cleanup_pending) {
             info.append(make('span', 'cloud-muted', '白板已封鎖，尚未完成清除。'));
@@ -867,18 +930,23 @@ export class CloudBoards {
         if (!status) {
             if (trigger) {
                 trigger.dataset.state = this.isCloudBoard ? (this.connection?.status || 'connecting') : 'local';
+                const tooltip = this.isCloudBoard
+                    ? (this.statusOverride
+                        ? i18n.t(this.statusOverride)
+                        : (this.activeBoard?.title || i18n.t('雲端白板')))
+                    : i18n.t('本機白板');
                 trigger.dataset.tooltip = this.isCloudBoard
-                    ? `${this.statusOverride || this.activeBoard?.title || '雲端白板'}${this.isReadOnly ? ' · 檢視者' : ''}`
-                    : '本機白板 · 帳號與雲端白板';
+                    ? `${tooltip}${this.isReadOnly ? ` · ${this._roleLabel('viewer')}` : ''}`
+                    : `${tooltip} · ${i18n.t('帳號與雲端白板')}`;
             }
             return;
         }
         if (!this.isCloudBoard) {
-            status.textContent = '本機白板';
+            status.textContent = i18n.t('本機白板');
             status.dataset.state = 'local';
             if (trigger) {
                 trigger.dataset.state = 'local';
-                trigger.dataset.tooltip = '本機白板 · 帳號與雲端白板';
+                trigger.dataset.tooltip = `${i18n.t('本機白板')} · ${i18n.t('帳號與雲端白板')}`;
             }
             return;
         }
@@ -886,7 +954,21 @@ export class CloudBoards {
             connecting: '連線中…', connected: '同步中…', saving: '同步中…', saved: '雲端已同步',
             error: '同步失敗', disconnected: '連線中斷', revoked: '存取權已變更'
         };
-        status.textContent = this.statusOverride || `${labels[this.connection?.status] || '雲端白板'} · ${this.activeBoard?.title || ''}${this.isReadOnly ? ' · 檢視者' : ''}`;
+        if (this.statusOverride) {
+            status.replaceChildren(make('span', '', i18n.t(this.statusOverride)));
+        } else {
+            const statusParts = [make('span', '', i18n.t(labels[this.connection?.status] || '雲端白板'))];
+            const title = this.activeBoard?.title || '';
+            if (title || this.isReadOnly) {
+                statusParts.push(make('span', '', ' · '));
+                if (title) statusParts.push(make('span', 'whiteboard-user-content', title));
+                if (this.isReadOnly) {
+                    if (title) statusParts.push(make('span', '', ' · '));
+                    statusParts.push(make('span', '', this._roleLabel('viewer')));
+                }
+            }
+            status.replaceChildren(...statusParts);
+        }
         status.dataset.state = this.connection?.status || 'connecting';
         if (trigger) {
             trigger.dataset.state = this.connection?.status || 'connecting';
@@ -1002,7 +1084,7 @@ export class CloudBoards {
             const response = await this._api(`/api/boards/${board.id}/members`);
             const members = response.members || [];
             if (!members.length) return this.app._toast('目前沒有受邀成員。');
-            const choice = prompt(`輸入要管理的成員編號：\n${members.map((member, index) => `${index + 1}. ${member.email_address || member.user_id} (${member.role})`).join('\n')}`);
+            const choice = prompt(`輸入要管理的成員編號：\n${members.map((member, index) => `${index + 1}. ${member.email_address || member.user_id} (${this._roleLabel(member.role)})`).join('\n')}`);
             const index = Number(choice) - 1;
             if (!Number.isInteger(index) || !members[index]) return;
             const member = members[index];
@@ -1059,3 +1141,4 @@ export class CloudBoards {
         else this.app._toast(error?.message || '發生未知錯誤。', 4000);
     }
 }
+
