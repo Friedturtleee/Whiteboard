@@ -21,7 +21,7 @@ import { formatDataToken, splitDataTokens, parsePastedMatrixRows } from './core/
 // ── Elements ────────────────────────────────────────────
 import { ShapeElement } from './elements/ShapeElement.js';
 import { TextElement } from './elements/TextElement.js';
-import { MatrixElement } from './elements/MatrixElement.js';
+import { MatrixElement } from './elements/MatrixElement.js?v=4';
 import { StackElement } from './elements/StackElement.js';
 import { QueueElement } from './elements/QueueElement.js';
 import { PenElement } from './elements/PenElement.js';
@@ -1420,7 +1420,7 @@ class App {
         this.textInputDialog.show({
             element: el,
             title: `批次輸入 ${cells.length} 個矩陣格`,
-            placeholder: `依列、欄順序輸入 ${cells.length} 個值（空格或換行分隔）。\n只輸入一個值會套用到全部選取格；含空白的值請加雙引號。\n例：1 2 3`,
+            placeholder: `輸入一個值填滿所選格，或依序輸入 ${cells.length} 個值。\n例：1 2 3`,
             onConfirm: text => {
                 if (text.length > MAX_DATA_STRUCTURE_INPUT_LENGTH) {
                     return '批次輸入不可超過 1 MB。';
@@ -1821,8 +1821,8 @@ class App {
     _showDataStructureDialog(el, isNew = false) {
         const typeLabel = { matrix: '矩陣', stack: '堆疊', queue: '佇列' }[el.type] || el.type;
         const placeholder = el.type === 'matrix'
-            ? '輸入矩陣，每行一列，數值以空格分隔；含空白的單格可用雙引號\n例：\n1 2 3\n4 5 6\n"two words" 8\n\n或輸入維度建立空矩陣，例：3*5'
-            : '輸入數值，以空格或換行分隔；含空白的單一值可用雙引號\n例：1 2 3 4 5';
+            ? '輸入矩陣內容；單一字元可填滿全部格子。'
+            : '以空格或換行分隔數值。\n例：1 2 3 4 5';
         const oldText = el.inputText || '';
         const oldInputIsEmpty = isEmptyDataStructureInput(oldText);
         const originalState = JSON.parse(JSON.stringify(el.serialize()));

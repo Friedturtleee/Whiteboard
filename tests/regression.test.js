@@ -2243,3 +2243,54 @@ test('matrix text input preserves tab-separated empty cells and rows', () => {
         ['4', '5', '6']
     ]);
 });
+
+test('a single character fills every cell without changing the matrix size', () => {
+    const matrix = new MatrixElement();
+    assert.equal(matrix.setFromText('1 2\n3 4'), null);
+    matrix.selectedCells.add('0,1');
+    matrix.highlights['0,1'] = '#56b3e6';
+
+    assert.equal(matrix.setFromText('中'), null);
+    assert.equal(matrix.rows, 2);
+    assert.equal(matrix.cols, 2);
+    assert.deepEqual(matrix.data, [
+        ['中', '中'],
+        ['中', '中']
+    ]);
+    assert.equal(matrix.inputText, '中');
+    assert.equal(matrix.selectedCells.size, 0);
+    assert.deepEqual(matrix.highlights, {});
+
+    assert.equal(matrix.setFromText('AB'), null);
+    assert.deepEqual(matrix.data, [['A', 'B']]);
+});
+
+test('a single character fills a new matrix grid', () => {
+    const matrix = new MatrixElement();
+    assert.equal(matrix.setFromText('X'), null);
+    assert.equal(matrix.rows, 3);
+    assert.equal(matrix.cols, 3);
+    assert.deepEqual(matrix.data, Array.from({ length: 3 }, () => ['X', 'X', 'X']));
+});
+
+test('a single character creates one cell when the matrix is empty', () => {
+    const matrix = new MatrixElement();
+    assert.equal(matrix.setFromText(''), null);
+    assert.equal(matrix.setFromText('X'), null);
+    assert.equal(matrix.rows, 1);
+    assert.equal(matrix.cols, 1);
+    assert.deepEqual(matrix.data, [['X']]);
+});
+
+
+test('oversized single-character fills leave the matrix unchanged', () => {
+    const matrix = new MatrixElement();
+    assert.equal(matrix.setFromText('100x100'), null);
+    const previous = matrix.data.map(row => [...row]);
+    const longCharacter = 'a' + '\u0301'.repeat(120);
+
+    assert.match(matrix.setFromText(longCharacter), /1 MB/);
+    assert.equal(matrix.rows, 100);
+    assert.equal(matrix.cols, 100);
+    assert.deepEqual(matrix.data, previous);
+});

@@ -11,6 +11,15 @@ const MAX_MATRIX_ROWS = 200;
 const MAX_MATRIX_COLS = 200;
 const MAX_MATRIX_CELLS = 10000;
 const MAX_MATRIX_INPUT_LENGTH = 1000000;
+const graphemeSegmenter = typeof Intl !== 'undefined' && typeof Intl.Segmenter === 'function'
+    ? new Intl.Segmenter(undefined, { granularity: 'grapheme' })
+    : null;
+
+function countCharacters(value) {
+    return graphemeSegmenter
+        ? Array.from(graphemeSegmenter.segment(value)).length
+        : Array.from(value).length;
+}
 
 function remapGridKeys(keys, axis, at, action) {
     const next = new Set();
@@ -204,6 +213,34 @@ export class MatrixElement extends Element {
             this.rows = rows;
             this.cols = cols;
             this.data = data;
+            this._updateSize();
+            return null;
+        }
+
+        // A single grapheme fills the current grid; tabs keep their table meaning.
+        const singleValues = splitDataTokens(rawText, { multiline: true });
+        const singleValue = singleValues[0];
+        const isSingleCharacter = singleValues.length === 1 &&
+            (singleValue === ''
+                ? rawText === EMPTY_CELL
+                : countCharacters(singleValue) === 1);
+        if (this.rows > 0 && this.cols > 0 &&
+            !rawText.includes('\t') && isSingleCharacter) {
+            const value = singleValue === '' ? '' : singleValue;
+            const tokenLength = formatDataToken(value).length;
+            const expandedLength = this.rows * (this.cols * tokenLength + this.cols - 1) + this.rows - 1;
+            if (expandedLength > MAX_MATRIX_INPUT_LENGTH) {
+                return '套用後的矩陣資料不可超過 1 MB。';
+            }
+
+            this.inputText = rawText;
+            this.selectedCells.clear();
+            this._lastCellKey = null;
+            this.highlights = {};
+            this.data = Array.from(
+                { length: this.rows },
+                () => new Array(this.cols).fill(value)
+            );
             this._updateSize();
             return null;
         }

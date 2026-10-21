@@ -137,7 +137,7 @@
                     <button id="edit-selected-cells" type="button">編輯選取格</button>
                     <button id="clear-selected-cells" type="button">清空選取格</button>
                 </div>
-                <p class="selection-help">拖曳框選 · Ctrl / ⌘ 多選<br>Shift 範圍 · Enter 編輯<br>Ctrl / ⌘ C、X、V 複製／剪下／貼上格子</p>
+                <p class="selection-help">拖曳或 Ctrl/⌘ 點選格子；Shift 選取範圍。<br>Enter 編輯；Ctrl/⌘+C/X/V 複製、剪下、貼上。</p>
             </div>
         </div>
         <div class="panel-section">
@@ -624,7 +624,7 @@
         setProgress(20, '載入應用程式…');
         const script = document.createElement('script');
         script.type = 'module';
-        script.src  = 'js/app.js?v=3';
+        script.src  = 'js/app.js?v=5';
         script.onload = () => {
             setProgress(90, '初始化…');
             appReady = true;
