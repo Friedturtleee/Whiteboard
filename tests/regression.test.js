@@ -28,6 +28,26 @@ import { TreeRenderer } from '../js/tree/TreeRenderer.js';
 import { MarkdownElement } from '../js/elements/MarkdownElement.js';
 import { authorizeRequest, getRoomId } from '../server/src/auth.mjs';
 import { formatDataToken, splitDataTokens } from '../js/core/DataTokens.js';
+import { translateText } from '../js/ui/I18n.js';
+
+test('English is the default UI language and Traditional Chinese is selectable', () => {
+    assert.equal(translateText('設定'), 'Settings');
+    assert.equal(translateText('Settings', 'zh-TW'), '設定');
+    assert.equal(translateText('N 後接 N−1 行：u v [w]', 'en'), 'N followed by N−1 edges: u v [w]');
+    assert.equal(translateText('第 2 行格式錯誤，應為 u v [w]。', 'en'), 'Invalid format on line 2. Expected u v [w].');
+    assert.equal(translateText('第 2 行格式錯誤，應為 父節點 子節點 [w]。', 'en'), 'Invalid format on line 2. Expected parent child [w].');
+    assert.equal(translateText('有 2 個節點無法連通。', 'en'), '2 nodes are disconnected.');
+    assert.equal(translateText('標頭宣告 2 條邊，實際有 1 行。', 'en'), 'Header declares 2 edges, but 1 row was found.');
+    assert.equal(translateText('第 2 行鄰居數宣告 1，實際有 0 個。', 'en'), 'Line 2 declares 1 neighbor but has 0 neighbors.');
+    assert.equal(translateText('Selected 3 cells', 'zh-TW'), '已選取 3 格');
+    assert.equal(translateText('第 3 行：鄰居數 須為非負整數。', 'en'), 'Line 3: neighbor count must be a non-negative integer.');
+    assert.equal(translateText('Line 3: neighbor count must be a non-negative integer.', 'zh-TW'), '第 3 行：鄰居數 須為非負整數。');
+    assert.equal(translateText('未知的圖輸入格式：edge-list', 'en'), 'Unknown graph input format: edge-list');
+    assert.equal(translateText('Cloud service returned 503', 'zh-TW'), '雲端服務回應 503');
+    assert.equal(translateText('Markdown is too large to render. Shorten it to show the canvas preview.', 'zh-TW'), 'Markdown 資料過大，無法產生畫布預覽；請縮短內容。');
+    assert.equal(translateText('確定清除「草稿」的未同步草稿？此操作無法復原。', 'en'), 'Clear unsynced draft “草稿”? This cannot be undone.');
+    assert.equal(translateText('N 後接 N−1 行：u v [w]\n例：\n4\n1 2', 'en'), 'N followed by N−1 edges: u v [w]\nExample:\n4\n1 2');
+});
 
 test('explicit zoom preserves its screen pivot and ignores zero wheel deltas', () => {
     const camera = new Camera();
@@ -65,6 +85,14 @@ test('overview grid keeps a bounded number of lines at very small zoom', () => {
     let lines = 0;
     grid.draw({ beginPath() {}, moveTo() {}, lineTo() {}, stroke() { lines++; } }, camera, 1200, 800);
     assert.ok(lines > 0 && lines < 110, `Unexpected grid work: ${lines}`);
+});
+
+test('stack and queue report the correct input and item limits', () => {
+    for (const ElementType of [StackElement, QueueElement]) {
+        const element = new ElementType();
+        assert.match(element.setFromText('x'.repeat(1_000_001)), /1 MB/);
+        assert.match(element.setFromText(Array.from({ length: 10_001 }, (_, index) => index).join(' ')), /10,000/);
+    }
 });
 
 test('weighted star trees leave enough room between long sibling edge labels', () => {
@@ -307,7 +335,7 @@ test('invalid oversized sequence input does not replace existing data', () => {
     const queue = new QueueElement();
     queue.setFromText('keep this');
     const result = queue.setFromText(new Array(10002).fill('x').join(' '));
-    assert.match(result, /10000/);
+    assert.match(result, /10,000/);
     assert.deepEqual(queue.items, ['keep', 'this']);
 });
 
@@ -330,12 +358,12 @@ test('directed adjacency rows preserve reciprocal arcs and self-loops', () => {
 
 test('adjacency parser rejects edge counts above its supported work limit', () => {
     const input = ['1', '100001'].join('\n');
-    assert.match(GraphParser.parse(input, false, false, 'adj-list').error, /100000/);
+    assert.match(GraphParser.parse(input, false, false, 'adj-list').error, /100,000/);
     assert.match(GraphParser.parse('x'.repeat(1000001)).error, /1 MB/);
 });
 
 test('contest graph input stores optional weights on edges', () => {
-    assert.match(GraphParser.parse('2 1\n1 2 nope').error, /finite number/);
+    assert.match(GraphParser.parse('2 1\n1 2 nope').error, /有限數值/);
     const graph = GraphParser.parse('4 4\n1 2 5\n3 2 6\n2 4 -3\n4 1 0');
     assert.equal(graph.error, undefined);
     assert.deepEqual(graph.edges.map(edge => edge.w), ['5', '6', '-3', '0']);
@@ -344,7 +372,7 @@ test('contest graph input stores optional weights on edges', () => {
 
 test('contest graph input supports zero-based node IDs when selected', () => {
     const input = '4 3\n0 1\n1 2 8\n2 3';
-    assert.match(GraphParser.parse(input).error, /range/);
+    assert.match(GraphParser.parse(input).error, /介於/);
     const graph = new GraphElement();
     assert.equal(graph.buildFromText(input, false, true), null);
     assert.deepEqual([...graph.nodes.keys()], ['0', '1', '2', '3']);
@@ -412,7 +440,7 @@ test('invalid graph edits leave the previous graph intact', () => {
     assert.equal(graph.buildFromText('2 1\n1 2'), null);
     const previousNodes = [...graph.nodes.keys()];
     const previousText = graph.inputText;
-    assert.match(graph.buildFromText('2 1\n1 3'), /range/);
+    assert.match(graph.buildFromText('2 1\n1 3'), /介於/);
     assert.deepEqual([...graph.nodes.keys()], previousNodes);
     assert.equal(graph.inputText, previousText);
 });
@@ -1217,8 +1245,8 @@ test('reciprocal directed graph edges keep their offset lanes and hit tests', ()
 
 test('BST, AVL, and red-black builders reject values that cannot be ordered numerically', () => {
     for (const build of [TreeParser.buildBST, TreeParser.buildAVL, TreeParser.buildRBTree]) {
-        assert.match(build(['1', 'not-a-number']).error, /finite numbers/);
-        assert.match(build(['1', 'Infinity']).error, /finite numbers/);
+        assert.match(build(['1', 'not-a-number']).error, /有限數值/);
+        assert.match(build(['1', 'Infinity']).error, /有限數值/);
     }
 });
 
@@ -1353,25 +1381,25 @@ test('failed JSON imports leave the current board and camera unchanged', () => {
         camera: { x: 10, y: 20, zoom: 1 }
     };
 
-    assert.throws(() => Serializer.loadJSONData(app, input), /invalid element record/);
+    assert.throws(() => Serializer.loadJSONData(app, input), /無效的白板物件/);
     assert.deepEqual(app.elements, [existing]);
     assert.deepEqual(app.camera, { x: 4, y: 5, zoom: 2 });
     assert.throws(() => Serializer.loadJSONData(app, {
         elements: [{ type: '__proto__', x: 0, y: 0, width: 1, height: 1 }]
-    }), /Unsupported whiteboard element type/);
+    }), /不支援的白板物件類型/);
     assert.throws(() => Serializer.loadJSONData(app, {
         elements: [{
             type: 'pen', x: 0, y: 0, width: 1, height: 1,
             points: [{ x: 'invalid', y: 0 }]
         }]
-    }), /invalid point data/);
+    }), /畫筆資料無效/);
     for (const camera of [
         { x: 1e20, y: 0, zoom: 1 },
         { x: 0, y: -1e20, zoom: 1 },
         { x: 0, y: 0, zoom: 1e-300 },
         { x: 0, y: 0, zoom: 11 }
     ]) {
-        assert.throws(() => Serializer.loadJSONData(app, { elements: [], camera }), /invalid camera settings/);
+        assert.throws(() => Serializer.loadJSONData(app, { elements: [], camera }), /白板視角設定無效/);
     }
     assert.deepEqual(app.elements, [existing]);
     assert.deepEqual(app.camera, { x: 4, y: 5, zoom: 2 });
@@ -1391,49 +1419,49 @@ test('JSON imports reject oversized and duplicate data before replacing the boar
             type: 'pen', x: 0, y: 0, width: 0, height: 0,
             points: Array.from({ length: 100001 }, () => ({ x: 0, y: 0 }))
         }]
-    }), /invalid point data or exceeds the supported point limit/);
+    }), /畫筆資料無效或點數超過上限/);
     assert.throws(() => Serializer.loadJSONData(app, {
         elements: [
             { id: 'duplicate', type: 'rectangle', x: 0, y: 0, width: 10, height: 10 },
             { id: 'duplicate', type: 'rectangle', x: 20, y: 0, width: 10, height: 10 }
         ]
-    }), /duplicate element ID/);
+    }), /ID 重複/);
     assert.throws(() => Serializer.loadJSONData(app, {
         elements: [{ type: 'rectangle', x: 1e20, y: 0, width: 10, height: 10 }]
-    }), /outside the supported range/);
+    }), /超出支援範圍/);
     assert.throws(() => Serializer.loadJSONData(app, {
         elements: [{
             type: 'rectangle', x: 0, y: 0, width: 10, height: 10,
             rotation: { toString: null, valueOf: null }
         }]
-    }), /invalid style values/);
+    }), /樣式資料無效/);
     assert.throws(() => Serializer.loadJSONData(app, {
         elements: [{ type: 'rectangle', x: 0, y: 0, width: 10, height: 10, opacity: 2 }]
-    }), /invalid style values/);
+    }), /樣式資料無效/);
     assert.throws(() => Serializer.loadJSONData(app, {
         elements: [{
             type: 'text', x: 0, y: 0, width: 10, height: 10, text: 'safe',
             fontFamily: { includes: true }
         }]
-    }), /invalid or oversized text\/style data/);
+    }), /文字或樣式資料無效或超過上限/);
     assert.throws(() => Serializer.loadJSONData(app, {
         elements: [{
             type: 'pen', x: 0, y: 0, width: 0, height: 0,
             points: [{ x: -1e308, y: 0 }, { x: 1e308, y: 0 }]
         }]
-    }), /invalid point data/);
+    }), /畫筆資料無效/);
     assert.throws(() => Serializer.loadJSONData(app, {
         elements: [{
             type: 'matrix', x: 0, y: 0, width: 62, height: 62,
             rows: 1, cols: 1, data: [[{ toString: null, valueOf: null }]]
         }]
-    }), /invalid dimensions or cell data/);
+    }), /矩陣尺寸或儲存格資料無效/);
     assert.throws(() => Serializer.loadJSONData(app, {
         elements: [{
             type: 'graph', x: 0, y: 0, width: 400, height: 350,
             graphNodes: [{ id: '1', x: 1e20, y: 0, label: '1' }], edges: []
         }]
-    }), /invalid node/);
+    }), /圖節點資料無效/);
     assert.deepEqual(app.elements, [existing]);
 });
 
@@ -1612,13 +1640,13 @@ test('oversized JSON files are rejected before allocating a FileReader', async (
     const app = { elements: [] };
     await assert.rejects(
         Serializer.importJSON(app, { size: 25 * 1024 * 1024 + 1 }),
-        /25 MB import limit/
+        /25 MB/
     );
 });
 
 test('Markdown rendering bounds input size before invoking the parser', () => {
     const rendered = MarkdownElement.renderToHTML('x'.repeat(MarkdownElement.MAX_SOURCE_LENGTH + 1));
-    assert.match(rendered, /1 MB rendering limit/);
+    assert.match(rendered, /1 MB/);
     assert.ok(rendered.length < 100);
     assert.equal(MarkdownElement.renderToHTML(null), '');
 });

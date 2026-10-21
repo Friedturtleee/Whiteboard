@@ -88,7 +88,7 @@ export class Serializer {
     static importJSON(app, file) {
         return new Promise((resolve, reject) => {
             if (!file || !Number.isFinite(file.size) || file.size > MAX_IMPORT_FILE_BYTES) {
-                reject(new TypeError('Whiteboard file is missing or exceeds the 25 MB import limit.'));
+                reject(new TypeError('JSON 檔案不存在或超過 25 MB。'));
                 return;
             }
             const reader = new FileReader();
@@ -109,24 +109,24 @@ export class Serializer {
     /** Validate and build an import off-canvas before replacing the current board. */
     static loadJSONData(app, data, { preserveExternalConnections = false } = {}) {
         if (!data || typeof data !== 'object' || !Array.isArray(data.elements)) {
-            throw new TypeError('Whiteboard file must contain an elements array.');
+            throw new TypeError('JSON 檔案格式錯誤，缺少物件清單。');
         }
         if (data.elements.length > MAX_IMPORTED_ELEMENTS) {
-            throw new TypeError('Whiteboard file exceeds the 10000-element import limit.');
+            throw new TypeError('JSON 檔案超過 10,000 個物件上限。');
         }
 
         const importedElements = [];
         const elementIds = new Set();
         for (const ed of data.elements) {
             if (!ed || typeof ed !== 'object' || Array.isArray(ed) || typeof ed.type !== 'string') {
-                throw new TypeError('Whiteboard file contains an invalid element record.');
+                throw new TypeError('JSON 檔案含無效的白板物件。');
             }
             validateWhiteboardElement(ed);
             if (!Object.prototype.hasOwnProperty.call(TYPE_MAP, ed.type)) {
-                throw new TypeError('Unsupported whiteboard element type: ' + ed.type);
+                throw new TypeError('不支援的白板物件類型：' + ed.type);
             }
             if (![ed.x, ed.y, ed.width, ed.height].every(Number.isFinite)) {
-                throw new TypeError('Whiteboard element has invalid bounds.');
+                throw new TypeError('白板物件位置或尺寸無效。');
             }
             const signedLineBounds = ed.type === 'line' || ed.type === 'arrow';
             if (Math.abs(ed.x) > MAX_WORLD_COORDINATE || Math.abs(ed.y) > MAX_WORLD_COORDINATE ||
@@ -134,11 +134,11 @@ export class Serializer {
                 Math.abs(ed.y + ed.height) > MAX_WORLD_COORDINATE ||
                 (!signedLineBounds && (ed.width < 0 || ed.height < 0)) ||
                 Math.abs(ed.width) > MAX_ELEMENT_DIMENSION || Math.abs(ed.height) > MAX_ELEMENT_DIMENSION) {
-                throw new TypeError('Whiteboard element bounds are outside the supported range.');
+                throw new TypeError('白板物件位置超出支援範圍。');
             }
             for (const field of ['rotation', 'opacity', 'saturation', 'strokeWidth', 'zIndex']) {
                 if (ed[field] !== undefined && !Number.isFinite(ed[field])) {
-                    throw new TypeError('Whiteboard element contains invalid style values.');
+                    throw new TypeError('白板物件樣式資料無效。');
                 }
             }
             if ((ed.opacity !== undefined && (ed.opacity < 0 || ed.opacity > 1)) ||
@@ -148,12 +148,12 @@ export class Serializer {
                     (typeof ed[field] !== 'string' || ed[field].length > 256)) ||
                 (ed.label !== undefined && (typeof ed.label !== 'string' || ed.label.length > 1024)) ||
                 ['hidden', 'locked'].some(field => ed[field] !== undefined && typeof ed[field] !== 'boolean')) {
-                throw new TypeError('Whiteboard element contains invalid style values.');
+                throw new TypeError('白板物件樣式資料無效。');
             }
             if (ed.id !== undefined) {
                 // Shape and format are already checked by the shared validator;
                 // this set enforces the document-wide uniqueness constraint.
-                if (elementIds.has(ed.id)) throw new TypeError('Whiteboard file contains a duplicate element ID.');
+                if (elementIds.has(ed.id)) throw new TypeError('白板物件 ID 重複。');
                 elementIds.add(ed.id);
             }
 
@@ -166,7 +166,7 @@ export class Serializer {
                     (ed.connections !== undefined && (!ed.connections || typeof ed.connections !== 'object' ||
                         Array.isArray(ed.connections) || !validConnection(ed.connections.p1) ||
                         !validConnection(ed.connections.p2)))) {
-                    throw new TypeError('Shape element contains invalid shape or connection data.');
+                    throw new TypeError('圖形或連線資料無效。');
                 }
             } else if (ed.type === 'matrix') {
                 const { rows, cols, data: cells } = ed;
@@ -181,7 +181,7 @@ export class Serializer {
                     (ed.cellSize !== undefined && (!Number.isFinite(ed.cellSize) || ed.cellSize <= 0 || ed.cellSize > 10000)) ||
                     (ed.fontSize !== undefined && (!Number.isFinite(ed.fontSize) || ed.fontSize <= 0 || ed.fontSize > 500)) ||
                     !isValidHighlightMap(ed.highlights, /^\d+,\d+$/)) {
-                    throw new TypeError('Matrix element has invalid dimensions or cell data.');
+                    throw new TypeError('矩陣尺寸或儲存格資料無效。');
                 }
             } else if (ed.type === 'queue' || ed.type === 'stack') {
                 if (!Array.isArray(ed.items) || ed.items.length > 10000 ||
@@ -195,13 +195,13 @@ export class Serializer {
                     (ed.fontSize !== undefined && (!Number.isFinite(ed.fontSize) || ed.fontSize <= 0 || ed.fontSize > 500)) ||
                     (ed.maxDisplay !== undefined && (!Number.isSafeInteger(ed.maxDisplay) || ed.maxDisplay < 1 || ed.maxDisplay > 100)) ||
                     !isValidHighlightMap(ed.highlights)) {
-                    throw new TypeError('Array element has invalid or oversized item data.');
+                    throw new TypeError('Stack／Queue 資料無效或超過上限。');
                 }
             } else if (ed.type === 'pen') {
                 if (!Array.isArray(ed.points) || ed.points.length > MAX_IMPORTED_PEN_POINTS || ed.points.some(point =>
                     !point || !Number.isFinite(point.x) || !Number.isFinite(point.y) ||
                     Math.abs(point.x) > MAX_WORLD_COORDINATE || Math.abs(point.y) > MAX_WORLD_COORDINATE)) {
-                    throw new TypeError('Pen element contains invalid point data or exceeds the supported point limit.');
+                    throw new TypeError('畫筆資料無效或點數超過上限。');
                 }
                 if (ed.points.length) {
                     let minX = Infinity, minY = Infinity, maxX = -Infinity, maxY = -Infinity;
@@ -212,7 +212,7 @@ export class Serializer {
                         maxY = Math.max(maxY, point.y);
                     }
                     if (maxX - minX > MAX_ELEMENT_DIMENSION || maxY - minY > MAX_ELEMENT_DIMENSION) {
-                        throw new TypeError('Pen element bounds are outside the supported range.');
+                        throw new TypeError('畫筆位置超出支援範圍。');
                     }
                 }
             } else if (ed.type === 'graph') {
@@ -227,7 +227,7 @@ export class Serializer {
                         (!Number.isFinite(ed.nodeRadius) || ed.nodeRadius <= 0 || ed.nodeRadius > 10000)) ||
                     (ed._nextNodeId !== undefined &&
                         (!Number.isSafeInteger(ed._nextNodeId) || ed._nextNodeId < 1))) {
-                    throw new TypeError('Graph element has invalid or oversized node/edge data.');
+                    throw new TypeError('圖或邊資料無效或超過上限。');
                 }
                 const nodeIds = new Set();
                 for (const node of ed.graphNodes) {
@@ -237,7 +237,7 @@ export class Serializer {
                         (node.label !== undefined && !isSafeDisplayValue(node.label)) ||
                         (node.nodeWeight !== undefined && node.nodeWeight !== null &&
                             !isSafeDisplayValue(node.nodeWeight)) || nodeIds.has(String(node.id))) {
-                        throw new TypeError('Graph element contains an invalid node.');
+                        throw new TypeError('圖節點資料無效。');
                     }
                     nodeIds.add(String(node.id));
                 }
@@ -246,7 +246,7 @@ export class Serializer {
                         !nodeIds.has(String(edge.u)) || !nodeIds.has(String(edge.v)) ||
                         (edge.w !== undefined && !isSafeDisplayValue(edge.w)) ||
                         (edge.directed !== undefined && typeof edge.directed !== 'boolean')) {
-                        throw new TypeError('Graph element contains an edge with an unknown endpoint.');
+                        throw new TypeError('圖邊連接到不存在的節點。');
                     }
                 }
             } else if (ed.type === 'tree') {
@@ -260,7 +260,7 @@ export class Serializer {
                     (ed.hasWeights !== undefined && typeof ed.hasWeights !== 'boolean') ||
                     ['_relOffsetX', '_relOffsetY'].some(field => ed[field] !== undefined &&
                         !Number.isFinite(ed[field]))) {
-                    throw new TypeError('Tree element has invalid or oversized source data.');
+                    throw new TypeError('樹資料無效或超過上限。');
                 }
             } else if (ed.type === 'text') {
                 if ((ed.text !== undefined &&
@@ -275,7 +275,7 @@ export class Serializer {
                     ['baseWidth', 'baseHeight', '_baseWidth', '_baseHeight'].some(field =>
                         ed[field] !== undefined && (!Number.isFinite(ed[field]) ||
                             ed[field] <= 0 || ed[field] > MAX_TEXT_BASE_DIMENSION))) {
-                    throw new TypeError('Text element contains invalid or oversized text/style data.');
+                    throw new TypeError('文字或樣式資料無效或超過上限。');
                 }
             } else if (ed.type === 'markdown' &&
                 ((ed.markdownText !== undefined &&
@@ -284,10 +284,10 @@ export class Serializer {
                         (!Number.isFinite(ed.fontSize) || ed.fontSize <= 0 || ed.fontSize > 500)) ||
                     (ed.renderWidth !== undefined &&
                         (!Number.isFinite(ed.renderWidth) || ed.renderWidth <= 0 || ed.renderWidth > 10000)))) {
-                throw new TypeError('Markdown element contains invalid or oversized source/style data.');
+                throw new TypeError('Markdown 或樣式資料無效或超過上限。');
             } else if (ed.type === 'mermaid' && ed.svgString !== undefined &&
                 (typeof ed.svgString !== 'string' || ed.svgString.length > MAX_IMPORTED_SVG_LENGTH)) {
-                throw new TypeError('Mermaid element contains invalid or oversized SVG data.');
+                throw new TypeError('Mermaid SVG 資料無效或超過上限。');
             }
 
             const Cls = TYPE_MAP[ed.type];
@@ -301,7 +301,7 @@ export class Serializer {
             ![camera.x, camera.y, camera.zoom].every(Number.isFinite) ||
             Math.abs(camera.x) > MAX_WORLD_COORDINATE || Math.abs(camera.y) > MAX_WORLD_COORDINATE ||
             camera.zoom < MIN_CAMERA_ZOOM || camera.zoom > MAX_CAMERA_ZOOM)) {
-            throw new TypeError('Whiteboard file contains invalid camera settings.');
+            throw new TypeError('白板視角設定無效。');
         }
 
         const importedById = new Map(importedElements.map(element => [element.id, element]));

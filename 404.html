@@ -1,9 +1,9 @@
 <!DOCTYPE html>
-<html lang="zh-TW">
+<html lang="en">
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>404 — 找不到頁面</title>
+    <title>404 — Page not found</title>
     <link rel="stylesheet" href="css/colors.css">
     <style>
         *, *::before, *::after { margin: 0; padding: 0; box-sizing: border-box; }
@@ -77,12 +77,23 @@
     <div class="container">
         <div class="code">404</div>
         <div class="divider"></div>
-        <div class="title">找不到頁面</div>
-        <div class="sub">你要找的頁面不存在，可能已被移除或網址有誤。</div>
+        <div class="title" data-trad="找不到頁面">Page not found</div>
+        <div class="sub" data-trad="頁面不存在或網址錯誤。">The page does not exist or the URL is incorrect.</div>
         <a class="back" href="index.html">
-            ← 回到白板
+            ← Back to whiteboard
         </a>
-        <div class="canvas-hint">CP WhiteBoard — 競程白板</div>
+        <div class="canvas-hint">CP WhiteBoard — Competitive Programming Whiteboard</div>
     </div>
+    <script>
+        try {
+            if (localStorage.getItem('wb_language') === 'zh-TW') {
+                document.documentElement.lang = 'zh-TW';
+                document.querySelectorAll('[data-trad]').forEach(element => { element.textContent = element.dataset.trad; });
+                document.querySelector('.back').textContent = '← 回到白板';
+                document.querySelector('.canvas-hint').textContent = 'CP WhiteBoard — 競程白板';
+                document.title = '404 — 找不到頁面';
+            }
+        } catch (_) {}
+    </script>
 </body>
 </html>

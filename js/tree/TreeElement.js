@@ -3,6 +3,7 @@
  * Supports: Binary Tree, BST, AVL, Red-Black Tree.
  * Can be created from text input or value list.
  */
+import { i18n } from '../ui/I18n.js';
 import { Element } from '../core/Element.js';
 import { MAX_TREE_INPUT_LENGTH, MAX_TREE_NODES, TreeParser } from './TreeParser.js';
 import { TreeLayout } from './TreeLayout.js';
@@ -45,7 +46,7 @@ export class TreeElement extends Element {
     buildFromText(text, mode = 'auto', forceZeroBased = false) {
         const input = String(text ?? '');
         if (input.length > MAX_TREE_INPUT_LENGTH) {
-            return '樹資料不可超過 1 MB。';
+            return '樹資料不得超過 1 MB。';
         }
         if (!['auto', 'rooted', 'parent', 'edge', 'values'].includes(mode)) {
             return '未知的樹輸入格式。';
@@ -83,7 +84,7 @@ export class TreeElement extends Element {
         }
 
         if (result?.error) return result.error;
-        if (!result?.root) return input.trim() ? '無法建立樹，請檢查輸入格式。' : null;
+        if (!result?.root) return input.trim() ? '樹資料格式錯誤。' : null;
 
         this.root = result.root;
         this._nextDynamicNodePortId = 0;
@@ -159,7 +160,7 @@ export class TreeElement extends Element {
             ctx.font = '13px sans-serif';
             ctx.textAlign = 'center';
             ctx.textBaseline = 'middle';
-            ctx.fillText('雙擊輸入樹結構', this.x + this.width / 2, this.y + this.height / 2);
+            ctx.fillText(i18n.t('雙擊編輯樹資料'), this.x + this.width / 2, this.y + this.height / 2);
             ctx.restore();
             return;
         }

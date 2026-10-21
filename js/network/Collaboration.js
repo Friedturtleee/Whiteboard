@@ -69,12 +69,12 @@ export class Collaboration {
                     iconEl.textContent = 'cloud_done';
                     iconEl.style.color = '#10b981'; // Green
                     textEl.textContent = `${this.roomName}`;
-                    statusEl.dataset.tooltip = '已連線 (點擊更改房間)';
+                    statusEl.dataset.tooltip = '已連線（點擊更換房間）';
                 } else {
                     iconEl.textContent = 'cloud_off';
                     iconEl.style.color = '#ff4444'; // Red
                     textEl.textContent = '連線中...';
-                    statusEl.dataset.tooltip = '嘗試連線中或已斷線';
+                    statusEl.dataset.tooltip = '連線中或已中斷';
                 }
             }
         });
@@ -85,7 +85,7 @@ export class Collaboration {
             statusEl.dataset.roomBound = 'true';
             statusEl.style.cursor = 'pointer';
             statusEl.addEventListener('click', () => {
-                const newRoom = prompt('請輸入要加入的房間號碼：\n（將此號碼分享給朋友即可在同一個白板協作）', this.roomName);
+                const newRoom = prompt('輸入協作房間編號：\n使用相同編號即可共同編輯。', this.roomName);
                 if (newRoom && newRoom.trim() !== '' && newRoom !== this.roomName) {
                     window.location.search = `?room=${encodeURIComponent(newRoom.trim())}`;
                 }

@@ -38,6 +38,7 @@ import { TextInputDialog } from './ui/TextInputDialog.js';
 import { initInterface } from './ui/Interface.js';
 import { bindModal } from './ui/Modal.js';
 import { CloudBoards } from './network/CloudBoards.js';
+import { i18n } from './ui/I18n.js';
 
 const isEmptyDataStructureInput = value => {
     const text = String(value ?? '');
@@ -328,7 +329,7 @@ class App {
             const file = e.target.files[0];
             if (!file) return;
             if (this.cloudBoards?.isCloudBoard) {
-                this._toast('請先返回本機白板，再匯入 JSON，避免覆蓋尚未同步的雲端內容。');
+                this._toast('請先返回本機白板，再匯入 JSON，以免覆蓋尚未同步的內容。');
                 e.target.value = '';
                 return;
             }
@@ -337,7 +338,7 @@ class App {
                 await Serializer.importJSON(this, file);
             } catch (err) {
                 this._skipAutosave = false;
-                this._toast('匯入失敗: ' + err.message);
+                this._toast('匯入失敗：' + err.message);
                 e.target.value = '';
                 return;
             }
@@ -347,7 +348,7 @@ class App {
             }
             this._refreshUI();
             const saved = this._flushAutosave();
-            this._toast(saved ? '已匯入' : '已匯入，但自動儲存失敗，請立即匯出 JSON。');
+            this._toast(saved ? '已匯入' : '匯入完成，但自動儲存失敗。請立即匯出 JSON。');
             e.target.value = '';
         });
     }
@@ -1419,15 +1420,15 @@ class App {
 
         this.textInputDialog.show({
             element: el,
-            title: `批次輸入 ${cells.length} 個矩陣格`,
-            placeholder: `輸入一個值填滿所選格，或依序輸入 ${cells.length} 個值。\n例：1 2 3`,
+            title: `編輯選取的 ${cells.length} 格`,
+            placeholder: `單一值填滿所有選取格；或輸入 ${cells.length} 個值。\n例：1 2 3`,
             onConfirm: text => {
                 if (text.length > MAX_DATA_STRUCTURE_INPUT_LENGTH) {
-                    return '批次輸入不可超過 1 MB。';
+                    return '輸入資料不得超過 1 MB。';
                 }
                 const values = splitDataTokens(text, { multiline: true });
                 if (values.length !== 1 && values.length !== cells.length) {
-                    return `請輸入 1 個值（套用全部），或剛好 ${cells.length} 個值。`;
+                    return `輸入 1 個值套用全部，或輸入 ${cells.length} 個值。`;
                 }
 
                 return this._applyMatrixCellValues(el, cells, values);
@@ -1443,7 +1444,7 @@ class App {
         });
         if (cells.every(([row, col]) => oldData[row][col] === newData[row][col])) return null;
         const newText = newData.map(row => row.map(formatDataToken).join(' ')).join('\n');
-        if (newText.length > MAX_DATA_STRUCTURE_INPUT_LENGTH) return '資料總輸入不可超過 1 MB，已保留原值。';
+        if (newText.length > MAX_DATA_STRUCTURE_INPUT_LENGTH) return '輸入資料不得超過 1 MB。已保留原值。';
         const apply = data => {
             el.data = data.map(row => [...row]); el.updateTextFromData(); this.renderer.markDirty();
         };
@@ -1492,7 +1493,7 @@ class App {
             const text = event.clipboardData.getData('text/plain');
             if (!text) return;
             if (text.length > MAX_DATA_STRUCTURE_INPUT_LENGTH) {
-                this._toast('貼上資料不可超過 1 MB。'); return;
+                this._toast('貼上資料不得超過 1 MB。'); return;
             }
             let { cells } = selected;
             const { el } = selected;
@@ -1502,13 +1503,13 @@ class App {
                 const [startRow, startCol] = cells[0];
                 if (rows.some(row => row.length !== rows[0].length) ||
                     startRow + rows.length > el.rows || startCol + rows[0].length > el.cols) {
-                    this._toast('貼上範圍超出矩陣，或每列資料數量不同。'); return;
+                    this._toast('貼上資料超出矩陣範圍，或每列欄數不一致。'); return;
                 }
                 cells = rows.flatMap((row, r) => row.map((_, c) => [startRow + r, startCol + c]));
                 values = rows.flat();
             }
             if (values.length !== 1 && values.length !== cells.length) {
-                this._toast(`請貼上 1 個值，或剛好 ${cells.length} 個值。`); return;
+                this._toast(`貼上 1 個值，或剛好 ${cells.length} 個值。`); return;
             }
             if (!values.length) return;
             const error = this._applyMatrixCellValues(el, cells, values);
@@ -1821,8 +1822,8 @@ class App {
     _showDataStructureDialog(el, isNew = false) {
         const typeLabel = { matrix: '矩陣', stack: '堆疊', queue: '佇列' }[el.type] || el.type;
         const placeholder = el.type === 'matrix'
-            ? '輸入矩陣內容；單一字元可填滿全部格子。'
-            : '以空格或換行分隔數值。\n例：1 2 3 4 5';
+            ? '輸入矩陣資料；單一值會填滿全部格子。'
+            : '數值以空格或換行分隔。\n例：1 2 3 4 5';
         const oldText = el.inputText || '';
         const oldInputIsEmpty = isEmptyDataStructureInput(oldText);
         const originalState = JSON.parse(JSON.stringify(el.serialize()));
@@ -1920,12 +1921,12 @@ class App {
         this.textInputDialog.show({
             element: el,
             title: '編輯樹',
-            placeholder: '競程格式：第一行 N，接著 N-1 行無向邊 u v（節點編號可用 1 到 N，或 0 到 N-1）\n例：\n4\n2 1\n2 3\n4 2\n\n加權樹可輸入 u v w。N=1 時沒有邊可判斷編號，請用 0-based 選項指定。',
+            placeholder: 'N 後接 N−1 行：u v [w]\n節點編號為 1–N；0-based 請勾選。單節點請指定編號方式。\n例：\n4\n1 2\n1 3\n3 4',
             getPlaceholder: ({ mode }) => ({
-                rooted: '第一行 N，接著 N-1 行：父節點 子節點 [權重]\n例：\n4\n2 1\n2 3\n4 2',
-                parent: '每行填一個父節點編號，第 i 行代表節點 i 的父節點（根填 0）\n例：\n0\n1\n1\n2',
-                edge: '每行一條邊：u v [權重]，不填節點數標頭\n例：\n1 2\n1 3\n2 4',
-                values: '依序輸入數值，以空格或換行分隔\n例：\n5 2 8 1 3 7 9'
+                rooted: 'N 後接 N−1 行：父節點 子節點 [w]\n例：\n4\n1 2\n1 3\n3 4',
+                parent: '每行填父節點編號；根填 0。\n例：\n0\n1\n1\n2',
+                edge: '每行輸入 u v [w]；不含節點數。\n例：\n1 2\n1 3\n2 4',
+                values: '依序輸入數值，以空格或換行分隔。\n例：5 2 8 1 3 7 9'
             })[mode],
             defaultText: originalText,
             showTypeSelect: true,
@@ -2033,13 +2034,13 @@ class App {
         this.textInputDialog.show({
             element: el,
             title: '編輯圖',
-            placeholder: '第一行: N M (節點數、邊數)\n之後每行: u v [邊權重]\n例：\n4 5\n1 2\n2 3 7\n3 4 2\n4 1\n1 3 5',
+            placeholder: 'N M 後接 M 行邊：u v [w]\n例：\n4 3\n1 2\n2 3 7\n3 4',
             getPlaceholder: ({ graphMode, zeroBased }) => {
                 if (graphMode === 'adj-list') {
-                    return '第一行 N，接著 N 行：鄰居數 M，接 M 個鄰居編號\n例：\n4\n' +
+                    return 'N 後接 N 行：M 和 M 個鄰點\n例：\n4\n' +
                         (zeroBased ? '2 1 2\n1 0\n2 0 3\n1 2' : '2 2 3\n1 1\n2 1 4\n1 3');
                 }
-                return '第一行 N M（節點數、邊數），接著 M 行：u v [權重]\n例：\n4 3\n' +
+                return 'N M 後接 M 行：u v [w]\n例：\n4 3\n' +
                     (zeroBased ? '0 1\n1 2 7\n2 3' : '1 2\n2 3 7\n3 4');
             },
             defaultText: originalText,
@@ -2205,7 +2206,7 @@ class App {
             if (newValue !== oldValue && inlineDataInputLength(
                 matrixEl, { row, col }, newValue
             ) > MAX_DATA_STRUCTURE_INPUT_LENGTH) {
-                this._toast('資料總輸入不可超過 1 MB，已保留原值。', 4000);
+                this._toast('輸入資料不得超過 1 MB。已保留原值。', 4000);
                 newValue = oldValue;
             }
             if (matrixEl.data[row]) {
@@ -2351,7 +2352,7 @@ class App {
             let newValue = cancelled || enteredValue === oldText ? oldValue : enteredValue;
             if (newValue !== oldValue && inlineDataInputLength(element, index, newValue) >
                 MAX_DATA_STRUCTURE_INPUT_LENGTH) {
-                this._toast('資料總輸入不可超過 1 MB，已保留原值。', 4000);
+                this._toast('輸入資料不得超過 1 MB。已保留原值。', 4000);
                 newValue = oldValue;
             }
             applyValue(newValue);
@@ -2762,7 +2763,7 @@ class App {
         textarea.dataset.tabIndent = '';
         textarea.value = el.markdownText || '';
         textarea.maxLength = MarkdownElement.MAX_SOURCE_LENGTH;
-        textarea.placeholder = '在此輸入 Markdown…\n\n# 標題\n## 副標題\n\n- 列表項目\n- **粗體** 和 *斜體*\n\n```python\nprint("Hello")\n```';
+        textarea.placeholder = '輸入 Markdown…\n\n# 標題\n\n- 清單項目\n- **粗體**、*斜體*';
         textarea.spellcheck = false;
 
         // Tab key inserts spaces
@@ -2822,7 +2823,10 @@ class App {
         const updatePreview = () => {
             const md = textarea.value;
             try {
-                previewContent.innerHTML = MarkdownElement.renderToHTML(md);
+                const previewHTML = MarkdownElement.renderToHTML(md)
+                    .replace('Markdown 預覽資料不得超過 1 MB。', i18n.t('Markdown 預覽資料不得超過 1 MB。'))
+                    .replace('Markdown 預覽上限為 2,000 行；請縮短內容。', i18n.t('Markdown 預覽上限為 2,000 行；請縮短內容。'));
+                previewContent.innerHTML = previewHTML;
             } catch (_) {
                 previewContent.innerHTML = `<pre style="white-space:pre-wrap">${md.replace(/</g, '&lt;')}</pre>`;
             }
@@ -3566,7 +3570,7 @@ class App {
             return Number(value);
         }));
         if (matrixData.some(row => row.some(value => !Number.isFinite(value)))) {
-            this._toast('矩陣前綴和／差分只接受有限數值；空格會視為 0。');
+            this._toast('前綴和與差分僅支援有限數值；空白格視為 0。');
             return;
         }
         let newMatrixData = [];
@@ -3639,13 +3643,13 @@ class App {
         }
 
         if (newMatrixData.some(row => row.some(value => !Number.isFinite(value)))) {
-            this._toast('矩陣運算結果超出數值範圍，未建立複製。');
+            this._toast('數值超出範圍，未建立矩陣。');
             return;
         }
         const resultRows = newMatrixData.length;
         const resultCols = (newMatrixData[0] || []).length;
         if (resultRows > 200 || resultCols > 200 || resultRows * resultCols > 10000) {
-            this._toast('矩陣運算結果超出支援尺寸，未建立複製。');
+            this._toast('結果超出矩陣尺寸上限。');
             return;
         }
         
@@ -3829,7 +3833,7 @@ class App {
             this._restoreFromData(data);
         } catch (e) {
             console.error('[Autosave load ERROR]', e.stack || e);
-            alert('解析自動存檔 JSON 時發生錯誤: ' + e.message);
+            alert('自動存檔解析失敗：' + e.message);
         }
     }
 
@@ -3842,7 +3846,7 @@ class App {
             // (silent restore — no toast)
         } catch (e) {
             console.error('[Autosave restore ERROR]', e.stack || e);
-            alert('載入自動存檔時發生錯誤: ' + e.message);
+            alert('無法還原自動存檔：' + e.message);
         } finally {
             this._skipAutosave = previousSkipAutosave;
         }
@@ -3850,6 +3854,7 @@ class App {
 }
 
 // ── Boot ────────────────────────────────────────────────
+i18n.start();
 const app = new App();
 
 // Expose for debugging

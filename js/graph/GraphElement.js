@@ -2,6 +2,7 @@
  * GraphElement — graph visualization container element.
  * Supports directed & undirected graphs, text-to-graph, draggable nodes.
  */
+import { i18n } from '../ui/I18n.js';
 import { Element } from '../core/Element.js';
 import { GraphParser } from './GraphParser.js';
 import { GraphLayout } from './GraphLayout.js';
@@ -79,7 +80,7 @@ export class GraphElement extends Element {
         const firstId = nextId;
         while (this.nodes.has(String(nextId))) {
             nextId = nextId >= Number.MAX_SAFE_INTEGER ? 1 : nextId + 1;
-            if (nextId === firstId) throw new Error('No available graph node ID.');
+            if (nextId === firstId) throw new Error('沒有可用的圖節點編號。');
         }
         this._nextNodeId = nextId >= Number.MAX_SAFE_INTEGER ? 1 : nextId + 1;
         const id = String(nextId);
@@ -138,7 +139,7 @@ export class GraphElement extends Element {
             ctx.font = '13px sans-serif';
             ctx.textAlign = 'center';
             ctx.textBaseline = 'middle';
-            ctx.fillText('雙擊輸入圖結構', this.x + this.width / 2, this.y + this.height / 2);
+            ctx.fillText(i18n.t('雙擊編輯圖資料'), this.x + this.width / 2, this.y + this.height / 2);
             ctx.restore();
             return;
         }

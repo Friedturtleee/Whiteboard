@@ -10,6 +10,7 @@
  * Pipeline: Markdown → HTML (with hljs + KaTeX) → hidden DOM div → html2canvas → Canvas image
  */
 import { Element } from '../core/Element.js';
+import { i18n } from '../ui/I18n.js';
 
 const MAX_RENDER_DIMENSION = 16_384;
 const MAX_RENDER_PIXELS = 16_000_000;
@@ -68,10 +69,10 @@ export class MarkdownElement extends Element {
     static renderToHTML(md) {
         if (typeof md !== 'string' || !md.trim()) return '';
         if (md.length > MarkdownElement.MAX_SOURCE_LENGTH) {
-            return '<p>Markdown source exceeds the 1 MB rendering limit.</p>';
+            return '<p>Markdown 預覽資料不得超過 1 MB。</p>';
         }
         if (exceedsRenderLineLimit(md, MarkdownElement.MAX_RENDER_LINES)) {
-            return '<p>Markdown preview is limited to 2000 lines. Shorten the source to render it.</p>';
+            return '<p>Markdown 預覽上限為 2,000 行；請縮短內容。</p>';
         }
 
         // 1. Limit blockquote nesting to 5 levels
@@ -221,6 +222,7 @@ export class MarkdownElement extends Element {
     _render() {
         const revision = ++this._renderRevision;
         this._rendering = true;
+        this._renderLimitNotice = false;
 
         const md = this.markdownText;
         if (!md || !md.trim()) {
@@ -228,8 +230,12 @@ export class MarkdownElement extends Element {
             this._rendering = false;
             return;
         }
+        if (md.length > MarkdownElement.MAX_SOURCE_LENGTH) {
+            this._showRenderLimitNotice(i18n.t('Markdown preview data must be 1 MB or less.'));
+            return;
+        }
         if (exceedsRenderLineLimit(md, MarkdownElement.MAX_RENDER_LINES)) {
-            this._showRenderLimitNotice();
+            this._showRenderLimitNotice(i18n.t('Markdown preview limit is 2,000 lines. Shorten the content.'));
             return;
         }
 
@@ -310,7 +316,8 @@ export class MarkdownElement extends Element {
         });
     }
 
-    _showRenderLimitNotice() {
+    _showRenderLimitNotice(message = i18n.t('Markdown is too large to render. Shorten it to show the canvas preview.')) {
+        this._renderLimitNotice = true;
         const width = Math.min(Math.max(this._renderWidth || 600, 240), 1200);
         const height = 48;
         const scale = 2;
@@ -323,7 +330,7 @@ export class MarkdownElement extends Element {
             ctx.fillStyle = '#e0e0e0';
             ctx.font = '14px sans-serif';
             ctx.textBaseline = 'middle';
-            ctx.fillText('Markdown is too large to render. Shorten it to show the canvas preview.', 8, height / 2, width - 16);
+            ctx.fillText(message, 8, height / 2, width - 16);
         }
         const oldScale = this._naturalW > 0 ? this.width / this._naturalW : 1;
         this.img = canvas;

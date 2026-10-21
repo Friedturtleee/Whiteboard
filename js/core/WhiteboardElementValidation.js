@@ -50,7 +50,7 @@ function isValidTreeOverrideMap(value, kind, hasSource) {
 export function validateWhiteboardElement(ed) {
     if (!ed || typeof ed !== 'object' || Array.isArray(ed) || typeof ed.type !== 'string' ||
         ![ed.x, ed.y, ed.width, ed.height].every(Number.isFinite)) {
-        throw new TypeError('Whiteboard element has invalid fields or bounds.');
+        throw new TypeError('白板物件欄位、位置或尺寸無效。');
     }
     const signedLineBounds = ed.type === 'line' || ed.type === 'arrow';
     if (Math.abs(ed.x) > MAX_WORLD_COORDINATE || Math.abs(ed.y) > MAX_WORLD_COORDINATE ||
@@ -58,11 +58,11 @@ export function validateWhiteboardElement(ed) {
         Math.abs(ed.y + ed.height) > MAX_WORLD_COORDINATE ||
         (!signedLineBounds && (ed.width < 0 || ed.height < 0)) ||
         Math.abs(ed.width) > MAX_ELEMENT_DIMENSION || Math.abs(ed.height) > MAX_ELEMENT_DIMENSION) {
-        throw new TypeError('Whiteboard element bounds are outside the supported range.');
+        throw new TypeError('白板物件位置超出支援範圍。');
     }
     for (const field of ['rotation', 'opacity', 'saturation', 'strokeWidth', 'zIndex']) {
         if (ed[field] !== undefined && !Number.isFinite(ed[field])) {
-            throw new TypeError('Whiteboard element contains invalid style values.');
+            throw new TypeError('白板物件樣式資料無效。');
         }
     }
     if ((ed.opacity !== undefined && (ed.opacity < 0 || ed.opacity > 1)) ||
@@ -72,10 +72,10 @@ export function validateWhiteboardElement(ed) {
             (typeof ed[field] !== 'string' || ed[field].length > 256)) ||
         (ed.label !== undefined && (typeof ed.label !== 'string' || ed.label.length > 1024)) ||
         ['hidden', 'locked'].some(field => ed[field] !== undefined && typeof ed[field] !== 'boolean')) {
-        throw new TypeError('Whiteboard element contains invalid style values.');
+        throw new TypeError('白板物件樣式資料無效。');
     }
     if (ed.id !== undefined && (typeof ed.id !== 'string' || !/^[A-Za-z0-9_-]{1,128}$/.test(ed.id))) {
-        throw new TypeError('Whiteboard element contains an invalid ID.');
+        throw new TypeError('白板物件 ID 無效。');
     }
 
     if (['rectangle', 'circle', 'ellipse', 'line', 'arrow'].includes(ed.type)) {
@@ -87,7 +87,7 @@ export function validateWhiteboardElement(ed) {
             (ed.connections !== undefined && (!ed.connections || typeof ed.connections !== 'object' ||
                 Array.isArray(ed.connections) || !validConnection(ed.connections.p1) ||
                 !validConnection(ed.connections.p2)))) {
-            throw new TypeError('Shape element contains invalid shape or connection data.');
+            throw new TypeError('圖形或連線資料無效。');
         }
     } else if (ed.type === 'matrix') {
         const { rows, cols, data: cells } = ed;
@@ -101,7 +101,7 @@ export function validateWhiteboardElement(ed) {
             (ed.cellSize !== undefined && (!Number.isFinite(ed.cellSize) || ed.cellSize <= 0 || ed.cellSize > 10000)) ||
             (ed.fontSize !== undefined && (!Number.isFinite(ed.fontSize) || ed.fontSize <= 0 || ed.fontSize > 500)) ||
             !isValidHighlightMap(ed.highlights, /^\d+,\d+$/)) {
-            throw new TypeError('Matrix element has invalid dimensions or cell data.');
+            throw new TypeError('矩陣尺寸或儲存格資料無效。');
         }
     } else if (ed.type === 'queue' || ed.type === 'stack') {
         if (!Array.isArray(ed.items) || ed.items.length > 10000 ||
@@ -115,13 +115,13 @@ export function validateWhiteboardElement(ed) {
             (ed.fontSize !== undefined && (!Number.isFinite(ed.fontSize) || ed.fontSize <= 0 || ed.fontSize > 500)) ||
             (ed.maxDisplay !== undefined && (!Number.isSafeInteger(ed.maxDisplay) || ed.maxDisplay < 1 || ed.maxDisplay > 100)) ||
             !isValidHighlightMap(ed.highlights)) {
-            throw new TypeError('Array element has invalid or oversized item data.');
+            throw new TypeError('Stack／Queue 資料無效或超過上限。');
         }
     } else if (ed.type === 'pen') {
         if (!Array.isArray(ed.points) || ed.points.length > MAX_IMPORTED_PEN_POINTS || ed.points.some(point =>
             !point || !Number.isFinite(point.x) || !Number.isFinite(point.y) ||
             Math.abs(point.x) > MAX_WORLD_COORDINATE || Math.abs(point.y) > MAX_WORLD_COORDINATE)) {
-            throw new TypeError('Pen element contains invalid point data or exceeds the supported point limit.');
+            throw new TypeError('畫筆資料無效或點數超過上限。');
         }
         if (ed.points.length) {
             let minX = Infinity, minY = Infinity, maxX = -Infinity, maxY = -Infinity;
@@ -132,7 +132,7 @@ export function validateWhiteboardElement(ed) {
                 maxY = Math.max(maxY, point.y);
             }
             if (maxX - minX > MAX_ELEMENT_DIMENSION || maxY - minY > MAX_ELEMENT_DIMENSION) {
-                throw new TypeError('Pen element bounds are outside the supported range.');
+                throw new TypeError('畫筆位置超出支援範圍。');
             }
         }
     } else if (ed.type === 'graph') {
@@ -146,7 +146,7 @@ export function validateWhiteboardElement(ed) {
             (ed.nodeRadius !== undefined &&
                 (!Number.isFinite(ed.nodeRadius) || ed.nodeRadius <= 0 || ed.nodeRadius > 10000)) ||
             (ed._nextNodeId !== undefined && (!Number.isSafeInteger(ed._nextNodeId) || ed._nextNodeId < 1))) {
-            throw new TypeError('Graph element has invalid or oversized node/edge data.');
+            throw new TypeError('圖或邊資料無效或超過上限。');
         }
         const nodeIds = new Set();
         for (const node of ed.graphNodes) {
@@ -155,7 +155,7 @@ export function validateWhiteboardElement(ed) {
                 (node.label !== undefined && !isSafeDisplayValue(node.label)) ||
                 (node.nodeWeight !== undefined && node.nodeWeight !== null && !isSafeDisplayValue(node.nodeWeight)) ||
                 nodeIds.has(String(node.id))) {
-                throw new TypeError('Graph element contains an invalid node.');
+                throw new TypeError('圖節點資料無效。');
             }
             nodeIds.add(String(node.id));
         }
@@ -164,7 +164,7 @@ export function validateWhiteboardElement(ed) {
                 !nodeIds.has(String(edge.u)) || !nodeIds.has(String(edge.v)) ||
                 (edge.w !== undefined && !isSafeDisplayValue(edge.w)) ||
                 (edge.directed !== undefined && typeof edge.directed !== 'boolean')) {
-                throw new TypeError('Graph element contains an edge with an unknown endpoint.');
+                throw new TypeError('圖邊連接到不存在的節點。');
             }
         }
     } else if (ed.type === 'tree') {
@@ -177,7 +177,7 @@ export function validateWhiteboardElement(ed) {
                 (!Number.isFinite(ed[field]) || Math.abs(ed[field]) > MAX_WORLD_COORDINATE)) ||
             !isValidTreeOverrideMap(ed.nodeValueOverrides, 'node', Boolean(ed.inputText)) ||
             !isValidTreeOverrideMap(ed.edgeWeightOverrides, 'edge', Boolean(ed.inputText))) {
-            throw new TypeError('Tree element has invalid or oversized source data.');
+            throw new TypeError('樹資料無效或超過上限。');
         }
     } else if (ed.type === 'text') {
         if ((ed.text !== undefined && (typeof ed.text !== 'string' || ed.text.length > MAX_IMPORTED_TEXT_LENGTH)) ||
@@ -188,20 +188,20 @@ export function validateWhiteboardElement(ed) {
             ['baseWidth', 'baseHeight', '_baseWidth', '_baseHeight'].some(field =>
                 ed[field] !== undefined && (!Number.isFinite(ed[field]) ||
                     ed[field] <= 0 || ed[field] > MAX_TEXT_BASE_DIMENSION))) {
-            throw new TypeError('Text element contains invalid or oversized text/style data.');
+            throw new TypeError('文字或樣式資料無效或超過上限。');
         }
     } else if (ed.type === 'markdown') {
         if ((ed.markdownText !== undefined &&
                 (typeof ed.markdownText !== 'string' || ed.markdownText.length > MAX_IMPORTED_TEXT_LENGTH)) ||
             (ed.fontSize !== undefined && (!Number.isFinite(ed.fontSize) || ed.fontSize <= 0 || ed.fontSize > 500)) ||
             (ed.renderWidth !== undefined && (!Number.isFinite(ed.renderWidth) || ed.renderWidth <= 0 || ed.renderWidth > 10000))) {
-            throw new TypeError('Markdown element contains invalid or oversized source/style data.');
+            throw new TypeError('Markdown 或樣式資料無效或超過上限。');
         }
     } else if (ed.type === 'mermaid' && ed.svgString !== undefined &&
         (typeof ed.svgString !== 'string' || ed.svgString.length > MAX_IMPORTED_SVG_LENGTH)) {
-        throw new TypeError('Mermaid element contains invalid or oversized SVG data.');
+        throw new TypeError('Mermaid SVG 資料無效或超過上限。');
     } else if (!['rectangle', 'circle', 'ellipse', 'line', 'arrow', 'matrix', 'queue', 'stack', 'pen', 'graph', 'tree', 'text', 'markdown', 'mermaid'].includes(ed.type)) {
-        throw new TypeError(`Unsupported whiteboard element type: ${ed.type}`);
+        throw new TypeError(`不支援的白板物件類型：${ed.type}`);
     }
     return true;
 }

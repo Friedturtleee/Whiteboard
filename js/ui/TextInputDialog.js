@@ -53,11 +53,11 @@ export class TextInputDialog {
         let graphModeSelect = null;
         if (opts.showGraphModeSelect) {
             graphModeSelect = document.createElement('select');
-            graphModeSelect.setAttribute('aria-label', '圖的輸入格式');
+            graphModeSelect.setAttribute('aria-label', '圖輸入格式');
             graphModeSelect.style.marginBottom = '8px';
             const graphModes = [
-                { value: 'edge-list', label: '邊列表 (N M, 再列 edges)' },
-                { value: 'adj-list',  label: '鄰接列表 (N, 再 N 行 M neighbors)' }
+                { value: 'edge-list', label: '邊列表' },
+                { value: 'adj-list',  label: '鄰接列表' }
             ];
             for (const m of graphModes) {
                 const opt = document.createElement('option');
@@ -102,7 +102,7 @@ export class TextInputDialog {
                 zeroBasedCb.checked = opts.zeroBased || false;
                 const cbLabel = document.createElement('label');
                 cbLabel.htmlFor = 'dialog-zerobased';
-                cbLabel.textContent = '0-based';
+                cbLabel.textContent = '0 起始編號';
                 cbLabel.style.textTransform = 'none';
                 zeroBasedWrap.appendChild(zeroBasedCb);
                 zeroBasedWrap.appendChild(cbLabel);
@@ -116,14 +116,14 @@ export class TextInputDialog {
         let modeSelect = null;
         if (opts.showModeSelect) {
             modeSelect = document.createElement('select');
-            modeSelect.setAttribute('aria-label', '樹的輸入格式');
+            modeSelect.setAttribute('aria-label', '樹輸入格式');
             modeSelect.style.marginBottom = '8px';
             const modes = [
-                { value: 'auto',   label: '自動偵測（CP 樹：N，接 N-1 條無向邊）' },
-                { value: 'rooted', label: '有根邊列表（N，接 父 子）' },
+                { value: 'auto',   label: '競程格式' },
+                { value: 'rooted', label: '有根邊列表（父節點、子節點）' },
                 { value: 'parent', label: '父節點陣列' },
-                { value: 'edge',   label: '無標頭邊列表（每行：u v [權重]）' },
-                { value: 'values', label: '數值列表（依樹類型建立）' }
+                { value: 'edge',   label: '無標頭邊列表' },
+                { value: 'values', label: '數值列表' }
             ];
             for (const m of modes) {
                 const opt = document.createElement('option');
@@ -160,12 +160,13 @@ export class TextInputDialog {
         textareaBackdrop.style.color = 'var(--text-primary, #fff)';
         textareaBackdrop.style.overflow = 'hidden';
         textareaBackdrop.style.pointerEvents = 'none';
+        textareaBackdrop.dataset.noI18n = '';
 
         const textarea = document.createElement('textarea');
         textarea.setAttribute('aria-label', `${opts.title || '輸入資料'}內容`);
         textarea.maxLength = 1_000_000;
         textarea.spellcheck = false;
-        textarea.placeholder = opts.placeholder || '在此輸入...';
+        textarea.placeholder = opts.placeholder || '請輸入資料…';
         textarea.value = opts.defaultText || '';
         textarea.style.position = 'absolute';
         textarea.style.top = '0';
@@ -252,8 +253,10 @@ export class TextInputDialog {
         const formatHint = document.createElement('p');
         formatHint.className = 'dialog-format-hint';
         const updatePlaceholder = () => {
-            textarea.placeholder = opts.getPlaceholder?.(_getValues()) || opts.placeholder || '在此輸入…';
-            formatHint.textContent = textarea.placeholder.split('\n')[0];
+            const placeholder = opts.getPlaceholder?.(_getValues()) || opts.placeholder || '請輸入資料…';
+            const lines = placeholder.split('\n');
+            formatHint.textContent = lines[0];
+            textarea.placeholder = lines.slice(1).join('\n');
             if (zeroBasedWrap && Array.isArray(opts.zeroBasedModes)) {
                 zeroBasedWrap.hidden = !opts.zeroBasedModes.includes(_getValues().mode);
             }
@@ -330,7 +333,7 @@ export class TextInputDialog {
         dialog.appendChild(errorMessage);
         const hint = document.createElement('p');
         hint.className = 'dialog-keyboard-hint';
-        hint.textContent = 'Ctrl / ⌘ + Enter 確認 · Esc 取消';
+        hint.textContent = 'Ctrl/⌘+Enter 確認；Esc 取消';
         dialog.appendChild(hint);
         dialog.appendChild(actions);
         overlay.appendChild(dialog);

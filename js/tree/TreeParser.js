@@ -43,13 +43,13 @@ export class TreeParser {
      */
     static autoDetectAndParse(text, treeType = 'tree', forceZeroBased = false) {
         if (typeof text !== 'string') {
-            return { root: null, nodes: new Map(), error: '樹資料必須是文字。' };
+            return { root: null, nodes: new Map(), error: '樹資料格式無效。' };
         }
         if (text.length > MAX_TREE_INPUT_LENGTH) {
-            return { root: null, nodes: new Map(), error: '樹資料不可超過 1 MB。' };
+            return { root: null, nodes: new Map(), error: '樹資料不得超過 1 MB。' };
         }
         const lines = text.replace(/,/g, ' ').trim().split('\n').map(l => l.trim()).filter(l => l);
-        if (lines.length === 0) return { root: null, nodes: new Map(), error: '輸入為空' };
+        if (lines.length === 0) return { root: null, nodes: new Map(), error: '請輸入樹資料。' };
 
         const tokenCounts = lines.map(l => l.split(/\s+/).length);
 
@@ -98,19 +98,19 @@ export class TreeParser {
             root: null, nodes: new Map(), error, hasWeights: false, format: 'contest'
         });
         if (!Array.isArray(lines) || lines.length === 0) {
-            return invalid('請輸入節點數與樹的邊資料。');
+            return invalid('請輸入節點數與邊資料。');
         }
 
         const header = String(lines[0]).trim();
         const n = Number(header);
         if (!NON_NEGATIVE_INTEGER_TOKEN.test(header) || !Number.isSafeInteger(n) || n <= 0) {
-            return invalid('第一行應為正整數節點數 n。');
+            return invalid('第一行需為正整數節點數 N。');
         }
         if (n > MAX_TREE_NODES) {
-            return invalid('節點數不可超過 ' + MAX_TREE_NODES + '。');
+            return invalid('節點數上限為 ' + MAX_TREE_NODES + '。');
         }
         if (lines.length !== n) {
-            return invalid('節點數為 ' + n + ' 時，後續必須恰好提供 ' + (n - 1) + ' 條邊。');
+            return invalid('N=' + n + ' 時，需提供 ' + (n - 1) + ' 條邊。');
         }
 
         // AtCoder inputs sometimes number vertices from 0. Since vertex 0
@@ -138,22 +138,22 @@ export class TreeParser {
         for (let i = 1; i < lines.length; i++) {
             const parts = String(lines[i]).trim().split(/\s+/);
             if (parts.length < 2 || parts.length > 3) {
-                return invalid('第 ' + (i + 1) + ' 行格式應為：節點 u 節點 v [邊權重]。');
+                return invalid('第 ' + (i + 1) + ' 行格式錯誤，應為 u v [w]。');
             }
             if (!NON_NEGATIVE_INTEGER_TOKEN.test(parts[0]) ||
                 !NON_NEGATIVE_INTEGER_TOKEN.test(parts[1])) {
-                return invalid('第 ' + (i + 1) + ' 行的節點編號必須是非負整數。');
+                return invalid('第 ' + (i + 1) + ' 行節點編號須為非負整數。');
             }
             const uNumber = Number(parts[0]);
             const vNumber = Number(parts[1]);
             if (!Number.isSafeInteger(uNumber) || !Number.isSafeInteger(vNumber) ||
                 uNumber < startId || uNumber >= startId + n ||
                 vNumber < startId || vNumber >= startId + n) {
-                return invalid('第 ' + (i + 1) + ' 行的節點編號必須介於 ' + startId +
-                    ' 和 ' + (startId + n - 1) + '。');
+                return invalid('第 ' + (i + 1) + ' 行節點編號須介於 ' + startId +
+                    ' 至 ' + (startId + n - 1) + '。');
             }
             if (uNumber === vNumber) {
-                return invalid('第 ' + (i + 1) + ' 行不能是自我連結。');
+                return invalid('第 ' + (i + 1) + ' 行不可連接自身。');
             }
             const u = String(uNumber);
             const v = String(vNumber);
@@ -167,7 +167,7 @@ export class TreeParser {
             let weight = null;
             if (parts.length === 3) {
                 if (parts[2].trim() === '' || !Number.isFinite(Number(parts[2]))) {
-                    return invalid('第 ' + (i + 1) + ' 行的邊權重必須是有限數值。');
+                    return invalid('第 ' + (i + 1) + ' 行權重須為有限數值。');
                 }
                 weight = parts[2];
                 hasWeights = true;
@@ -188,7 +188,7 @@ export class TreeParser {
             const currentNode = nodes.get(current);
             for (const { to, weight } of adjacency.get(current)) {
                 if (to === parent.get(current)) continue;
-                if (visited.has(to)) return invalid('輸入包含循環，無法形成樹。');
+                if (visited.has(to)) return invalid('邊資料含循環，無法構成樹。');
                 visited.add(to);
                 parent.set(to, current);
                 const child = nodes.get(to);
@@ -215,19 +215,19 @@ export class TreeParser {
             root: null, nodes: new Map(), error, hasWeights: false, format: 'rooted'
         });
         if (!Array.isArray(lines) || lines.length === 0) {
-            return invalid('請輸入樹的節點數與邊資料。');
+            return invalid('請輸入節點數與邊資料。');
         }
 
         const header = String(lines[0]).trim();
         const n = Number(header);
         if (!NON_NEGATIVE_INTEGER_TOKEN.test(header) || !Number.isSafeInteger(n) || n <= 0) {
-            return invalid('第一行應為正整數節點數 n。');
+            return invalid('第一行需為正整數節點數 N。');
         }
         if (n > MAX_TREE_NODES) {
-            return invalid('節點數不可超過 ' + MAX_TREE_NODES + '。');
+            return invalid('節點數上限為 ' + MAX_TREE_NODES + '。');
         }
         if (lines.length !== n) {
-            return invalid('節點數為 ' + n + ' 時，後續必須恰好提供 ' + (n - 1) + ' 條邊。');
+            return invalid('N=' + n + ' 時，需提供 ' + (n - 1) + ' 條邊。');
         }
 
         const nodes = new Map();
@@ -248,26 +248,26 @@ export class TreeParser {
         for (let i = 1; i < lines.length; i++) {
             const parts = lines[i].split(/\s+/);
             if (parts.length < 2 || parts.length > 3) {
-                return invalid('第 ' + (i + 1) + ' 行格式應為：父節點 子節點 [邊權重]。');
+                return invalid('第 ' + (i + 1) + ' 行格式錯誤，應為 父節點 子節點 [w]。');
             }
             const parentKey = parts[0];
             const childKey = parts[1];
             const weight = parts.length >= 3 ? parts[2] : null;
             if (!NON_NEGATIVE_INTEGER_TOKEN.test(parentKey) ||
                 !NON_NEGATIVE_INTEGER_TOKEN.test(childKey)) {
-                return invalid('第 ' + (i + 1) + ' 行的節點編號必須是正整數。');
+                return invalid('第 ' + (i + 1) + ' 行節點編號須為正整數。');
             }
             const parentId = Number(parentKey);
             const childId = Number(childKey);
             if (!Number.isSafeInteger(parentId) || !Number.isSafeInteger(childId) ||
                 parentId < 1 || parentId > n || childId < 1 || childId > n) {
-                return invalid('第 ' + (i + 1) + ' 行的節點編號必須介於 1 和 ' + n + '。');
+                return invalid('第 ' + (i + 1) + ' 行節點編號須介於 1 至 ' + n + '。');
             }
             if (weight !== null && !Number.isFinite(Number(weight))) {
-                return invalid('第 ' + (i + 1) + ' 行的邊權重必須是有限數值。');
+                return invalid('第 ' + (i + 1) + ' 行權重須為有限數值。');
             }
             if (parentId === childId) {
-                return invalid('第 ' + (i + 1) + ' 行不能讓節點成為自己的父節點。');
+                return invalid('第 ' + (i + 1) + ' 行不可將節點設為自身的父節點。');
             }
 
             const parentNode = getNode(parentId);
@@ -287,7 +287,7 @@ export class TreeParser {
 
         const roots = [...nodes.values()].filter(node => !node.parent);
         if (roots.length !== 1) {
-            return invalid('樹必須且只能有一個根節點，目前找到 ' + roots.length + ' 個。');
+            return invalid('樹須有且僅有一個根節點；目前為 ' + roots.length + ' 個。');
         }
         const root = roots[0];
         const visited = new Set();
@@ -295,7 +295,7 @@ export class TreeParser {
         while (pending.length) {
             const node = pending.pop();
             if (visited.has(node)) {
-                return invalid('輸入包含循環或重複連結，無法形成樹。');
+                return invalid('邊資料含循環或重複連結，無法構成樹。');
             }
             visited.add(node);
             for (const child of node.children) pending.push(child);
@@ -328,9 +328,9 @@ export class TreeParser {
         const invalid = error => ({
             root: null, nodes: new Map(), error, format: 'parent', hasWeights: false
         });
-        if (n === 0) return invalid('父節點陣列不可為空。');
+        if (n === 0) return invalid('請輸入父節點資料。');
         if (n > MAX_TREE_NODES) {
-            return invalid('節點數不可超過 ' + MAX_TREE_NODES + '。');
+            return invalid('節點數上限為 ' + MAX_TREE_NODES + '。');
         }
         const parents = lines.map(line => {
             const token = String(line).trim();
@@ -339,7 +339,7 @@ export class TreeParser {
             return Number.isSafeInteger(value) ? value : NaN;
         });
         if (parents.some(parent => !Number.isSafeInteger(parent))) {
-            return invalid('父節點編號必須是安全整數。');
+            return invalid('父節點編號須為安全整數。');
         }
         let rootCount = 0;
         for (let i = 0; i < n; i++) {
@@ -352,7 +352,7 @@ export class TreeParser {
             }
         }
         if (rootCount !== 1) {
-            return invalid('父節點陣列必須且只能有一個根節點，目前找到 ' + rootCount + ' 個。');
+            return invalid('父節點陣列須有且僅有一個根節點；目前為 ' + rootCount + ' 個。');
         }
         const nodes = new Map();
         const errors = [];
@@ -430,10 +430,10 @@ export class TreeParser {
         const seenEdges = new Map();
         let hasWeights = false;
         if (!Array.isArray(lines) || lines.length === 0) {
-            return invalid('至少需要一條有效的邊。');
+            return invalid('請輸入至少一條有效邊。');
         }
         if (lines.length > MAX_TREE_EDGE_ROWS) {
-            return invalid('樹的邊資料不可超過 ' + MAX_TREE_EDGE_ROWS + ' 行。');
+            return invalid('樹邊資料上限為 ' + MAX_TREE_EDGE_ROWS + ' 行。');
         }
 
         const getNode = (val) => {
@@ -450,7 +450,7 @@ export class TreeParser {
             if (!line) continue;
             const parts = line.split(/\s+/);
             if (parts.length < 2 || parts.length > 3) {
-                return invalid('第 ' + (i + 1) + ' 行格式應為：節點 u 節點 v [數值權重]。');
+                return invalid('第 ' + (i + 1) + ' 行格式錯誤，應為 u v [w]。');
             }
             const u = parts[0], v = parts[1];
             let w = null;
@@ -458,9 +458,9 @@ export class TreeParser {
                 w = parts[2];
                 hasWeights = true;
             } else if (parts.length === 3) {
-                return invalid('第 ' + (i + 1) + ' 行的邊權重必須是有限數值。');
+                return invalid('第 ' + (i + 1) + ' 行權重須為有限數值。');
             }
-            if (u === v) return invalid('第 ' + (i + 1) + ' 行不能是自我連結。');
+            if (u === v) return invalid('第 ' + (i + 1) + ' 行不可連接自身。');
             const lowId = u <= v ? u : v;
             const highId = u <= v ? v : u;
             const edgeKey = `${lowId.length}:${lowId}${highId.length}:${highId}`;
@@ -470,23 +470,23 @@ export class TreeParser {
                     ? w === null
                     : w !== null && Number(previousWeight) === Number(w);
                 if (!sameWeight) {
-                    return invalid('重複邊的權重不一致，請保留一筆明確的邊資料。');
+                    return invalid('重複邊權重不一致；請保留一筆資料。');
                 }
                 continue;
             }
             const newNodeCount = Number(!nodes.has(u)) + Number(!nodes.has(v));
             if (nodes.size + newNodeCount > MAX_TREE_NODES) {
-                return invalid('樹的節點不可超過 ' + MAX_TREE_NODES + ' 個。');
+                return invalid('節點數上限為 ' + MAX_TREE_NODES + '。');
             }
             seenEdges.set(edgeKey, w);
             if (!getNode(u) || !getNode(v)) {
-                return invalid('樹的節點不可超過 ' + MAX_TREE_NODES + ' 個。');
+                return invalid('節點數上限為 ' + MAX_TREE_NODES + '。');
             }
             edges.push({ u, v, w });
         }
 
         if (edges.length === 0) {
-            return invalid('至少需要一條有效的邊。');
+            return invalid('請輸入至少一條有效邊。');
         }
 
         // Build adjacency list
@@ -520,10 +520,10 @@ export class TreeParser {
 
         const disconnected = nodes.size - visited.size;
         if (disconnected > 0) {
-            return invalid('有 ' + disconnected + ' 個節點無法到達。');
+            return invalid('有 ' + disconnected + ' 個節點無法連通。');
         }
         if (edges.length !== nodes.size - 1) {
-            return invalid('邊列表包含循環，無法形成樹。');
+            return invalid('邊列表含循環，無法構成樹。');
         }
         return { root, nodes, error: null, hasWeights, format: 'edge' };
     }
@@ -574,13 +574,13 @@ export class TreeParser {
      * Build a BST from a list of values.
      */
     static buildBST(values) {
-        if (!Array.isArray(values)) return { error: 'Tree values must be an array.' };
+        if (!Array.isArray(values)) return { error: '樹值資料格式無效。' };
         if (values.length === 0) return null;
         if (values.length > MAX_TREE_NODES) {
-            return { error: 'Tree values cannot exceed ' + MAX_TREE_NODES + ' nodes.' };
+            return { error: '節點數上限為 ' + MAX_TREE_NODES + '。' };
         }
         if (!hasOnlyFiniteNumericValues(values)) {
-            return { error: 'Tree values must be finite numbers.' };
+            return { error: '樹值必須為有限數值。' };
         }
 
         const createNode = (val) => ({ value: val, children: [], parent: null, x: 0, y: 0, meta: {} });
@@ -618,13 +618,13 @@ export class TreeParser {
      * Build an AVL tree from a list of values.
      */
     static buildAVL(values) {
-        if (!Array.isArray(values)) return { error: 'Tree values must be an array.' };
+        if (!Array.isArray(values)) return { error: '樹值資料格式無效。' };
         if (values.length === 0) return null;
         if (values.length > MAX_TREE_NODES) {
-            return { error: 'Tree values cannot exceed ' + MAX_TREE_NODES + ' nodes.' };
+            return { error: '節點數上限為 ' + MAX_TREE_NODES + '。' };
         }
         if (!hasOnlyFiniteNumericValues(values)) {
-            return { error: 'Tree values must be finite numbers.' };
+            return { error: '樹值必須為有限數值。' };
         }
 
         const createNode = (val) => ({
@@ -703,13 +703,13 @@ export class TreeParser {
      * Build a Red-Black tree from a list of values.
      */
     static buildRBTree(values) {
-        if (!Array.isArray(values)) return { error: 'Tree values must be an array.' };
+        if (!Array.isArray(values)) return { error: '樹值資料格式無效。' };
         if (values.length === 0) return null;
         if (values.length > MAX_TREE_NODES) {
-            return { error: 'Tree values cannot exceed ' + MAX_TREE_NODES + ' nodes.' };
+            return { error: '節點數上限為 ' + MAX_TREE_NODES + '。' };
         }
         if (!hasOnlyFiniteNumericValues(values)) {
-            return { error: 'Tree values must be finite numbers.' };
+            return { error: '樹值必須為有限數值。' };
         }
 
         const RED = 'red', BLACK = 'black';

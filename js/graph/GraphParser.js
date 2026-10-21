@@ -18,24 +18,24 @@ export class GraphParser {
     static parse(text, directed = false, zeroBased = false, graphMode = 'edge-list') {
         if (typeof text !== 'string' || !text.trim()) return null;
         if (text.length > 1000000) {
-            return { error: 'Graph input cannot exceed 1 MB.' };
+            return { error: '圖資料不得超過 1 MB。' };
         }
         if (graphMode === 'adj-list') {
             return GraphParser._parseAdjList(text, directed, zeroBased);
         }
         if (graphMode !== 'edge-list') {
-            return { error: 'Unknown graph input format: ' + graphMode };
+            return { error: '未知的圖輸入格式：' + graphMode };
         }
         return GraphParser._parseEdgeList(text, directed, zeroBased);
     }
 
     static _nonNegativeInteger(token, field, lineNumber) {
         if (!NON_NEGATIVE_INTEGER_TOKEN.test(token)) {
-            return { error: 'Line ' + lineNumber + ': ' + field + ' must be a non-negative integer.' };
+            return { error: '第 ' + lineNumber + ' 行：' + field + ' 須為非負整數。' };
         }
         const value = Number(token);
         if (!Number.isSafeInteger(value)) {
-            return { error: 'Line ' + lineNumber + ': ' + field + ' is too large.' };
+            return { error: '第 ' + lineNumber + ' 行：' + field + ' 超出安全範圍。' };
         }
         return { value };
     }
@@ -44,7 +44,7 @@ export class GraphParser {
         const lines = text.split(/\r?\n/).map(line => line.trim()).filter(Boolean);
         const header = lines[0].split(/\s+/);
         if (header.length !== 2) {
-            return { error: 'Edge-list header must contain exactly N and M.' };
+            return { error: '邊列表標頭格式錯誤，應為 N M。' };
         }
 
         const nResult = GraphParser._nonNegativeInteger(header[0], 'N', 1);
@@ -53,15 +53,15 @@ export class GraphParser {
         if (mResult.error) return mResult;
         const n = nResult.value;
         const m = mResult.value;
-        if (n === 0) return { error: 'N must be greater than zero.' };
+        if (n === 0) return { error: 'N 須大於 0。' };
         if (n > MAX_GRAPH_NODES || m > MAX_GRAPH_EDGES) {
-            return { error: 'Graph header exceeds the supported size (N <= 500, M <= 100000).' };
+            return { error: '圖資料上限為 500 個節點、100,000 條邊。' };
         }
 
         if (lines.length - 1 !== m) {
             return {
-                error: 'Header declares ' + m + ' edges, but found ' +
-                    (lines.length - 1) + ' non-empty edge row(s).'
+                error: '標頭宣告 ' + m + ' 條邊，實際有 ' +
+                    (lines.length - 1) + ' 行。'
             };
         }
 
@@ -76,7 +76,7 @@ export class GraphParser {
         for (let i = 1; i < lines.length; i++) {
             const parts = lines[i].split(/\s+/);
             if (parts.length < 2 || parts.length > 3) {
-                return { error: 'Line ' + (i + 1) + ': edge row must be \"u v [edge-weight]\".' };
+                return { error: '第 ' + (i + 1) + ' 行格式錯誤，應為 u v [w]。' };
             }
             const uToken = parts[0];
             const vToken = parts[1];
@@ -85,13 +85,13 @@ export class GraphParser {
             const vNumber = Number(vToken);
             if (!SIGNED_INTEGER_TOKEN.test(uToken) || !Number.isSafeInteger(uNumber) ||
                 !SIGNED_INTEGER_TOKEN.test(vToken) || !Number.isSafeInteger(vNumber)) {
-                return { error: 'Line ' + (i + 1) + ': node IDs must be safe integers.' };
+                return { error: '第 ' + (i + 1) + ' 行節點編號須為安全整數。' };
             }
             if (uNumber < start || uNumber >= start + n ||
                 vNumber < start || vNumber >= start + n) {
                 return {
-                    error: 'Line ' + (i + 1) + ': node IDs must be within the declared range ' +
-                        start + ' to ' + (start + n - 1) + '.'
+                    error: '第 ' + (i + 1) + ' 行節點編號須介於 ' +
+                        start + ' 至 ' + (start + n - 1) + '。'
                 };
             }
             const u = String(uNumber);
@@ -99,7 +99,7 @@ export class GraphParser {
 
             if (weight !== null) {
                 if (weight.trim() === '' || !Number.isFinite(Number(weight))) {
-                    return { error: 'Line ' + (i + 1) + ': edge weight must be a finite number.' };
+                    return { error: '第 ' + (i + 1) + ' 行權重須為有限數值。' };
                 }
             }
             edges.push({ u, v, w: weight, directed });
@@ -113,14 +113,14 @@ export class GraphParser {
         const firstContentIndex = lines.findIndex(Boolean);
         const header = lines[firstContentIndex].split(/\s+/);
         if (header.length !== 1) {
-            return { error: 'Adjacency-list header must contain exactly N.' };
+            return { error: '鄰接列表標頭應為 N。' };
         }
         const nResult = GraphParser._nonNegativeInteger(header[0], 'N', 1);
         if (nResult.error) return nResult;
         const n = nResult.value;
-        if (n === 0) return { error: 'N must be greater than zero.' };
+        if (n === 0) return { error: 'N 須大於 0。' };
         if (n > MAX_GRAPH_NODES) {
-            return { error: 'Graph header exceeds the supported size (N <= 500).' };
+            return { error: '圖資料最多支援 500 個節點。' };
         }
 
         const rowStart = firstContentIndex + 1;
@@ -133,7 +133,7 @@ export class GraphParser {
             if (lines[index]) invalidRows = true;
         }
         if (invalidRows) {
-            return { error: 'Adjacency-list input must contain exactly ' + n + ' non-empty row(s).' };
+            return { error: '鄰接列表須有 ' + n + ' 行非空資料。' };
         }
 
         const start = zeroBased ? 0 : 1;
@@ -149,18 +149,18 @@ export class GraphParser {
         for (let row = 0; row < n; row++) {
             const parts = lines[rowStart + row].split(/\s+/);
             const lineNumber = row + 2;
-            const degreeResult = GraphParser._nonNegativeInteger(parts[0], 'degree', lineNumber);
+            const degreeResult = GraphParser._nonNegativeInteger(parts[0], '鄰居數', lineNumber);
             if (degreeResult.error) return degreeResult;
             const degree = degreeResult.value;
             if (degree > MAX_GRAPH_EDGES || totalAdjacencyEntries + degree > MAX_GRAPH_EDGES) {
-                return { error: 'Adjacency-list input exceeds the supported size (M <= 100000).' };
+                return { error: '鄰接列表鄰居總數上限為 100,000。' };
             }
             totalAdjacencyEntries += degree;
             const actualNeighbors = parts.length - 1;
             if (actualNeighbors !== degree) {
                 return {
-                    error: 'Line ' + lineNumber + ': degree declares ' + degree +
-                        ' neighbor(s), but found ' + actualNeighbors + '.'
+                    error: '第 ' + lineNumber + ' 行鄰居數宣告 ' + degree +
+                        '，實際有 ' + actualNeighbors + ' 個。'
                 };
             }
 
@@ -169,12 +169,12 @@ export class GraphParser {
                 const neighbor = parts[partIndex];
                 const neighborNumber = Number(neighbor);
                 if (!SIGNED_INTEGER_TOKEN.test(neighbor) || !Number.isSafeInteger(neighborNumber)) {
-                    return { error: 'Line ' + lineNumber + ': neighbor IDs must be safe integers.' };
+                    return { error: '第 ' + lineNumber + ' 行鄰居編號須為安全整數。' };
                 }
                 if (neighborNumber < start || neighborNumber >= start + n) {
                     return {
-                        error: 'Line ' + lineNumber + ': neighbor IDs must be within the declared range ' +
-                            start + ' to ' + (start + n - 1) + '.'
+                        error: '第 ' + lineNumber + ' 行鄰居編號須介於 ' +
+                            start + ' 至 ' + (start + n - 1) + '。'
                     };
                 }
                 const neighborId = String(neighborNumber);

@@ -193,7 +193,7 @@ export class MatrixElement extends Element {
     setFromText(text) {
         const rawText = String(text ?? '');
         if (rawText.length > MAX_MATRIX_INPUT_LENGTH) {
-            return '矩陣輸入不可超過 1 MB。';
+            return '矩陣資料不得超過 1 MB。';
         }
         // Support dimension format: "3*5" or "3x5" or "3 * 5" → creates empty matrix
         const dimMatch = rawText.trim().match(/^(\d+)\s*[*xX×]\s*(\d+)$/);
@@ -203,7 +203,7 @@ export class MatrixElement extends Element {
             if (!Number.isSafeInteger(rows) || !Number.isSafeInteger(cols) ||
                 rows < 1 || cols < 1 || rows > MAX_MATRIX_ROWS || cols > MAX_MATRIX_COLS ||
                 rows * cols > MAX_MATRIX_CELLS) {
-                return '矩陣尺寸上限為 200 × 200，且總格數不可超過 10000。';
+                return '矩陣上限為 200 × 200，最多 10,000 格。';
             }
             const data = Array.from({ length: rows }, () => new Array(cols).fill(''));
             this.inputText = rawText;
@@ -230,7 +230,7 @@ export class MatrixElement extends Element {
             const tokenLength = formatDataToken(value).length;
             const expandedLength = this.rows * (this.cols * tokenLength + this.cols - 1) + this.rows - 1;
             if (expandedLength > MAX_MATRIX_INPUT_LENGTH) {
-                return '套用後的矩陣資料不可超過 1 MB。';
+                return '套用後資料不得超過 1 MB。';
             }
 
             this.inputText = rawText;
@@ -286,7 +286,7 @@ export class MatrixElement extends Element {
             data[r] = vals;
             cols = Math.max(cols, vals.length);
             if ((r + 1) * cols > MAX_MATRIX_CELLS) {
-                return '矩陣總格數不可超過 10000。';
+                return '矩陣最多 10,000 格。';
             }
         }
         // Pad shorter rows
