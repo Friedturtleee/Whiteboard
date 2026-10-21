@@ -135,7 +135,7 @@ test('opening a cloud board is blocked while its unsynced recovery draft is pend
     try {
         await assert.rejects(
             manager.openBoard({ id: boardId, role: 'owner' }),
-            /未同步復原草稿/
+            /未同步草稿/
         );
         assert.equal(appTouched, false);
     } finally {
@@ -159,7 +159,7 @@ test('opening a cloud board fails clearly when local storage blocks recovery che
     try {
         await assert.rejects(
             manager.openBoard({ id: 'a'.repeat(32), role: 'owner' }),
-            /無法檢查本機復原草稿/
+            /無法檢查本機草稿/
         );
         assert.equal(appTouched, false);
     } finally {
@@ -205,10 +205,17 @@ test('a damaged recovery marker still exposes its draft for download or cleanup'
     const makeNode = () => ({
         children: [],
         listeners: {},
-        append(...children) { this.children.push(...children); },
+        append(...children) {
+            this.children.push(...children);
+            this.textContent = (this.textContent || '') + children.map(child => child.textContent || '').join('');
+        },
         addEventListener(name, handler) { this.listeners[name] = handler; }
     });
-    globalThis.document = { createElement: makeNode, getElementById: () => null };
+    globalThis.document = {
+        createElement: makeNode,
+        createTextNode: textContent => ({ textContent }),
+        getElementById: () => null
+    };
     globalThis.localStorage = {
         get length() { return values.size; },
         key(index) { return [...values.keys()][index] || null; },
@@ -298,7 +305,7 @@ test('opening another cloud board blocks edits while flushing and restores acces
     assert.equal(manager.isReadOnly, true);
     assert.deepEqual(readOnlyStates, [true]);
     resolveFlush(false);
-    await assert.rejects(opening, /尚未確認/);
+    await assert.rejects(opening, /尚未同步/);
     assert.equal(manager.isReadOnly, false);
     assert.deepEqual(readOnlyStates, [true, false]);
 });
@@ -369,7 +376,7 @@ test('returning to local restores autosave state when the saved local snapshot i
         _setReadOnly() {}
     });
 
-    await assert.rejects(manager.returnToLocal(), /invalid element record/i);
+    await assert.rejects(manager.returnToLocal(), /無效的白板物件/);
     assert.equal(app._skipAutosave, false);
     assert.equal(app.autosaveKey, 'cloud-board-key');
     assert.equal(manager.isCloudBoard, true);
@@ -406,7 +413,7 @@ test('returning to local blocks edits until cloud changes are acknowledged', asy
     manager.onLocalChange();
     assert.equal(manager.syncTimer ?? null, null);
     resolveFlush(false);
-    await assert.rejects(pendingReturn, /尚未確認/);
+    await assert.rejects(pendingReturn, /尚未同步/);
     assert.equal(manager.isReadOnly, false);
     assert.equal(manager.isCloudBoard, true);
     assert.equal(manager.connection, connection);
