@@ -866,6 +866,43 @@ test('matrix clipboard rows retain blanks, quoted values, and tabular newlines',
     assert.deepEqual(parsePastedMatrixRows('a"b\t9'), [['a"b', '9']]);
 });
 
+test('spreadsheet quotes preserve trailing backslashes without swallowing adjacent cells', () => {
+    const values = ['plain', 'a b', 'a\tb', 'a\nb', 'say "hi"', 'a\\b',
+        'tab\tend\\', 'quote\\"', 'line\nend\\', ''];
+    const encode = value => /[\t\n\r"]/.test(value)
+        ? '"' + value.replace(/"/g, '""') + '"'
+        : value;
+    for (const first of values) for (const second of values) {
+        const input = [first, second].map(encode).join('\t');
+        assert.deepEqual(parsePastedMatrixRows(input), [[first, second]], input);
+    }
+    const matrix = new MatrixElement();
+    assert.equal(matrix.setFromText('"first\nend\\"\t3\nlast\t4'), null);
+    assert.deepEqual(matrix.data, [['first\nend\\', '3'], ['last', '4']]);
+});
+
+test('single-column spreadsheet cells preserve physical newlines without a tab delimiter', () => {
+    const input = 'first\n"second\nline\\"\n"say ""hi"""';
+    const expected = [['first'], ['second\nline\\'], ['say "hi"']];
+    assert.deepEqual(parsePastedMatrixRows(input), expected);
+    const matrix = new MatrixElement();
+    assert.equal(matrix.setFromText(input), null);
+    assert.deepEqual(matrix.data, expected);
+    matrix.updateTextFromData();
+    assert.equal(matrix.setFromText(matrix.inputText), null);
+    assert.deepEqual(matrix.data, expected);
+});
+
+test('escaped JSON quotes do not turn ordinary matrix rows into a spreadsheet field', () => {
+    const matrix = new MatrixElement();
+    const expected = [['"', 'next'], ['last', 'cell']];
+    matrix.data = expected.map(row => [...row]);
+    matrix.rows = matrix.cols = 2;
+    matrix.updateTextFromData();
+    assert.equal(matrix.setFromText(matrix.inputText), null);
+    assert.deepEqual(matrix.data, expected);
+});
+
 test('multiline cell values fit as a centered block with consistent row spacing', () => {
     const drawn = [];
     const ctx = {
@@ -1073,6 +1110,53 @@ test('single-node contest trees honor explicit zero-based numbering', () => {
     const oneBased = new TreeElement();
     assert.equal(oneBased.buildFromText('1'), null);
     assert.equal(oneBased.root.value, '1');
+});
+
+test('single-node tree numbering survives JSON import and snapshot restoration', () => {
+    const tree = new TreeElement();
+    const app = {
+        elements: [], camera: { x: 0, y: 0, zoom: 1 },
+        selectionManager: { clear() {} }, renderer: { markDirty() {} }
+    };
+    for (const zeroBased of [true, false, true]) {
+        assert.equal(tree.buildFromText('1', 'auto', zeroBased), null);
+        const saved = JSON.parse(JSON.stringify(tree.serialize()));
+        assert.equal(saved.zeroBased, zeroBased);
+        validateWhiteboardElement(saved);
+        Serializer.loadJSONData(app, { elements: [saved] });
+        assert.equal(app.elements[0].root.value, zeroBased ? '0' : '1');
+        assert.equal(app.elements[0].zeroBased, zeroBased);
+        assert.deepEqual(app.elements[0].getConnectionPorts(), tree.getConnectionPorts());
+        delete saved.inputMode;
+        assert.equal(new TreeElement().deserialize(saved).root.value, zeroBased ? '0' : '1');
+    }
+});
+
+test('tree numbering follows source IDs while node labels remain editable', () => {
+    const tree = new TreeElement();
+    assert.equal(tree.buildFromText('2\n0 1'), null);
+    assert.equal(tree.zeroBased, true);
+    const legacy = tree.serialize();
+    delete legacy.zeroBased;
+    assert.equal(new TreeElement().deserialize(legacy).zeroBased, true);
+
+    assert.equal(tree.buildFromText('1'), null);
+    assert.equal(tree.setNodeValue(tree.root, '0'), true);
+    const restored = new TreeElement().deserialize(tree.serialize());
+    assert.equal(restored.root.value, '0');
+    assert.equal(restored.zeroBased, false);
+    assert.equal(tree.buildFromText('0\n1', 'parent'), null);
+    assert.equal(tree.zeroBased, false);
+});
+
+test('tree snapshots reject invalid numbering flags', () => {
+    const tree = new TreeElement();
+    tree.buildFromText('1');
+    for (const zeroBased of ['true', 1, null, {}]) {
+        const saved = { ...tree.serialize(), zeroBased };
+        assert.throws(() => validateWhiteboardElement(saved), /樹資料/);
+        assert.throws(() => new TreeElement().deserialize(saved), /numbering/);
+    }
 });
 
 test('tree input mode survives serialization for multiline value lists', () => {
@@ -2941,6 +3025,37 @@ test('matrix text input preserves tab-separated empty cells and rows', () => {
     ]);
 });
 
+test('matrix dialog input preserves multiline spreadsheet cells and quoting', () => {
+    const matrix = new MatrixElement();
+    const input = '"first\r\nsecond"\t"say ""hi"""\r\nlast\t4\r\n';
+    assert.equal(matrix.setFromText(input), null);
+    const expected = [['first\nsecond', 'say "hi"'], ['last', '4']];
+    assert.deepEqual(matrix.data, expected);
+    matrix.updateTextFromData();
+    assert.equal(matrix.setFromText(matrix.inputText), null);
+    assert.deepEqual(matrix.data, expected);
+});
+
+test('matrix tabular rows retain spaces and single-column values', () => {
+    const matrix = new MatrixElement();
+    assert.equal(matrix.setFromText('word\ntext with spaces\t4\n\nlast\t5'), null);
+    assert.deepEqual(matrix.data, [
+        ['word', ''], ['text with spaces', '4'], ['', ''], ['last', '5']
+    ]);
+});
+
+test('compact matrix grids keep emoji and composed Unicode characters intact', () => {
+    const matrix = new MatrixElement();
+    for (const character of ['😀', '👩‍💻', 'e\u0301']) {
+        assert.equal(matrix.setFromText(`${character}${character}\n${character}${character}`), null);
+        const expected = Array.from({ length: 2 }, () => [character, character]);
+        assert.deepEqual(matrix.data, expected);
+        matrix.updateTextFromData();
+        assert.equal(matrix.setFromText(matrix.inputText), null);
+        assert.deepEqual(matrix.data, expected);
+    }
+});
+
 test('matrix text round-trips multi-character values in one-cell rows', () => {
     for (const value of ['hello', '-12', '1.5', '👩‍💻', 'e\u0301']) {
         const matrix = new MatrixElement();
@@ -3009,5 +3124,17 @@ test('oversized single-character fills leave the matrix unchanged', () => {
     assert.equal(matrix.rows, 100);
     assert.equal(matrix.cols, 100);
     assert.deepEqual(matrix.data, previous);
+});
+
+test('single-column character fills include serialization quotes in the size limit', () => {
+    const matrix = new MatrixElement();
+    matrix.setFromText('200x1');
+    assert.match(matrix.setFromText('a' + '\u0301'.repeat(4998)), /1 MB/);
+    assert.ok(matrix.data.every(row => row[0] === ''));
+    assert.equal(matrix.inputText, '200x1');
+    assert.equal(matrix.setFromText('a' + '\u0301'.repeat(4996)), null);
+    matrix.updateTextFromData();
+    assert.equal(matrix.inputText.length, 999999);
+    validateWhiteboardElement(matrix.serialize());
 });
 

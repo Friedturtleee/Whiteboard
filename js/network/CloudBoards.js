@@ -1,5 +1,5 @@
 import { i18n } from '../ui/I18n.js';
-import { Serializer } from '../core/Serializer.js';
+import { Serializer } from '../core/Serializer.js?v=2';
 
 const CLOUD_CACHE_PREFIX = 'cp_whiteboard_cloud_v1';
 const CLOUD_ROLE_LABELS = { owner: 'Owner', editor: 'Editor', viewer: 'Viewer' };
@@ -548,7 +548,7 @@ export class CloudBoards {
                 throw new Error('開啟期間帳號已變更。請重新選取白板。');
             }
             if (connection.board.id !== board.id) throw new Error('分享連結與白板不相符。');
-            const { BoardCollaboration } = await import('./BoardCollaboration.js');
+            const { BoardCollaboration } = await import('./BoardCollaboration.js?v=2');
             if (!isCurrentOpen()) return false;
             if (!options.shareToken && (this.clerkIdentityRevision !== identityRevision ||
                 this.clerk?.user?.id !== requestedUserId)) return false;

@@ -1,8 +1,8 @@
 import * as Y from 'https://esm.sh/yjs@13.6.31?bundle';
 import * as encoding from 'https://esm.sh/lib0@0.2.117/encoding?bundle';
 import * as decoding from 'https://esm.sh/lib0@0.2.117/decoding?bundle';
-import { Serializer } from '../core/Serializer.js';
-import { validateWhiteboardElement } from '../core/WhiteboardElementValidation.js';
+import { Serializer } from '../core/Serializer.js?v=2';
+import { validateWhiteboardElement } from '../core/WhiteboardElementValidation.js?v=2';
 
 const MAX_ELEMENTS = 10000;
 const MAX_BOARD_BYTES = 25 * 1024 * 1024;

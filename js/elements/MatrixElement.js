@@ -2,7 +2,7 @@
  * MatrixElement — 2D matrix visualization for competitive programming.
  */
 import { Element } from '../core/Element.js';
-import { formatDataToken, splitDataTokens, parsePastedMatrixRows } from '../core/DataTokens.js';
+import { formatDataToken, splitDataTokens, parsePastedMatrixRows, isTabularMatrixInput } from '../core/DataTokens.js?v=2';
 import { drawCanvasCellText } from '../core/CanvasTextFit.js';
 
 const EMPTY_CELL = '\u3000';
@@ -15,10 +15,19 @@ const graphemeSegmenter = typeof Intl !== 'undefined' && typeof Intl.Segmenter =
     ? new Intl.Segmenter(undefined, { granularity: 'grapheme' })
     : null;
 
-function countCharacters(value) {
+function splitCharacters(value) {
     return graphemeSegmenter
-        ? Array.from(graphemeSegmenter.segment(value)).length
-        : Array.from(value).length;
+        ? Array.from(graphemeSegmenter.segment(value), item => item.segment)
+        : Array.from(value);
+}
+
+function formatMatrixCell(value, singleColumn) {
+    const token = formatDataToken(value);
+    const text = String(value ?? '');
+    // A one-cell row is otherwise ambiguous with a compact character grid.
+    return singleColumn && text.length > 1 && !/^\d+$/.test(text) && token === text
+        ? JSON.stringify(text)
+        : token;
 }
 
 function remapGridKeys(keys, axis, at, action) {
@@ -223,11 +232,11 @@ export class MatrixElement extends Element {
         const isSingleCharacter = singleValues.length === 1 &&
             (singleValue === ''
                 ? rawText === EMPTY_CELL
-                : countCharacters(singleValue) === 1);
+                : splitCharacters(singleValue).length === 1);
         if (this.rows > 0 && this.cols > 0 &&
             !rawText.includes('\t') && isSingleCharacter) {
             const value = singleValue === '' ? '' : singleValue;
-            const tokenLength = formatDataToken(value).length;
+            const tokenLength = formatMatrixCell(value, this.cols === 1).length;
             const expandedLength = this.rows * (this.cols * tokenLength + this.cols - 1) + this.rows - 1;
             if (expandedLength > MAX_MATRIX_INPUT_LENGTH) {
                 return '套用後資料不得超過 1 MB。';
@@ -247,10 +256,10 @@ export class MatrixElement extends Element {
 
         // Keep tabs because they separate spreadsheet cells, including empty ones.
         // U+3000 is also an intentional empty-cell marker.
-        const lines = rawText
-            .replace(/\r/g, '')
-            .split('\n')
-            .filter(line => !/^ *$/.test(line));
+        const tabular = isTabularMatrixInput(rawText);
+        const lines = tabular
+            ? parsePastedMatrixRows(rawText)
+            : rawText.replace(/\r/g, '').split('\n').filter(line => !/^ *$/.test(line));
 
         if (lines.length === 0) {
             this.inputText = rawText;
@@ -271,14 +280,14 @@ export class MatrixElement extends Element {
         let cols = 0;
         const data = [];
         for (let r = 0; r < lines.length; r++) {
-            let vals = lines[r].includes('\t')
-                ? parsePastedMatrixRows(lines[r])[0]
+            let vals = tabular
+                ? lines[r]
                 : splitDataTokens(lines[r]);
             // CP char grid detection (e.g. #.#.)
-            const startsWithQuotedValue = /^\s*"/.test(lines[r]);
-            if (!startsWithQuotedValue && vals.length === 1 && vals[0].length > 1 &&
+            const startsWithQuotedValue = !tabular && /^\s*"/.test(lines[r]);
+            if (!tabular && !startsWithQuotedValue && vals.length === 1 && vals[0].length > 1 &&
                 !/^\d+$/.test(vals[0])) {
-                vals = vals[0].split('');
+                vals = splitCharacters(vals[0]);
             }
             if (vals.length > MAX_MATRIX_COLS) {
                 return '矩陣最多支援 200 欄。';
@@ -304,19 +313,13 @@ export class MatrixElement extends Element {
         return null;
     }
 
+    getTextFromData(data = this.data) {
+        return data.map(row => row.map(value => formatMatrixCell(value, row.length === 1))
+            .join(' ')).join('\n');
+    }
+
     updateTextFromData() {
-        // Convert empty cells to the visual placeholder '　' when building the text representation
-        this.inputText = this.data
-            .map(row => row.map(value => {
-                const token = formatDataToken(value);
-                const text = String(value ?? '');
-                // A one-cell row is otherwise ambiguous with a compact character
-                // grid. Quote it so re-opening the editor preserves the cell.
-                return row.length === 1 && text.length > 1 && !/^\d+$/.test(text) && token === text
-                    ? JSON.stringify(text)
-                    : token;
-            }).join(' '))
-            .join('\n');
+        this.inputText = this.getTextFromData();
     }
 
     draw(ctx, camera) {

@@ -3,15 +3,15 @@
  */
 import { ShapeElement } from '../elements/ShapeElement.js';
 import { TextElement } from '../elements/TextElement.js';
-import { MatrixElement } from '../elements/MatrixElement.js';
+import { MatrixElement } from '../elements/MatrixElement.js?v=5';
 import { StackElement } from '../elements/StackElement.js';
 import { QueueElement } from '../elements/QueueElement.js';
 import { PenElement } from '../elements/PenElement.js';
 import { MermaidElement } from '../elements/MermaidElement.js';
 import { MarkdownElement } from '../elements/MarkdownElement.js';
-import { TreeElement } from '../tree/TreeElement.js';
+import { TreeElement } from '../tree/TreeElement.js?v=2';
 import { GraphElement } from '../graph/GraphElement.js';
-import { validateWhiteboardElement } from './WhiteboardElementValidation.js';
+import { validateWhiteboardElement } from './WhiteboardElementValidation.js?v=2';
 import { MIN_CAMERA_ZOOM, MAX_CAMERA_ZOOM } from '../canvas/Camera.js';
 
 const MAX_IMPORT_FILE_BYTES = 25 * 1024 * 1024;
@@ -255,6 +255,7 @@ export class Serializer {
                         !['tree', 'binary', 'bst', 'avl', 'rb', 'red-black', 'euler'].includes(ed.treeType)) ||
                     (ed.inputMode !== undefined &&
                         !['auto', 'rooted', 'parent', 'edge', 'values'].includes(ed.inputMode)) ||
+                    (ed.zeroBased !== undefined && typeof ed.zeroBased !== 'boolean') ||
                     (ed.nodeRadius !== undefined &&
                         (!Number.isFinite(ed.nodeRadius) || ed.nodeRadius <= 0 || ed.nodeRadius > 10000)) ||
                     (ed.hasWeights !== undefined && typeof ed.hasWeights !== 'boolean') ||

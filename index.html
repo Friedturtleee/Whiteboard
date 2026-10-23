@@ -8,7 +8,7 @@
     <script src="js/cloud-config.js"></script>
     <link rel="icon" type="image/svg+xml" href="costume1.svg">
     <link rel="stylesheet" href="css/colors.css">
-    <link rel="stylesheet" href="css/main.css">
+    <link rel="stylesheet" href="css/main.css?v=2">
     <link rel="stylesheet" href="css/toolbar.css">
     <link rel="stylesheet" href="css/panels.css">
     <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Material+Symbols+Outlined:opsz,wght,FILL,GRAD@20..48,100..700,0..1,-50..200">
@@ -632,7 +632,7 @@
         setProgress(20, 'Loading application…');
         const script = document.createElement('script');
         script.type = 'module';
-        script.src  = 'js/app.js?v=7';
+        script.src  = 'js/app.js?v=8';
         script.onload = () => {
             setProgress(90, 'Initializing…');
             appReady = true;

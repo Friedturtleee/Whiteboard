@@ -57,32 +57,88 @@ export function formatDataToken(value) {
     return /[\s,"\u3000]/u.test(text) ? JSON.stringify(text) : text;
 }
 
+function readJSONString(input, start) {
+    let escaped = false;
+    for (let end = start + 1; end < input.length; end++) {
+        const char = input[end];
+        if (escaped) escaped = false;
+        else if (char === '\\') escaped = true;
+        else if (char === '"') {
+            try { return { value: JSON.parse(input.slice(start, end + 1)), end: end + 1 }; }
+            catch { return null; }
+        }
+    }
+    return null;
+}
+
+/** Tabs and physical newlines inside quoted cells indicate spreadsheet input. */
+export function isTabularMatrixInput(text) {
+    const input = String(text);
+    if (input.includes('\t')) return true;
+    let quoted = false, atRowStart = true;
+    for (let index = 0; index < input.length; index++) {
+        const char = input[index];
+        const newline = char === '\n' || char === '\r';
+        if (quoted) {
+            if (newline) return true;
+            if (char === '"') {
+                if (input[index + 1] === '"') index++;
+                else quoted = false;
+            }
+        } else if (newline) atRowStart = true;
+        else {
+            if (atRowStart && char === '"') {
+                const json = readJSONString(input, index);
+                if (json && (json.end === input.length || /[\s,]/.test(input[json.end]))) {
+                    index = json.end - 1;
+                } else quoted = true;
+            }
+            atRowStart = false;
+        }
+    }
+    return false;
+}
+
 /** Read CP whitespace input or tabular clipboard text, retaining empty cells. */
 export function parsePastedMatrixRows(text) {
     const input = String(text).replace(/\r\n?/g, '\n').replace(/\n+$/, '');
-    if (!input.includes('\t')) return input.split('\n').map(row => splitDataTokens(row));
-    const rows = [], row = [];
-    let field = '', quoted = false, escaped = false;
-    const flush = () => {
-        let value = field;
-        if (field.startsWith('"') && field.endsWith('"')) {
-            try { value = JSON.parse(field); }
-            catch { value = field.slice(1, -1).replace(/""/g, '"'); }
+    if (!isTabularMatrixInput(input)) return input.split('\n').map(row => splitDataTokens(row));
+    const boundary = index => index === input.length || input[index] === '\t' || input[index] === '\n';
+    const readQuoted = start => {
+        // Whiteboard copies use JSON strings. Accept one only when it ends at
+        // a cell boundary; spreadsheet quoting uses doubled quotes instead.
+        const json = readJSONString(input, start);
+        if (json && boundary(json.end)) return json;
+
+        let value = '';
+        for (let end = start + 1; end < input.length; end++) {
+            const char = input[end];
+            if (char === '"') {
+                if (input[end + 1] === '"') { value += '"'; end++; continue; }
+                if (boundary(end + 1)) return { value, end: end + 1 };
+                // Preserve a malformed quoted field as entered.
+                while (!boundary(++end)) {}
+                return { value: input.slice(start, end), end };
+            }
+            value += char;
         }
-        row.push(value === '\u3000' ? '' : value);
-        field = ''; escaped = false;
+        return { value: input.slice(start), end: input.length };
     };
-    for (const char of input) {
-        if (!quoted && (char === '\t' || char === '\n')) {
-            flush();
-            if (char === '\n') { rows.push(row.splice(0)); }
-            continue;
+    const rows = [], row = [];
+    let start = 0;
+    while (start <= input.length) {
+        let field;
+        if (input[start] === '"') field = readQuoted(start);
+        else {
+            let end = start;
+            while (!boundary(end)) end++;
+            field = { value: input.slice(start, end), end };
         }
-        if (char === '"' && !escaped && (quoted || field === '' ||
-            (field.startsWith('"') && field.endsWith('"')))) quoted = !quoted;
-        field += char;
-        escaped = char === '\\' && !escaped;
+        row.push(field.value === '\u3000' ? '' : field.value);
+        if (field.end === input.length) break;
+        if (input[field.end] === '\n') rows.push(row.splice(0));
+        start = field.end + 1;
     }
-    flush(); rows.push(row);
+    rows.push(row);
     return rows;
 }

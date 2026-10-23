@@ -15,19 +15,19 @@ import { SelectionManager } from './core/SelectionManager.js';
 import { LayerManager } from './core/LayerManager.js';
 import { Transform } from './core/Transform.js';
 import { History } from './core/History.js';
-import { Serializer } from './core/Serializer.js';
-import { formatDataToken, splitDataTokens, parsePastedMatrixRows } from './core/DataTokens.js';
+import { Serializer } from './core/Serializer.js?v=2';
+import { formatDataToken, splitDataTokens, parsePastedMatrixRows } from './core/DataTokens.js?v=2';
 
 // ── Elements ────────────────────────────────────────────
 import { ShapeElement } from './elements/ShapeElement.js';
 import { TextElement } from './elements/TextElement.js';
-import { MatrixElement } from './elements/MatrixElement.js?v=4';
+import { MatrixElement } from './elements/MatrixElement.js?v=5';
 import { StackElement } from './elements/StackElement.js';
 import { QueueElement } from './elements/QueueElement.js';
 import { PenElement } from './elements/PenElement.js';
 import { MermaidElement } from './elements/MermaidElement.js';
 import { MarkdownElement } from './elements/MarkdownElement.js';
-import { TreeElement } from './tree/TreeElement.js';
+import { TreeElement } from './tree/TreeElement.js?v=2';
 import { GraphElement } from './graph/GraphElement.js';
 
 // ── UI ──────────────────────────────────────────────────
@@ -37,7 +37,7 @@ import { LayerPanel } from './ui/LayerPanel.js';
 import { TextInputDialog } from './ui/TextInputDialog.js';
 import { initInterface } from './ui/Interface.js';
 import { bindModal } from './ui/Modal.js';
-import { CloudBoards } from './network/CloudBoards.js';
+import { CloudBoards } from './network/CloudBoards.js?v=2';
 import { i18n } from './ui/I18n.js';
 
 const isEmptyDataStructureInput = value => {
@@ -48,11 +48,10 @@ const MAX_DATA_STRUCTURE_INPUT_LENGTH = 1_000_000;
 
 function inlineDataInputLength(element, index, value) {
     if (element.type === 'matrix') {
-        return element.data
-            .map((row, rowIndex) => row.map((item, colIndex) => formatDataToken(
-                rowIndex === index.row && colIndex === index.col ? value : item
-            )).join(' '))
-            .join('\n').length;
+        const data = element.data.map((row, rowIndex) => rowIndex === index.row
+            ? row.map((item, colIndex) => colIndex === index.col ? value : item)
+            : row);
+        return element.getTextFromData(data).length;
     }
     return element.items.map((item, itemIndex) => formatDataToken(
         itemIndex === index ? value : item
@@ -62,7 +61,7 @@ function inlineDataInputLength(element, index, value) {
 // ═════════════════════════════════════════════════════════
 // Application Singleton
 // ═════════════════════════════════════════════════════════
-class App {
+export class App {
     constructor() {
         // ── State ───────────────────────────────────────
         this.elements = [];
@@ -1300,7 +1299,7 @@ class App {
         }
         el.deserialize(JSON.parse(JSON.stringify(snapshot)));
         this.layerManager._reindex();
-        this.renderer.markDirty();
+        this._updateConnectedLines([el.id]);
     }
 
     // ═════════════════════════════════════════════════════
@@ -1443,7 +1442,7 @@ class App {
             newData[row][col] = values.length === 1 ? values[0] : values[index];
         });
         if (cells.every(([row, col]) => oldData[row][col] === newData[row][col])) return null;
-        const newText = newData.map(row => row.map(formatDataToken).join(' ')).join('\n');
+        const newText = el.getTextFromData(newData);
         if (newText.length > MAX_DATA_STRUCTURE_INPUT_LENGTH) return '輸入資料不得超過 1 MB。已保留原值。';
         const apply = data => {
             el.data = data.map(row => [...row]); el.updateTextFromData(); this.renderer.markDirty();
@@ -1825,7 +1824,6 @@ class App {
             ? '輸入矩陣資料；單一字元會填滿全部格子。'
             : '數值以空格或換行分隔。\n例：1 2 3 4 5';
         const oldText = el.inputText || '';
-        const oldInputIsEmpty = isEmptyDataStructureInput(oldText);
         const originalState = JSON.parse(JSON.stringify(el.serialize()));
         const originalIndex = this.elements.indexOf(el);
         const restoreOriginal = () => this._restoreElementSnapshot(el, originalState, originalIndex);
@@ -1837,14 +1835,12 @@ class App {
             onInput: (text) => {
                 if (isEmptyDataStructureInput(text)) return;
                 const error = el.setFromText(text);
-                if (!error) this.renderer.markDirty();
+                if (!error) this._updateConnectedLines([el.id]);
                 return error;
             },
             onCancel: () => {
                 if (isNew) {
                     this._discardPendingElementCreation(el);
-                } else if (oldInputIsEmpty) {
-                    this._deleteElement(el);
                 } else {
                     restoreOriginal();
                     this.selectionManager.clear();
@@ -1868,7 +1864,7 @@ class App {
                 if (isEmptyDataStructureInput(text) || (el.width === 0 && el.height === 0)) {
                     if (isNew) {
                         this._discardPendingElementCreation(el);
-                    } else if (!oldInputIsEmpty) {
+                    } else {
                         this.history.push({
                             description: `Delete ${el.type}`,
                             undo: restoreOriginal,
@@ -1881,6 +1877,7 @@ class App {
                     return;
                 }
                 this.toolbar.setTool('select');
+                this._updateConnectedLines([el.id]);
                 if (oldText !== text) {
                     const newState = JSON.parse(JSON.stringify(el.serialize()));
                     this.history.push({
@@ -1915,6 +1912,7 @@ class App {
         const originalText = el.inputText || '';
         const originalType = el.treeType;
         const originalMode = el.inputMode || 'auto';
+        const originalZeroBased = el.zeroBased;
         const originalState = JSON.parse(JSON.stringify(el.serialize()));
         const originalIndex = this.elements.indexOf(el);
         const restoreOriginal = () => this._restoreElementSnapshot(el, originalState, originalIndex);
@@ -1932,7 +1930,7 @@ class App {
             showTypeSelect: true,
             showZeroBasedCheckbox: true,
             zeroBasedModes: ['auto'],
-            zeroBased: el.root?.value === '0',
+            zeroBased: originalZeroBased,
             types: [
                 { value: 'tree', label: '一般樹', selected: el.treeType === 'tree' },
                 { value: 'binary', label: '二元樹', selected: el.treeType === 'binary' },
@@ -1952,14 +1950,13 @@ class App {
                 if (type) el.treeType = type;
                 const error = el.buildFromText(text, mode || 'auto', zeroBased);
                 if (!type || error) el.treeType = prevType;
+                if (!error) this._updateConnectedLines([el.id]);
                 this.renderer.markDirty();
                 return error;
             },
             onCancel: () => {
                 if (isNew) {
                     this._discardPendingElementCreation(el);
-                } else if (!originalText.trim()) {
-                    this._deleteElement(el);
                 } else {
                     restoreOriginal();
                     this.selectionManager.clear();
@@ -1968,9 +1965,19 @@ class App {
                 this._refreshUI();
             },
             onConfirm: (text, type, mode, _directed, zeroBased) => {
+                if (!isNew && originalText === text && originalType === (type || originalType) &&
+                    originalMode === (mode || 'auto') &&
+                    (originalMode !== 'auto' || originalZeroBased === zeroBased)) {
+                    restoreOriginal();
+                    this.toolbar.setTool('select');
+                    this.renderer.markDirty();
+                    this._refreshUI();
+                    this._fitView([el]);
+                    return;
+                }
                 const prevType = el.treeType;
                 if (type) el.treeType = type;
-                const error = el.buildFromText(text, mode || 'auto', zeroBased);
+                const error = text.trim() ? el.buildFromText(text, mode || 'auto', zeroBased) : null;
                 if (error) {
                     el.treeType = prevType;
                     return error;
@@ -1978,7 +1985,7 @@ class App {
                 if (!text.trim() || (el.width === 0 && el.height === 0)) {
                     if (isNew) {
                         this._discardPendingElementCreation(el);
-                    } else if (originalText.trim()) {
+                    } else {
                         this.history.push({
                             description: 'Delete Tree',
                             undo: restoreOriginal,
@@ -1991,8 +1998,13 @@ class App {
                     return;
                 }
                 this.toolbar.setTool('select');
-                if (originalText !== text || originalType !== el.treeType ||
-                    originalMode !== el.inputMode) {
+                const changed = originalText !== text || originalType !== el.treeType ||
+                    originalMode !== el.inputMode || originalZeroBased !== el.zeroBased;
+                // Preview parsing rebuilds the tree and clears inline overrides.
+                // Confirming the original input must retain those edits.
+                if (!isNew && !changed) restoreOriginal();
+                this._updateConnectedLines([el.id]);
+                if (changed) {
                     const newState = JSON.parse(JSON.stringify(el.serialize()));
                     this.history.push({
                         description: 'Edit Tree',
@@ -2053,14 +2065,13 @@ class App {
             onInput: (text, _type, _mode, directed, zeroBased, graphMode) => {
                 if (!text.trim()) return;
                 const error = el.buildFromText(text, directed, zeroBased, graphMode);
+                if (!error) this._updateConnectedLines([el.id]);
                 this.renderer.markDirty();
                 return error;
             },
             onCancel: () => {
                 if (isNew) {
                     this._discardPendingElementCreation(el);
-                } else if (!originalText.trim()) {
-                    this._deleteElement(el);
                 } else {
                     restoreOriginal();
                     this.selectionManager.clear();
@@ -2069,13 +2080,22 @@ class App {
                 this._refreshUI();
             },
             onConfirm: (text, _type, _mode, directed, zeroBased, graphMode) => {
+                if (!isNew && originalText === text && originalDirected === directed &&
+                    originalZeroBased === zeroBased && originalGraphMode === graphMode) {
+                    restoreOriginal();
+                    this.toolbar.setTool('select');
+                    this.renderer.markDirty();
+                    this._refreshUI();
+                    this._fitView([el]);
+                    return;
+                }
                 const error = el.buildFromText(text, directed, zeroBased, graphMode);
                 if (error) return error;
                 
                 if (!text.trim() || (el.width === 0 && el.height === 0)) {
                     if (isNew) {
                         this._discardPendingElementCreation(el);
-                    } else if (originalText.trim()) {
+                    } else {
                         this.history.push({
                             description: 'Delete Graph',
                             undo: restoreOriginal,
@@ -2089,10 +2109,13 @@ class App {
                 }
                 this.toolbar.setTool('select');
                 
-                if (originalText !== text ||
+                const changed = originalText !== text ||
                     originalDirected !== directed ||
                     originalZeroBased !== zeroBased ||
-                    originalGraphMode !== graphMode) {
+                    originalGraphMode !== graphMode;
+                if (!isNew && !changed) restoreOriginal();
+                this._updateConnectedLines([el.id]);
+                if (changed) {
                     const newState = JSON.parse(JSON.stringify(el.serialize()));
                     this.history.push({
                         description: 'Edit Graph',
@@ -3658,10 +3681,9 @@ class App {
             return;
         }
         
-        // Convert to string and set
-        const newText = newMatrixData.map(row => row.join(' ')).join('\n');
-        data.inputText = newText;
+        // Use the editor's format so negative and decimal one-cell rows remain intact.
         data.data = newMatrixData.map(row => row.map(String));
+        data.inputText = el.getTextFromData(data.data);
         data.rows = newMatrixData.length;
         data.cols = (newMatrixData[0] || []).length;
         
@@ -3859,8 +3881,10 @@ class App {
 }
 
 // ── Boot ────────────────────────────────────────────────
-i18n.start();
-const app = new App();
+if (typeof window !== 'undefined' && typeof document !== 'undefined') {
+    i18n.start();
+    const app = new App();
 
-// Expose for debugging
-window.__whiteboard = app;
+    // Expose for debugging
+    window.__whiteboard = app;
+}

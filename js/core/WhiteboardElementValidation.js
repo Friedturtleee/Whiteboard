@@ -171,6 +171,7 @@ export function validateWhiteboardElement(ed) {
         if (typeof ed.inputText !== 'string' || ed.inputText.length > MAX_IMPORTED_TEXT_LENGTH ||
             (ed.treeType !== undefined && !['tree', 'binary', 'bst', 'avl', 'rb', 'red-black', 'euler'].includes(ed.treeType)) ||
             (ed.inputMode !== undefined && !['auto', 'rooted', 'parent', 'edge', 'values'].includes(ed.inputMode)) ||
+            (ed.zeroBased !== undefined && typeof ed.zeroBased !== 'boolean') ||
             (ed.nodeRadius !== undefined && (!Number.isFinite(ed.nodeRadius) || ed.nodeRadius <= 0 || ed.nodeRadius > 10000)) ||
             (ed.hasWeights !== undefined && typeof ed.hasWeights !== 'boolean') ||
             ['_relOffsetX', '_relOffsetY'].some(field => ed[field] !== undefined &&

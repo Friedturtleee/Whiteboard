@@ -5,7 +5,7 @@
  */
 import { i18n } from '../ui/I18n.js';
 import { Element } from '../core/Element.js';
-import { MAX_TREE_INPUT_LENGTH, MAX_TREE_NODES, TreeParser } from './TreeParser.js';
+import { MAX_TREE_INPUT_LENGTH, MAX_TREE_NODES, TreeParser } from './TreeParser.js?v=2';
 import { TreeLayout } from './TreeLayout.js';
 import { TreeRenderer } from './TreeRenderer.js';
 
@@ -28,6 +28,7 @@ export class TreeElement extends Element {
         this.nodeRadius = 18;
         this.inputText = '';
         this.inputMode = 'auto';
+        this.zeroBased = false;
         this.label = 'Tree';
         this.hasWeights = false;
         this._nodeValueOverrides = {};
@@ -91,6 +92,7 @@ export class TreeElement extends Element {
         this._nodePortIdsByNode = this._captureNodePortIds(this.root);
         this.inputText = input;
         this.inputMode = mode;
+        this.zeroBased = result.zeroBased === true;
         this.hasWeights = result.hasWeights || false;
         this._nodeValueOverrides = {};
         this._edgeWeightOverrides = {};
@@ -623,6 +625,7 @@ export class TreeElement extends Element {
             nodeRadius: this.nodeRadius,
             inputText: this.inputText,
             inputMode: this.inputMode,
+            zeroBased: this.zeroBased,
             hasWeights: this.hasWeights,
             nodeValueOverrides: { ...this._nodeValueOverrides },
             edgeWeightOverrides: { ...this._edgeWeightOverrides },
@@ -636,6 +639,7 @@ export class TreeElement extends Element {
         // Reused elements (especially those updated by remote sync) must not
         // keep nodes or offsets from an older snapshot when the source is empty.
         this.root = null;
+        this.zeroBased = false;
         this._nodePortIdsByNode = new Map();
         this._nextDynamicNodePortId = 0;
         this._offsetX = undefined;
@@ -657,20 +661,23 @@ export class TreeElement extends Element {
         if (!['auto', 'rooted', 'parent', 'edge', 'values'].includes(this.inputMode)) {
             throw new TypeError('Saved tree input mode is invalid.');
         }
+        if (data.zeroBased !== undefined && typeof data.zeroBased !== 'boolean') {
+            throw new TypeError('Saved tree numbering is invalid.');
+        }
         this.hasWeights = data.hasWeights || false;
         this._relOffsetX = data._relOffsetX;
         this._relOffsetY = data._relOffsetY;
         // Rebuild tree from saved text
         if (this.inputText) {
             let error;
-            if (data.inputMode === undefined) {
+            if (data.inputMode === undefined && data.zeroBased !== true) {
                 // Before the mode selector was saved, the editor wrote rooted
                 // parent/child rows. Prefer that interpretation when valid so
                 // undirected auto-detection cannot silently change the root.
                 error = this.buildFromText(this.inputText, 'rooted');
                 if (error) error = this.buildFromText(this.inputText, 'auto');
             } else {
-                error = this.buildFromText(this.inputText, this.inputMode);
+                error = this.buildFromText(this.inputText, this.inputMode, data.zeroBased === true);
             }
             if (error) throw new TypeError('Saved tree data is invalid: ' + error);
             // Restore relative offsets

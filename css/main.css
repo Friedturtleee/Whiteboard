@@ -75,6 +75,7 @@ html, body {
 
 /* ===== Common UI ===== */
 button {
+    font-family: inherit;
     background: var(--bg-tertiary);
     color: var(--text-primary);
     border: 1px solid var(--border-color);
@@ -92,6 +93,7 @@ button:active {
 }
 
 select, input[type="number"], input[type="text"] {
+    font-family: inherit;
     background: var(--bg-tertiary);
     color: var(--text-primary);
     border: 1px solid var(--border-color);

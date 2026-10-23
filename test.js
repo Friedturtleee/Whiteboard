@@ -75,6 +75,10 @@ try {
     await page.waitForSelector('#main-canvas');
     await page.waitForFunction(() => Boolean(window.__whiteboard), { timeout: 15000 });
     const pageLocale = await page.evaluate(() => document.documentElement.lang);
+    const initialEditorLabel = await page.$eval('#text-edit-overlay', element => element.getAttribute('aria-label'));
+    if (initialEditorLabel !== translateText('文字編輯器', pageLocale)) {
+        throw new Error('The initial text editor must have a localized accessible name.');
+    }
     const duplicateIds = await page.evaluate(() => {
         const ids = [...document.querySelectorAll('[id]')].map(element => element.id);
         return [...new Set(ids.filter((id, index) => ids.indexOf(id) !== index))];
@@ -766,7 +770,10 @@ try {
         while (markdown._rendering && Date.now() < deadline) {
             await new Promise(resolve => setTimeout(resolve, 25));
         }
-        if (!markdown.img) return { ready: false };
+        if (!markdown.img) return {
+            ready: false, rendering: markdown._rendering,
+            fontStatus: document.fonts.status, limitNotice: markdown._renderLimitNotice
+        };
         const canvas = document.createElement('canvas');
         canvas.width = Math.ceil(markdown.width);
         canvas.height = Math.ceil(markdown.height);
@@ -912,6 +919,7 @@ try {
         ]);
         const app = window.__whiteboard;
         const matrix = new MatrixElement(20, 20);
+        matrix.setFromText('1x1');
         matrix.setFromText('7');
         app.elements.push(matrix);
         app.layerManager._reindex();
@@ -943,7 +951,7 @@ try {
         return { matrixCellCleared, matrixRestored, matrixRedone, queueDeleted, queueRestored, queueRedone };
     });
     if (Object.values(historyRoundTrip).some(value => !value)) {
-        throw new Error('A data-structure delete/undo/redo browser check failed.');
+        throw new Error('A data-structure delete/undo/redo browser check failed: ' + JSON.stringify(historyRoundTrip));
     }
     const inlineEditing = await page.evaluate(async () => {
         const [

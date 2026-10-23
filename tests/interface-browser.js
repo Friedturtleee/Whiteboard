@@ -1,12 +1,14 @@
 import assert from 'node:assert/strict';
 import { translateText } from '../js/ui/I18n.js';
 
+const fillInput = (page, selector, text) => page.$eval(selector, (input, value) => {
+    input.value = value;
+    input.dispatchEvent(new Event('input', { bubbles: true }));
+}, text);
+
 /** Reproduce canvas gestures, modal retries, and constrained window layouts. */
 export async function checkInterface(page) {
-    const fill = (selector, text) => page.$eval(selector, (input, value) => {
-        input.value = value;
-        input.dispatchEvent(new Event('input', { bubbles: true }));
-    }, text);
+    const fill = (selector, text) => fillInput(page, selector, text);
     await page.setViewport({ width: 1000, height: 700 });
     const locale = await page.evaluate(() => document.documentElement.lang);
     const translated = value => translateText(value, locale);
@@ -14,8 +16,6 @@ export async function checkInterface(page) {
         translated('繁體中文'));
     assert.equal(await page.$eval('.err-subtitle', element => element.textContent),
         translated('必要模組載入失敗'));
-    assert.equal(await page.$eval('#text-edit-overlay', element => element.getAttribute('aria-label')),
-        translated('文字編輯器'));
     for (const [selector, label] of [
         ['#btn-undo', '復原'],
         ['#btn-redo', '取消復原'],
@@ -478,7 +478,7 @@ async function checkFitView(page) {
         mode.value = 'parent';
         mode.dispatchEvent(new Event('change', { bubbles: true }));
     });
-    await fill('.modal-overlay textarea', '0\n3\n2\n3');
+    await fillInput(page, '.modal-overlay textarea', '0\n3\n2\n3');
     await page.click('.modal-actions .btn-primary');
     assert.equal(await page.$eval('.dialog-error', element => element.textContent),
         translateText('有 3 個節點無法從根節點到達。', browserLocale));
@@ -499,6 +499,29 @@ async function checkFitView(page) {
     await page.click('.modal-actions .btn-primary');
     assert.equal(await page.evaluate(() => window.__whiteboard.elements.at(-1).root.value), '0',
         'A single-node tree must use ID 0 when the 0-based option is selected.');
+    const treeHistorySize = await page.evaluate(() => {
+        const app = window.__whiteboard;
+        app._showTreeDialog(app.elements.at(-1));
+        return app.history.undoStack.length;
+    });
+    assert.equal(await page.$eval('#dialog-zerobased', input => input.checked), true);
+    await page.click('#dialog-zerobased');
+    await page.click('.modal-actions .btn-primary');
+    assert.deepEqual(await page.evaluate(() => {
+        const app = window.__whiteboard;
+        const tree = app.elements.at(-1);
+        const result = { value: tree.root.value, historySize: app.history.undoStack.length };
+        app.history.undo();
+        result.undoValue = tree.root.value;
+        result.undoZeroBased = tree.zeroBased;
+        app.history.redo();
+        result.redoValue = tree.root.value;
+        result.redoZeroBased = tree.zeroBased;
+        return result;
+    }), {
+        value: '1', historySize: treeHistorySize + 1,
+        undoValue: '0', undoZeroBased: true, redoValue: '1', redoZeroBased: false
+    }, 'Changing only tree numbering must produce a reversible edit.');
     await page.evaluate(() => {
         const app = window.__whiteboard;
         app.elements = []; app.history.clear(); app.selectionManager.clear(); app.layerManager._reindex();

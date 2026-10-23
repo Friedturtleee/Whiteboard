@@ -202,7 +202,7 @@ export class TreeParser {
         if (visited.size !== n) {
             return invalid('有 ' + (n - visited.size) + ' 個節點無法從節點 ' + rootId + ' 到達。');
         }
-        return { root, nodes, error: null, hasWeights, format: 'contest' };
+        return { root, nodes, error: null, hasWeights, format: 'contest', zeroBased: startId === 0 };
     }
 
     /**
