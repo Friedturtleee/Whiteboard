@@ -235,7 +235,6 @@ export class TextInputDialog {
         errorMessage.className = 'dialog-error';
         errorMessage.setAttribute('role', 'alert');
         errorMessage.hidden = true;
-        textarea.setAttribute('aria-describedby', errorMessage.id);
         const showError = error => {
             errorMessage.textContent = typeof error === 'string' ? error : '';
             errorMessage.hidden = !errorMessage.textContent;
@@ -251,6 +250,7 @@ export class TextInputDialog {
             graphMode: graphModeSelect ? graphModeSelect.value : 'edge-list'
         });
         const formatHint = document.createElement('p');
+        formatHint.id = 'text-input-dialog-format-hint';
         formatHint.className = 'dialog-format-hint';
         const updatePlaceholder = () => {
             const placeholder = opts.getPlaceholder?.(_getValues()) || opts.placeholder || '請輸入資料…';
@@ -262,6 +262,7 @@ export class TextInputDialog {
             }
         };
         updatePlaceholder();
+        textarea.setAttribute('aria-describedby', `${formatHint.id} ${errorMessage.id}`);
 
         // Real-time preview — debounced
         const _fireInput = () => {

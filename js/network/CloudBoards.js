@@ -199,7 +199,7 @@ export class CloudBoards {
                 }
                 const recoveryKeys = cloudKeys.filter(key => key.endsWith('_recovery'));
                 const recoverySnapshots = new Set(recoveryKeys.map(key => key.slice(0, -'_recovery'.length)));
-                if (recoveryKeys.length && !confirm('未同步草稿仍保存在此瀏覽器。共用裝置請先下載或清除草稿。確定登出？')) return;
+                if (recoveryKeys.length && !confirm('未同步草稿仍保存在此瀏覽器。請先下載或清除，再登出；共用裝置請留意。確定登出？')) return;
                 await this.clerk?.signOut();
                 for (const key of cloudKeys) {
                     if (!key.endsWith('_recovery') && !recoverySnapshots.has(key)) localStorage.removeItem(key);
@@ -262,6 +262,17 @@ export class CloudBoards {
         return i18n.t(CLOUD_ROLE_LABELS[role] || role);
     }
 
+    _formatDate(value) {
+        const locale = i18n.locale === 'zh-TW' ? 'zh-TW' : 'en-US';
+        return new Date(value).toLocaleString(locale);
+    }
+
+    _refreshLocalizedDates() {
+        for (const date of document.querySelectorAll('time.cloud-board-updated[datetime]')) {
+            date.textContent = this._formatDate(date.dateTime);
+        }
+    }
+
     async _renderPanel() {
         const renderRevision = ++this.panelRenderRevision;
         const modal = this.modal;
@@ -283,7 +294,7 @@ export class CloudBoards {
         if (this.accountRecoveryPending) {
             this._setIdentity(identity, this.clerk?.user, '帳號已切換');
             if (signOutButton) signOutButton.hidden = !this.clerk?.user;
-            errorBox.textContent = '舊帳號仍有未匯出的白板草稿。請先匯出 JSON，或返回本機並放棄草稿。';
+            errorBox.textContent = '舊帳號仍有草稿。請先匯出 JSON，或返回本機並放棄草稿。';
             if (saveButton) saveButton.disabled = true;
             list.replaceChildren(make('p', 'cloud-muted', '復原期間已停用雲端操作，以防止跨帳號存取。'));
             return;
@@ -365,10 +376,13 @@ export class CloudBoards {
         const row = make('article', 'cloud-board-row');
         const info = make('div', 'cloud-board-info');
         const metadata = make('span', 'cloud-muted');
+        const updatedAt = new Date(board.updated_at);
+        const date = make('time', 'cloud-board-updated', this._formatDate(board.updated_at));
+        date.dateTime = Number.isFinite(updatedAt.getTime()) ? updatedAt.toISOString() : '';
         metadata.append(
             make('span', '', this._roleLabel(board.role)),
             make('span', '', ' · '),
-            make('span', '', new Date(board.updated_at).toLocaleString())
+            date
         );
         info.append(make('strong', 'whiteboard-user-content', board.title), metadata);
         const buttons = make('div', 'cloud-board-actions');
@@ -431,7 +445,7 @@ export class CloudBoards {
             const seedData = this._snapshot();
             clearTimeout(this.syncTimer);
             if (this.connection && !previousReadOnly && !await this.connection.flush()) {
-                throw new Error('最後修改尚未同步；同步完成前無法建立副本。');
+                throw new Error('修改尚未同步，請同步完成後再建立副本。');
             }
             const ownerToken = await this._token();
             if (this.clerkIdentityRevision !== identityRevision || clerk.user?.id !== ownerUserId) {
@@ -443,7 +457,7 @@ export class CloudBoards {
             createdBoard = board;
             createdBoardToken = ownerToken;
             if (this.clerkIdentityRevision !== identityRevision || clerk.user?.id !== ownerUserId) {
-                throw new Error('建立白板期間帳號已變更，系統正以原帳號清理新白板。');
+                throw new Error('建立期間帳號已切換，正以原帳號清理新白板。');
             }
             await this.openBoard({ ...board, role: 'owner' }, null, { seedData });
             this.closePanel();
@@ -484,7 +498,7 @@ export class CloudBoards {
         }
         const requestedUserId = options.shareToken ? null : (this.clerk?.user?.id || null);
         if (requestedUserId && this._hasCloudRecoveryDraft(requestedUserId, board.id)) {
-            throw new Error('此白板有未同步草稿。請先下載 JSON 或清除草稿，再開啟雲端版本。');
+            throw new Error('此白板尚未同步。請下載 JSON 或清除草稿，再開啟雲端版。');
         }
         const previousReadOnly = this.isCloudBoard
             ? this.activeBoard?.role === 'viewer'
@@ -516,7 +530,7 @@ export class CloudBoards {
             }
             clearTimeout(this.syncTimer);
             if (this.connection && !previousReadOnly && !await this.connection.flush()) {
-                throw new Error('最後修改尚未同步。請恢復連線或匯出資料，再切換白板。');
+                throw new Error('修改尚未同步。請恢復連線或匯出資料，再切換白板。');
             }
             if (!isCurrentOpen()) return false;
             // Tickets expire quickly. Request one only after the previous board has
@@ -635,7 +649,7 @@ export class CloudBoards {
             return true;
         } catch (error) {
             console.warn('[Cloud recovery]', error);
-            this.app._toast('雲端權限已變更，但無法保存本機草稿。請立即匯出 JSON。', 6500);
+            this.app._toast('權限已變更，草稿未能保存在本機。請立即匯出 JSON。', 6500);
             return false;
         }
     }
@@ -708,7 +722,7 @@ export class CloudBoards {
     async returnToLocal({ skipFlush = false } = {}) {
         this.boardOpenRevision++;
         if (this.accountRecoveryPending &&
-            !confirm('此白板含尚未同步的舊帳號修改。請先匯出 JSON，再返回本機並離開復原畫面。確定返回？')) {
+            !confirm('舊帳號修改尚未同步。請先匯出 JSON，再返回本機白板。確定返回？')) {
             return false;
         }
         const previousReadOnly = this.isCloudBoard
@@ -737,7 +751,7 @@ export class CloudBoards {
         }
         if (!acknowledged) {
             restoreEditAccess();
-            throw new Error('最後修改尚未同步。請恢復同步或匯出資料，再返回本機。');
+            throw new Error('修改尚未同步。請恢復連線或匯出後，再返回本機白板。');
         }
         // Restore and validate the local snapshot before disconnecting. Import
         // builds off-canvas, so a damaged snapshot leaves the cloud board intact.
@@ -831,7 +845,7 @@ export class CloudBoards {
             this.isReadOnly = true;
             this.statusOverride = '帳號已切換。請先匯出尚未同步的白板 JSON。';
             this._setReadOnly(true);
-            this.app._toast('白板過大，無法保存本機復原草稿。畫面已設為唯讀，請立即匯出 JSON。', 6500);
+            this.app._toast('白板過大，無法保存在本機。已設為唯讀，請匯出 JSON。', 6500);
             if (this.modal?.isConnected) this._renderPanel().catch(error => this._showError(error));
             return;
         }
@@ -856,7 +870,7 @@ export class CloudBoards {
                 }
             } catch {}
         } else {
-            this.app._toast('帳號已切換。最後修改尚未同步，草稿已保存在原帳號的本機。', 5500);
+            this.app._toast('帳號已切換。未同步修改已存為舊帳號的本機草稿。', 5500);
         }
     }
 
@@ -1042,7 +1056,7 @@ export class CloudBoards {
     }
 
     async manageSharing(board) {
-        const action = prompt('操作編號：1 建立唯讀連結；2 新增／更新成員；3 管理連結；4 管理成員。');
+        const action = prompt('分享選項：1 建立唯讀連結；2 邀請／更新成員；3 管理連結；4 管理成員。');
         if (action === null) return;
         if (action === '1') {
             const daysText = prompt('連結有效天數（1–90）：', '7');
@@ -1072,7 +1086,7 @@ export class CloudBoards {
             const response = await this._api(`/api/boards/${board.id}/links`);
             const liveLinks = (response.links || []).filter(link => !link.revoked_at && link.expires_at > Date.now());
             if (!liveLinks.length) return this.app._toast('目前沒有有效的分享連結。');
-            const choice = prompt(`輸入要撤銷的連結編號：\n${liveLinks.map((link, index) => `${index + 1}. 到期 ${new Date(link.expires_at).toLocaleString()} (${link.id})`).join('\n')}`);
+            const choice = prompt(`輸入要撤銷的連結編號：\n${liveLinks.map((link, index) => `${index + 1}. 到期 ${this._formatDate(link.expires_at)} (${link.id})`).join('\n')}`);
             const index = Number(choice) - 1;
             if (Number.isInteger(index) && liveLinks[index]) {
                 await this._api(`/api/boards/${board.id}/links/${liveLinks[index].id}`, { method: 'DELETE' });
@@ -1088,7 +1102,7 @@ export class CloudBoards {
             const index = Number(choice) - 1;
             if (!Number.isInteger(index) || !members[index]) return;
             const member = members[index];
-            const operation = prompt(`輸入 remove 移除成員，或 editor / viewer 更改權限。\n${member.email_address || member.user_id}`, member.role);
+            const operation = prompt(`輸入 remove 移除；輸入 editor 或 viewer 設定權限。\n${member.email_address || member.user_id}`, member.role);
             if (operation === 'remove') {
                 await this._api(`/api/boards/${board.id}/members/${encodeURIComponent(member.user_id)}`, { method: 'DELETE' });
                 this.app._toast('成員已移除。');

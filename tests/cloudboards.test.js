@@ -118,7 +118,7 @@ test('cloud account names are wrapped as user content', () => {
     }
 });
 
-test('cloud board roles follow the selected language without translating the title or date', () => {
+test('cloud board roles follow the selected language without translating board titles', () => {
     const previousDocument = globalThis.document;
     const previousLocale = i18n.locale;
     globalThis.document = { createElement: () => fakeNode() };
@@ -138,6 +138,40 @@ test('cloud board roles follow the selected language without translating the tit
         i18n.locale = 'en';
         assert.equal(manager._roleLabel('viewer'), 'Viewer');
     } finally {
+        i18n.locale = previousLocale;
+        if (previousDocument === undefined) delete globalThis.document;
+        else globalThis.document = previousDocument;
+    }
+});
+
+test('cloud board dates follow the selected interface language', () => {
+    const previousDocument = globalThis.document;
+    const previousLocale = i18n.locale;
+    const nativeToLocaleString = Date.prototype.toLocaleString;
+    const requestedLocales = [];
+    let dateLabel;
+    Date.prototype.toLocaleString = function (locale) {
+        requestedLocales.push(locale);
+        return `date:${locale}`;
+    };
+    globalThis.document = {
+        createElement: () => fakeNode(),
+        querySelectorAll: () => dateLabel ? [dateLabel] : []
+    };
+
+    try {
+        const manager = Object.create(CloudBoards.prototype);
+        i18n.locale = 'en';
+        const row = manager._boardRow({ id: 'board_a', title: 'Owner', role: 'owner', updated_at: 0 });
+        dateLabel = row.children[0].children[1].children[2];
+        assert.equal(dateLabel.textContent, 'date:en-US');
+        assert.equal(dateLabel.dateTime, new Date(0).toISOString());
+        i18n.locale = 'zh-TW';
+        manager._refreshLocalizedDates();
+        assert.equal(dateLabel.textContent, 'date:zh-TW');
+        assert.deepEqual(requestedLocales, ['en-US', 'zh-TW']);
+    } finally {
+        Date.prototype.toLocaleString = nativeToLocaleString;
         i18n.locale = previousLocale;
         if (previousDocument === undefined) delete globalThis.document;
         else globalThis.document = previousDocument;
@@ -451,7 +485,7 @@ test('opening a cloud board is blocked while its unsynced recovery draft is pend
     try {
         await assert.rejects(
             manager.openBoard({ id: boardId, role: 'owner' }),
-            /未同步草稿/
+            /尚未同步/
         );
         assert.equal(appTouched, false);
     } finally {

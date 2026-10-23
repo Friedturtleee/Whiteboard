@@ -307,7 +307,15 @@ export class MatrixElement extends Element {
     updateTextFromData() {
         // Convert empty cells to the visual placeholder '　' when building the text representation
         this.inputText = this.data
-            .map(row => row.map(formatDataToken).join(' '))
+            .map(row => row.map(value => {
+                const token = formatDataToken(value);
+                const text = String(value ?? '');
+                // A one-cell row is otherwise ambiguous with a compact character
+                // grid. Quote it so re-opening the editor preserves the cell.
+                return row.length === 1 && text.length > 1 && !/^\d+$/.test(text) && token === text
+                    ? JSON.stringify(text)
+                    : token;
+            }).join(' '))
             .join('\n');
     }
 

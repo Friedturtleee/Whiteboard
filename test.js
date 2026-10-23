@@ -5,6 +5,7 @@ import { fileURLToPath } from 'node:url';
 import express from 'express';
 import puppeteer from 'puppeteer';
 import { checkInterface } from './tests/interface-browser.js';
+import { translateText } from './js/ui/I18n.js';
 
 const app = express();
 app.use(express.static(fileURLToPath(new URL('.', import.meta.url))));
@@ -73,6 +74,7 @@ try {
     }
     await page.waitForSelector('#main-canvas');
     await page.waitForFunction(() => Boolean(window.__whiteboard), { timeout: 15000 });
+    const pageLocale = await page.evaluate(() => document.documentElement.lang);
     const duplicateIds = await page.evaluate(() => {
         const ids = [...document.querySelectorAll('[id]')].map(element => element.id);
         return [...new Set(ids.filter((id, index) => ids.indexOf(id) !== index))];
@@ -173,7 +175,7 @@ try {
     if (!cameraAutosave) {
         throw new Error('Panning the canvas must persist the updated camera in autosave data.');
     }
-    const importAutosave = await page.evaluate(async () => {
+    const importAutosave = await page.evaluate(async importedLabel => {
         const app = window.__whiteboard;
         const key = app.autosaveKey;
         const previousRaw = localStorage.getItem(key);
@@ -183,7 +185,7 @@ try {
         localStorage.removeItem(key);
         const toastSeen = new Promise(resolve => {
             const findToast = () => [...document.querySelectorAll('.toast')]
-                .some(toast => toast.textContent.includes('已匯入'));
+                .some(toast => toast.textContent.includes(importedLabel));
             const observer = new MutationObserver(() => {
                 if (findToast()) {
                     observer.disconnect();
@@ -219,7 +221,7 @@ try {
         else localStorage.setItem(key, previousRaw);
         return Boolean(showedImportToast && saved?.elements?.length === 1 &&
             saved.camera?.x === 11 && saved.camera?.y === 22 && saved.camera?.zoom === 1.75);
-    });
+    }, translateText('已匯入', pageLocale));
     if (!importAutosave) {
         throw new Error('A successfully imported board must be saved before the import flow finishes.');
     }

@@ -408,7 +408,7 @@ export class TreeParser {
                 }
             }
             if (visited.size < nodes.size) {
-                errors.push(`有 ${nodes.size - visited.size} 個節點無法從根到達`);
+                errors.push(`有 ${nodes.size - visited.size} 個節點無法從根節點到達。`);
             }
         }
 

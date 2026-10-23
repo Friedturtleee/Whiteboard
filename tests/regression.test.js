@@ -1,5 +1,8 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
+import { readFileSync, readdirSync, statSync } from 'node:fs';
+import { join, relative } from 'node:path';
+import { fileURLToPath } from 'node:url';
 import { QueueElement } from '../js/elements/QueueElement.js';
 import { StackElement } from '../js/elements/StackElement.js';
 import { MatrixElement } from '../js/elements/MatrixElement.js';
@@ -29,6 +32,7 @@ import { MarkdownElement } from '../js/elements/MarkdownElement.js';
 import { authorizeRequest, getRoomId } from '../server/src/auth.mjs';
 import { formatDataToken, splitDataTokens } from '../js/core/DataTokens.js';
 import { i18n, translateText } from '../js/ui/I18n.js';
+import { labelTooltipControls } from '../js/ui/Interface.js';
 
 function fakeI18nElement(className = '', childNodes = []) {
     const element = {
@@ -71,6 +75,60 @@ test('English is the default UI language and Traditional Chinese is selectable',
     assert.equal(translateText('Viewer', 'zh-TW'), '檢視者');
     assert.equal(translateText('帳號已切換。請先匯出尚未同步的白板 JSON。', 'en'), 'Account changed. Export the unsynced board as JSON first.');
     assert.equal(translateText('Settings', 'zh-TW'), '設定');
+    assert.equal(translateText('確認', 'en'), 'Confirm');
+    assert.equal(translateText('Confirm', 'zh-TW'), '確認');
+    assert.equal(translateText('套用', 'en'), 'Apply');
+    assert.equal(translateText('Apply', 'zh-TW'), '套用');
+    assert.equal(translateText('改名', 'en'), 'Rename board');
+    assert.equal(translateText('Rename board', 'zh-TW'), '改名');
+    assert.equal(translateText('Rename', 'zh-TW'), '重新命名');
+    assert.equal(translateText('樹資料格式無效。', 'en'), 'Tree data format is invalid.');
+    assert.equal(translateText('Tree data format is invalid.', 'zh-TW'), '樹資料格式無效。');
+    assert.equal(translateText('切換白板前，請先匯出或清除舊帳號的復原草稿。', 'en'), 'Before switching boards, export or clear the previous account\'s recovery draft.');
+    assert.equal(translateText('Before switching boards, export or clear the previous account\'s recovery draft.', 'zh-TW'), '切換白板前，請先匯出或清除舊帳號的復原草稿。');
+    assert.equal(translateText('編輯矩陣'), 'Edit matrix');
+    assert.equal(translateText('繁體中文'), 'Traditional Chinese');
+    assert.equal(translateText('必要模組載入失敗'), 'A required module failed to load');
+    assert.equal(translateText('Traditional Chinese', 'zh-TW'), '繁體中文');
+    assert.equal(translateText('A required module failed to load', 'zh-TW'), '必要模組載入失敗');
+    assert.equal(translateText('編輯堆疊'), 'Edit stack');
+    assert.equal(translateText('編輯佇列'), 'Edit queue');
+    assert.equal(translateText('編輯文字'), 'Edit text');
+    assert.equal(translateText('文字編輯器'), 'Text editor');
+    assert.equal(translateText('編輯儲存格內容'), 'Edit cell content');
+    assert.equal(translateText('Markdown 編輯器'), 'Markdown editor');
+    assert.equal(translateText('Markdown 原始碼'), 'Markdown source');
+    assert.equal(translateText('編輯矩陣內容'), 'Edit matrix content');
+    assert.equal(translateText('編輯堆疊內容'), 'Edit stack content');
+    assert.equal(translateText('編輯佇列內容'), 'Edit queue content');
+    assert.equal(translateText('輸入矩陣資料；單一字元會填滿全部格子。'), 'Enter matrix data. One character fills every cell.');
+    assert.equal(translateText('Enter matrix data. One character fills every cell.', 'zh-TW'), '輸入矩陣資料；單一字元會填滿全部格子。');
+    assert.equal(translateText('數值以空格或換行分隔。'), 'Separate values with spaces or new lines.');
+    assert.equal(translateText('編輯選取的 3 格'), 'Edit 3 selected cells');
+    assert.equal(translateText('單一值填滿所有選取格；或輸入 3 個值。'), 'One value fills all selected cells; enter 3 values to set them individually.');
+    assert.equal(translateText('輸入 1 個值套用全部，或輸入 3 個值。'), 'Enter one value for all selected cells or enter 3 values.');
+    assert.equal(translateText('例：1 2 3'), 'Example: 1 2 3');
+    assert.equal(translateText('Example: 1 2 3', 'zh-TW'), '例：1 2 3');
+    assert.equal(translateText('Edit 3 selected cells', 'zh-TW'), '編輯選取的 3 格');
+    assert.equal(translateText('編輯選取的 3 格內容', 'en'), 'Edit values in 3 selected cells');
+    assert.equal(translateText('Edit values in 3 selected cells', 'zh-TW'), '編輯選取的 3 格內容');
+    assert.equal(translateText('Edit queue content', 'zh-TW'), '編輯佇列內容');
+    assert.equal(translateText('Edit cell content', 'zh-TW'), '編輯儲存格內容');
+    assert.equal(translateText('N M 後接 M 行邊：u v [w]', 'en'), 'N M followed by M edges: u v [w]');
+    assert.equal(translateText('第 1 行權重須為有限數值。', 'en'), 'Weight on line 1 must be a finite number.');
+    assert.equal(translateText('Weight on line 1 must be a finite number.', 'zh-TW'), '第 1 行權重須為有限數值。');
+    assert.equal(translateText('標頭宣告 1 條邊，實際有 0 行。', 'en'), 'Header declares 1 edge, but 0 rows were found.');
+    assert.equal(translateText('Header declares 1 edge, but 0 rows were found.', 'zh-TW'), '標頭宣告 1 條邊，實際有 0 行。');
+    assert.equal(translateText('有 1 個節點無法從根節點到達。', 'en'), '1 node is unreachable from the root.');
+    assert.equal(translateText('1 node is unreachable from the root.', 'zh-TW'), '有 1 個節點無法從根節點到達。');
+    assert.equal(translateText('1 node is unreachable from node 4.', 'zh-TW'), '有 1 個節點無法從節點 4 到達。');
+    assert.equal(translateText('1 node is disconnected.', 'zh-TW'), '有 1 個節點無法連通。');
+    assert.equal(translateText('鄰接列表須有 1 行非空資料。', 'en'), 'Adjacency list must contain 1 non-empty row.');
+    assert.equal(translateText('Adjacency list must contain 1 non-empty row.', 'zh-TW'), '鄰接列表須有 1 行非空資料。');
+    assert.equal(translateText('N=2 時，需提供 1 條邊。', 'en'), 'For N=2, provide 1 edge.');
+    assert.equal(translateText('For N=2, provide 1 edge.', 'zh-TW'), 'N=2 時，需提供 1 條邊。');
+    assert.equal(translateText('Tree edge data limit: 20000 rows.', 'zh-TW'), '樹邊資料上限為 20000 行。');
+    assert.equal(translateText('Node IDs on line 3 must be positive integers.', 'zh-TW'), '第 3 行節點編號須為正整數。');
     assert.equal(translateText('N 後接 N−1 行：u v [w]', 'en'), 'N followed by N−1 edges: u v [w]');
     assert.equal(translateText('第 2 行格式錯誤，應為 u v [w]。', 'en'), 'Invalid format on line 2. Expected u v [w].');
     assert.equal(translateText('第 2 行格式錯誤，應為 父節點 子節點 [w]。', 'en'), 'Invalid format on line 2. Expected parent child [w].');
@@ -78,6 +136,8 @@ test('English is the default UI language and Traditional Chinese is selectable',
     assert.equal(translateText('標頭宣告 2 條邊，實際有 1 行。', 'en'), 'Header declares 2 edges, but 1 row was found.');
     assert.equal(translateText('第 2 行鄰居數宣告 1，實際有 0 個。', 'en'), 'Line 2 declares 1 neighbor but has 0 neighbors.');
     assert.equal(translateText('Selected 3 cells', 'zh-TW'), '已選取 3 格');
+    assert.equal(translateText('已選取 1 格', 'en'), 'Selected 1 cell');
+    assert.equal(translateText('Selected 1 cell', 'zh-TW'), '已選取 1 格');
     assert.equal(translateText('第 3 行：鄰居數 須為非負整數。', 'en'), 'Line 3: neighbor count must be a non-negative integer.');
     assert.equal(translateText('Line 3: neighbor count must be a non-negative integer.', 'zh-TW'), '第 3 行：鄰居數 須為非負整數。');
     assert.equal(translateText('未知的圖輸入格式：edge-list', 'en'), 'Unknown graph input format: edge-list');
@@ -85,6 +145,425 @@ test('English is the default UI language and Traditional Chinese is selectable',
     assert.equal(translateText('Markdown is too large to render. Shorten it to show the canvas preview.', 'zh-TW'), 'Markdown 資料過大，無法產生畫布預覽；請縮短內容。');
     assert.equal(translateText('確定清除「草稿」的未同步草稿？此操作無法復原。', 'en'), 'Clear unsynced draft “草稿”? This cannot be undone.');
     assert.equal(translateText('N 後接 N−1 行：u v [w]\n例：\n4\n1 2', 'en'), 'N followed by N−1 edges: u v [w]\nExample:\n4\n1 2');
+});
+
+test('translation dictionary has no conflicting reverse labels', () => {
+    const source = readFileSync(new URL('../js/ui/I18n.js', import.meta.url), 'utf8');
+    const dictionary = source.match(/const translationLines = String\.raw`([\s\S]*?)`\.trim\(\)\.split\("\\n"\);/);
+    assert.ok(dictionary, 'translation dictionary must remain available for both-language switching');
+
+    const forward = new Map();
+    const reverse = new Map();
+    for (const line of dictionary[1].split('\n')) {
+        const separator = line.indexOf('|');
+        if (separator < 0) continue;
+        const traditional = line.slice(0, separator);
+        const english = line.slice(separator + 1);
+        const previousEnglish = forward.get(traditional);
+        assert.ok(!previousEnglish || previousEnglish === english,
+            `${JSON.stringify(traditional)} maps to both ${JSON.stringify(previousEnglish)} and ${JSON.stringify(english)}`);
+        forward.set(traditional, english);
+        const previous = reverse.get(english);
+        assert.ok(!previous || previous === traditional,
+            `${JSON.stringify(english)} maps to both ${JSON.stringify(previous)} and ${JSON.stringify(traditional)}`);
+        reverse.set(english, traditional);
+        if (!traditional.includes('\\n') && !english.includes('\\n')) {
+            assert.equal(translateText(traditional, 'en'), english, `English translation for ${traditional}`);
+            assert.equal(translateText(english, 'zh-TW'), traditional, `Traditional Chinese translation for ${english}`);
+        }
+    }
+});
+
+test('static HTML interface text and labels have English translations', () => {
+    const html = readFileSync(new URL('../index.html', import.meta.url), 'utf8')
+        .replace(/<(script|style)\b[^>]*>[\s\S]*?<\/\1>/gi, '');
+    const strings = [];
+    for (const match of html.matchAll(/(aria-label|aria-description|title|placeholder|alt|data-tooltip)\s*=\s*(['\"])(.*?)\2/gs)) {
+        if (/\p{Script=Han}/u.test(match[3])) strings.push({ kind: match[1], value: match[3] });
+    }
+    for (const match of html.matchAll(/>([^<>]+)</g)) {
+        if (/\p{Script=Han}/u.test(match[1])) strings.push({ kind: 'text', value: match[1] });
+    }
+
+    const untranslated = strings.filter(({ value }) => translateText(value, 'en') === value);
+    const brokenRoundTrips = strings.filter(({ value }) =>
+        translateText(translateText(value, 'en'), 'zh-TW') !== value
+    );
+    assert.deepEqual(untranslated, []);
+    assert.deepEqual(brokenRoundTrips, []);
+});
+
+test('icon-only HTML buttons have accessible names', () => {
+    const html = readFileSync(new URL('../index.html', import.meta.url), 'utf8')
+        .replace(/<!--([\s\S]*?)-->/g, '');
+    const unlabeled = [];
+    for (const match of html.matchAll(/<button\b([^>]*)>([\s\S]*?)<\/button>/gi)) {
+        const [, attributes, content] = match;
+        if (!content.includes('material-symbols-outlined')) continue;
+        const visibleText = content
+            .replace(/<span\b[^>]*class=["'][^"']*material-symbols-outlined[^"']*["'][^>]*>[\s\S]*?<\/span>/gi, '')
+            .replace(/<[^>]*>/g, '')
+            .replace(/&(?:#\d+|#x[\da-f]+|[a-z]+);/gi, '')
+            .trim();
+        const ariaLabel = attributes.match(/\baria-label\s*=\s*(["'])(.*?)\1/i)?.[2];
+        if (!visibleText && !ariaLabel?.trim()) {
+            unlabeled.push(match[0].slice(0, 180));
+        }
+    }
+    assert.deepEqual(unlabeled, []);
+});
+
+test('visible static form controls have programmatic labels', () => {
+    const html = readFileSync(new URL('../index.html', import.meta.url), 'utf8')
+        .replace(/<(script|style)\b[^>]*>[\s\S]*?<\/\1>/gi, '');
+    const labels = [...html.matchAll(/<label\b([^>]*)>([\s\S]*?)<\/label>/gi)];
+    const labelFor = new Set(labels.map(([, attributes]) => attributes.match(/\bfor=["']([^"']+)["']/i)?.[1]).filter(Boolean));
+    const wrappedControls = new Set(labels.flatMap(([, , content]) =>
+        [...content.matchAll(/<(?:input|select|textarea)\b[^>]*\bid=["']([^"']+)["']/gi)].map((match) => match[1])));
+    const unlabeled = [];
+
+    for (const match of html.matchAll(/<(input|select|textarea)\b([^>]*)>/gi)) {
+        const [, tag, attributes] = match;
+        const get = name => attributes.match(new RegExp(`\\b${name}=["']([^"']*)["']`, 'i'))?.[1] ?? '';
+        const id = get('id');
+        if (/\b(?:display\s*:\s*none|visibility\s*:\s*hidden)/i.test(get('style'))) continue;
+        if (get('aria-label') || get('aria-labelledby') || (id && (labelFor.has(id) || wrappedControls.has(id)))) continue;
+        unlabeled.push({ tag, id, type: get('type') });
+    }
+
+    assert.deepEqual(unlabeled, []);
+});
+
+test('dynamic accessible names and placeholders have bilingual translations', () => {
+    const sourceRoot = fileURLToPath(new URL('../js/', import.meta.url));
+    const files = [];
+    const collect = directory => {
+        for (const name of readdirSync(directory)) {
+            if (name === 'node_modules') continue;
+            const path = join(directory, name);
+            if (statSync(path).isDirectory()) collect(path);
+            else if (name.endsWith('.js')) files.push(path);
+        }
+    };
+    collect(sourceRoot);
+    const patterns = [
+        /setAttribute\(['"]aria-label['"]\s*,\s*(['"`])((?:\\[\s\S]|(?!\1)[^\\])*)\1/gs,
+        /\.placeholder\s*=\s*(['"`])((?:\\[\s\S]|(?!\1)[^\\])*)\1/gs,
+        /\.title\s*=\s*(['"`])((?:\\[\s\S]|(?!\1)[^\\])*)\1/gs
+    ];
+    const decode = value => value.replace(/\\([nrt\\'"`])/g, (_, character) => ({
+        n: '\n', r: '\r', t: '\t', '\\': '\\', "'": "'", '"': '"', '`': '`'
+    })[character]);
+    const untranslated = [];
+
+    for (const file of files) {
+        const source = readFileSync(file, 'utf8');
+        for (const pattern of patterns) {
+            for (const match of source.matchAll(pattern)) {
+                const value = decode(match[2]);
+                if (!/\p{Script=Han}/u.test(value) || value.includes('${')) continue;
+                const english = translateText(value, 'en');
+                if (english === value || translateText(english, 'zh-TW') !== value) {
+                    untranslated.push({ file: relative(sourceRoot, file), value });
+                }
+            }
+        }
+    }
+
+    assert.deepEqual(untranslated, []);
+});
+
+test('explicit accessible names are preserved when tooltips are attached', () => {
+    const control = ({ tooltip, title, ariaLabel } = {}) => {
+        const attributes = new Map(ariaLabel ? [['aria-label', ariaLabel]] : []);
+        return {
+            dataset: tooltip ? { tooltip } : {},
+            title,
+            hasAttribute: name => attributes.has(name),
+            setAttribute: (name, value) => attributes.set(name, value),
+            getAttribute: name => attributes.get(name) ?? null,
+            querySelectorAll: () => []
+        };
+    };
+    const concise = control({ tooltip: '選取 (V)', ariaLabel: '選取' });
+    const inferred = control({ tooltip: '復原 (Ctrl+Z)' });
+    const empty = control({ tooltip: '放大 (Ctrl+=)', ariaLabel: ' ' });
+    const titled = control({ title: '上移' });
+    const emptyTitle = control({ title: '下移', ariaLabel: ' ' });
+    const root = {
+        querySelectorAll(selector) {
+            if (selector === '[data-tooltip]') return [concise, inferred, empty];
+            if (selector === 'button[title]') return [titled, emptyTitle];
+            return [];
+        }
+    };
+
+    labelTooltipControls(root);
+
+    assert.equal(concise.getAttribute('aria-label'), '選取');
+    assert.equal(inferred.getAttribute('aria-label'), '復原 (Ctrl+Z)');
+    assert.equal(empty.getAttribute('aria-label'), '放大 (Ctrl+=)');
+    assert.equal(titled.getAttribute('aria-label'), '上移');
+    assert.equal(emptyTitle.getAttribute('aria-label'), '下移');
+});
+
+test('dynamic color-picker labels translate without changing their values', () => {
+    for (const color of ['#b34d4d', '#aabbcc']) {
+        assert.equal(translateText('顏色 ' + color, 'en'), 'Color ' + color);
+        assert.equal(translateText('Color ' + color, 'zh-TW'), '顏色 ' + color);
+    }
+    for (const channel of ['R', 'G', 'B']) {
+        assert.equal(translateText(channel + ' 色彩分量', 'en'), channel + ' color component');
+        assert.equal(translateText(channel + ' color component', 'zh-TW'), channel + ' 色彩分量');
+    }
+});
+
+test('static user-facing messages have bilingual translations', () => {
+    const files = ['../js/app.js', '../js/network/CloudBoards.js', '../js/network/Collaboration.js'];
+    const callPattern = /(?:new\s+Error|alert|confirm|prompt|_toast)\s*\(\s*(['"`])((?:\\[\s\S]|(?!\1)[^\\])*)\1/gs;
+    const decodeString = value => value.replace(/\\([nrt\\'"`])/g, (_, character) => ({
+        n: '\n', r: '\r', t: '\t', '\\': '\\', "'": "'", '"': '"', '`': '`'
+    })[character]);
+    const untranslated = [];
+
+    for (const file of files) {
+        const source = readFileSync(new URL(file, import.meta.url), 'utf8');
+        for (const match of source.matchAll(callPattern)) {
+            const rawMessage = match[2];
+            if (rawMessage.includes('${')) continue;
+            const message = decodeString(rawMessage);
+            const english = translateText(message, 'en');
+            if (/\p{Script=Han}/u.test(message) &&
+                (english === message || translateText(english, 'zh-TW') !== message)) {
+                untranslated.push({ file, message });
+            }
+        }
+    }
+
+    assert.deepEqual(untranslated, []);
+});
+
+test('cloud and collaboration prompts translate in both languages', () => {
+    const messages = [
+        ['輸入協作房間編號：\n使用相同編號即可共同編輯。', 'Enter a collaboration room ID:\nUse the same ID to collaborate.'],
+        ['新的白板名稱：', 'New board name:'],
+        ['確定刪除白板「Demo」？', 'Delete board “Demo”?'],
+        ['雲端服務回應 503；新白板的清理尚未完成：雲端服務回應 500', 'Cloud service returned 503; cleanup of the new board is still pending: Cloud service returned 500'],
+        ['未同步草稿：', 'Unsynced draft:'],
+        ['分享選項：1 建立唯讀連結；2 邀請／更新成員；3 管理連結；4 管理成員。', 'Sharing: 1) Create read-only link; 2) Invite/update member; 3) Manage links; 4) Manage members.'],
+        ['連結有效天數（1–90）：', 'Link expiry in days (1–90):'],
+        ['唯讀分享連結：', 'Read-only share link:'],
+        ['輸入已註冊且驗證的帳號電子郵件：', 'Enter a verified account email:'],
+        ['權限（editor 或 viewer）：', 'Role (editor or viewer):'],
+        ['權限須為 editor 或 viewer。', 'Choose editor or viewer.'],
+        ['成員權限已新增或更新。對方須完成註冊與電子郵件驗證。', 'Member invited or updated. They must register and verify their email.'],
+        ['分享連結已撤銷。', 'Share link revoked.'],
+        ['目前沒有有效的分享連結。', 'No active share links.'],
+        ['目前沒有受邀成員。', 'No invited members.'],
+        ['成員已移除。', 'Member removed.'],
+        ['成員權限已更新。', 'Member role updated.'],
+        ['帳號已切換。未同步修改已存為舊帳號的本機草稿。', 'Account changed. Unsynced edits are saved locally under the previous account.'],
+        ['白板過大，無法保存在本機。已設為唯讀，請匯出 JSON。', 'This board is too large to save locally. It is read-only; export a JSON backup.'],
+        ['貼上資料不得超過 1 MB。', 'Pasted data must not exceed 1 MB.'],
+        ['貼上資料超出矩陣範圍，或每列欄數不一致。', 'Pasted data exceeds the matrix bounds or has inconsistent row widths.'],
+        ['輸入資料不得超過 1 MB。已保留原值。', 'Input exceeds 1 MB. Original value retained.'],
+        ['邊權重必須是有限數值。', 'Edge weight must be a finite number.'],
+        ['已匯出 JSON', 'JSON export complete.'],
+        ['發生未知錯誤。', 'An unknown error occurred.']
+    ];
+
+    for (const [traditional, english] of messages) {
+        assert.equal(translateText(traditional, 'en'), english, traditional);
+        assert.equal(translateText(english, 'zh-TW'), traditional, english);
+    }
+    assert.equal(translateText('1. user@example.com (編輯者)', 'en'), '1. user@example.com (Editor)');
+    assert.equal(translateText('1. user@example.com (Editor)', 'zh-TW'), '1. user@example.com (編輯者)');
+    assert.equal(translateText('貼上 1 個值，或剛好 3 個值。', 'en'), 'Paste one value or exactly 3 values.');
+    assert.equal(translateText('Paste one value or exactly 3 values.', 'zh-TW'), '貼上 1 個值，或剛好 3 個值。');
+    assert.equal(translateText('貼上 1 個值，或剛好 1 個值。', 'en'), 'Paste one value or exactly 1 value.');
+    assert.equal(translateText('Paste one value or exactly 1 value.', 'zh-TW'), '貼上 1 個值，或剛好 1 個值。');
+    assert.equal(translateText('1. 到期 tomorrow (link-id)', 'en'), '1. Expires tomorrow (link-id)');
+    assert.equal(translateText('1. Expires tomorrow (link-id)', 'zh-TW'), '1. 到期 tomorrow (link-id)');
+});
+
+test('graph and tree validation errors translate in both languages', () => {
+    const errors = [
+        [GraphParser.parse('2 1\nx 2').error, 'Node IDs on line 2 must be safe integers.'],
+        [GraphParser.parse('2\n9007199254740992 1 2\n0', false, false, 'adj-list').error, 'Line 2: neighbor count is out of range.'],
+        [GraphParser.parse('\n9007199254740992\n0', false, false, 'adj-list').error, 'Line 2: N is out of range.'],
+        [GraphParser.parse('\n2\nx\n0', false, false, 'adj-list').error, 'Line 3: neighbor count must be a non-negative integer.'],
+        [TreeParser.parseContestFormat(['2', 'x 2']).error, 'Node IDs on line 2 must be non-negative integers.'],
+        [TreeParser.parseContestFormat(['2', '1 1']).error, 'Self-edges are not allowed on line 2.'],
+        [TreeParser.autoDetectAndParse('0\n3\n2\n3').error, '3 nodes are unreachable from the root.']
+    ];
+
+    for (const [traditional, english] of errors) {
+        assert.equal(translateText(traditional, 'en'), english);
+        assert.equal(translateText(english, 'zh-TW'), traditional);
+    }
+});
+
+test('recovery draft label translates when it is an isolated text node', () => {
+    const previousLocale = i18n.locale;
+    const label = { nodeType: 3, data: '未同步草稿：', parentElement: null };
+    const parent = fakeI18nElement('', [label]);
+
+    try {
+        i18n.locale = 'en';
+        i18n.applyText(label);
+        assert.equal(label.data, 'Unsynced draft:');
+        i18n.locale = 'zh-TW';
+        i18n.applyText(label);
+        assert.equal(label.data, '未同步草稿：');
+    } finally {
+        i18n.locale = previousLocale;
+        label.parentElement = null;
+    }
+    assert.equal(parent.childNodes[0], label);
+});
+
+test('native prompts use the active language and preserve their default value', () => {
+    const previousLocale = i18n.locale;
+    const previousWindow = globalThis.window;
+    const calls = [];
+    globalThis.window = {
+        alert: message => calls.push(['alert', message]),
+        confirm: message => { calls.push(['confirm', message]); return true; },
+        prompt: (message, value) => { calls.push(['prompt', message, value]); return value; }
+    };
+
+    try {
+        i18n.locale = 'en';
+        i18n.patchNativeDialogs();
+        assert.equal(window.prompt('新的白板名稱：', 'Demo'), 'Demo');
+        assert.equal(window.confirm('確定刪除白板「Demo」？'), true);
+        i18n.locale = 'zh-TW';
+        assert.equal(window.prompt('New board name:', 'Demo'), 'Demo');
+        assert.deepEqual(calls, [
+            ['prompt', 'New board name:', 'Demo'],
+            ['confirm', 'Delete board “Demo”?'],
+            ['prompt', '新的白板名稱：', 'Demo']
+        ]);
+    } finally {
+        i18n.locale = previousLocale;
+        if (previousWindow === undefined) delete globalThis.window;
+        else globalThis.window = previousWindow;
+    }
+});
+
+test('textarea labels translate while user-entered content remains unchanged', () => {
+    const previousLocale = i18n.locale;
+    const previousDocument = globalThis.document;
+    const previousNodeFilter = globalThis.NodeFilter;
+    globalThis.document = { createTreeWalker: () => ({ nextNode: () => null }) };
+    globalThis.NodeFilter = { SHOW_TEXT: 4 };
+    const attributes = new Map([
+        ['aria-label', '編輯矩陣內容'],
+        ['placeholder', '請輸入資料…']
+    ]);
+    const textarea = {
+        nodeType: 1,
+        value: 'user-entered matrix data',
+        matches: () => false,
+        closest(selector) { return selector.includes('textarea') ? this : null; },
+        getAttribute(name) { return attributes.get(name) ?? null; },
+        setAttribute(name, value) { attributes.set(name, value); },
+        querySelectorAll: () => []
+    };
+    const textNode = { data: '使用者輸入', parentElement: textarea };
+    const editableAttributes = new Map([['aria-label', '使用者內容']]);
+    const editable = {
+        matches: () => false,
+        closest(selector) { return selector.includes("[contenteditable='true']") ? this : null; },
+        getAttribute(name) { return editableAttributes.get(name) ?? null; },
+        setAttribute(name, value) { editableAttributes.set(name, value); }
+    };
+
+    try {
+        i18n.locale = 'en';
+        i18n.apply(textarea);
+        i18n.applyAttributes(editable);
+        i18n.applyText(textNode);
+        assert.equal(attributes.get('aria-label'), 'Edit matrix content');
+        assert.equal(attributes.get('placeholder'), 'Enter data…');
+        assert.equal(editableAttributes.get('aria-label'), '使用者內容');
+        assert.equal(textNode.data, '使用者輸入');
+        assert.equal(textarea.value, 'user-entered matrix data');
+        i18n.locale = 'zh-TW';
+        i18n.apply(textarea);
+        assert.equal(attributes.get('aria-label'), '編輯矩陣內容');
+        assert.equal(attributes.get('placeholder'), '請輸入資料…');
+        assert.equal(textNode.data, '使用者輸入');
+        assert.equal(textarea.value, 'user-entered matrix data');
+    } finally {
+        i18n.locale = previousLocale;
+        if (previousDocument === undefined) delete globalThis.document;
+        else globalThis.document = previousDocument;
+        if (previousNodeFilter === undefined) delete globalThis.NodeFilter;
+        else globalThis.NodeFilter = previousNodeFilter;
+    }
+});
+
+test('Markdown preview labels translate while authored markup remains unchanged', () => {
+    const previousLocale = i18n.locale;
+    const previousDocument = globalThis.document;
+    const previousNodeFilter = globalThis.NodeFilter;
+    const previewAttributes = new Map([
+        ['aria-label', 'Markdown 預覽'],
+        ['title', '編輯文字']
+    ]);
+    const imageAttributes = new Map([
+        ['alt', '編輯文字'],
+        ['title', '編輯文字']
+    ]);
+    const previewText = { data: '使用者撰寫的內容', parentElement: null };
+    const preview = {
+        nodeType: 1,
+        className: 'markdown-preview-content',
+        matches: () => false,
+        closest(selector) { return selector.includes('.markdown-preview-content') ? this : null; },
+        getAttribute(name) { return previewAttributes.get(name) ?? null; },
+        setAttribute(name, value) { previewAttributes.set(name, value); },
+        querySelectorAll: () => [image]
+    };
+    const image = {
+        matches: () => false,
+        closest(selector) { return selector.includes('.markdown-preview-content') ? preview : null; },
+        getAttribute(name) { return imageAttributes.get(name) ?? null; },
+        setAttribute(name, value) { imageAttributes.set(name, value); }
+    };
+    previewText.parentElement = preview;
+    globalThis.document = {
+        createTreeWalker: () => {
+            let visited = false;
+            return { nextNode() { if (visited) return null; visited = true; return previewText; } };
+        }
+    };
+    globalThis.NodeFilter = { SHOW_TEXT: 4 };
+
+    try {
+        i18n.locale = 'en';
+        i18n.apply(preview);
+        assert.equal(previewAttributes.get('aria-label'), 'Markdown preview');
+        assert.equal(previewAttributes.get('title'), '編輯文字');
+        assert.equal(imageAttributes.get('alt'), '編輯文字');
+        assert.equal(imageAttributes.get('title'), '編輯文字');
+        assert.equal(previewText.data, '使用者撰寫的內容');
+
+        i18n.locale = 'zh-TW';
+        i18n.apply(preview);
+        assert.equal(previewAttributes.get('aria-label'), 'Markdown 預覽');
+        assert.equal(previewAttributes.get('title'), '編輯文字');
+        assert.equal(imageAttributes.get('alt'), '編輯文字');
+        assert.equal(imageAttributes.get('title'), '編輯文字');
+        assert.equal(previewText.data, '使用者撰寫的內容');
+    } finally {
+        i18n.locale = previousLocale;
+        if (previousDocument === undefined) delete globalThis.document;
+        else globalThis.document = previousDocument;
+        if (previousNodeFilter === undefined) delete globalThis.NodeFilter;
+        else globalThis.NodeFilter = previousNodeFilter;
+    }
 });
 
 test('changing the interface language updates and persists the setting', () => {
@@ -102,6 +581,7 @@ test('changing the interface language updates and persists the setting', () => {
     const root = fakeI18nElement();
     let storedLanguage = null;
     let statusRenderCount = 0;
+    let dateRefreshCount = 0;
     globalThis.NodeFilter = { SHOW_TEXT: 4 };
     globalThis.document = {
         body: {},
@@ -114,7 +594,10 @@ test('changing the interface language updates and persists the setting', () => {
         observe() {}
     };
     globalThis.localStorage = { setItem: (key, value) => { if (key === 'wb_language') storedLanguage = value; } };
-    globalThis.window = { appInstance: { cloudBoards: { _renderStatus() { statusRenderCount++; } } } };
+    globalThis.window = { appInstance: { cloudBoards: {
+        _renderStatus() { statusRenderCount++; },
+        _refreshLocalizedDates() { dateRefreshCount++; }
+    } } };
 
     try {
         i18n.start();
@@ -126,6 +609,7 @@ test('changing the interface language updates and persists the setting', () => {
         assert.equal(selector.value, 'zh-TW');
         assert.equal(storedLanguage, 'zh-TW');
         assert.equal(statusRenderCount, 1);
+        assert.equal(dateRefreshCount, 1);
 
         selector.value = 'en';
         selector.onChange();
@@ -133,6 +617,7 @@ test('changing the interface language updates and persists the setting', () => {
         assert.equal(selector.value, 'en');
         assert.equal(storedLanguage, 'en');
         assert.equal(statusRenderCount, 2);
+        assert.equal(dateRefreshCount, 2);
     } finally {
         i18n.locale = previousLocale;
         i18n.observer = previousObserver;
@@ -191,6 +676,35 @@ test('cloud identity labels translate while account names remain unchanged', () 
         else globalThis.document = previousDocument;
         if (previousNodeFilter === undefined) delete globalThis.NodeFilter;
         else globalThis.NodeFilter = previousNodeFilter;
+    }
+});
+
+test('layer action names translate without translating user-defined layer names', () => {
+    const previousLocale = i18n.locale;
+    const attributes = new Map([
+        ['aria-label', '選取 設定 #1'],
+        ['title', '設定 #1']
+    ]);
+    const layerText = { nodeType: 3, data: '設定 #1', parentElement: null };
+    const layerButton = fakeI18nElement('layer-name', [layerText]);
+    layerButton.getAttribute = name => attributes.get(name) ?? null;
+    layerButton.setAttribute = (name, value) => attributes.set(name, value);
+
+    try {
+        i18n.locale = 'en';
+        i18n.applyAttributes(layerButton);
+        i18n.applyText(layerText);
+        assert.equal(attributes.get('aria-label'), 'Select 設定 #1');
+        assert.equal(attributes.get('title'), '設定 #1');
+        assert.equal(layerText.data, '設定 #1');
+        i18n.locale = 'zh-TW';
+        i18n.applyAttributes(layerButton);
+        i18n.applyText(layerText);
+        assert.equal(attributes.get('aria-label'), '選取 設定 #1');
+        assert.equal(attributes.get('title'), '設定 #1');
+        assert.equal(layerText.data, '設定 #1');
+    } finally {
+        i18n.locale = previousLocale;
     }
 });
 
@@ -2427,6 +2941,18 @@ test('matrix text input preserves tab-separated empty cells and rows', () => {
     ]);
 });
 
+test('matrix text round-trips multi-character values in one-cell rows', () => {
+    for (const value of ['hello', '-12', '1.5', '👩‍💻', 'e\u0301']) {
+        const matrix = new MatrixElement();
+        assert.equal(matrix.setFromText('3x1'), null);
+        matrix.data = [[value], [value], [value]];
+        matrix.updateTextFromData();
+        assert.match(matrix.inputText, /^"/);
+        assert.equal(matrix.setFromText(matrix.inputText), null);
+        assert.deepEqual(matrix.data, [[value], [value], [value]], value);
+    }
+});
+
 test('a single character fills every cell without changing the matrix size', () => {
     const matrix = new MatrixElement();
     assert.equal(matrix.setFromText('1 2\n3 4'), null);
@@ -2454,6 +2980,13 @@ test('a single character fills a new matrix grid', () => {
     assert.equal(matrix.rows, 3);
     assert.equal(matrix.cols, 3);
     assert.deepEqual(matrix.data, Array.from({ length: 3 }, () => ['X', 'X', 'X']));
+});
+
+test('one composed Unicode character fills a new matrix grid', () => {
+    const matrix = new MatrixElement();
+    const character = '👩‍💻';
+    assert.equal(matrix.setFromText(character), null);
+    assert.deepEqual(matrix.data, Array.from({ length: 3 }, () => Array(3).fill(character)));
 });
 
 test('a single character creates one cell when the matrix is empty', () => {

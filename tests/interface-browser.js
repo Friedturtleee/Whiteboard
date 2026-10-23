@@ -1,4 +1,5 @@
 import assert from 'node:assert/strict';
+import { translateText } from '../js/ui/I18n.js';
 
 /** Reproduce canvas gestures, modal retries, and constrained window layouts. */
 export async function checkInterface(page) {
@@ -7,6 +8,129 @@ export async function checkInterface(page) {
         input.dispatchEvent(new Event('input', { bubbles: true }));
     }, text);
     await page.setViewport({ width: 1000, height: 700 });
+    const locale = await page.evaluate(() => document.documentElement.lang);
+    const translated = value => translateText(value, locale);
+    assert.equal(await page.$eval('#settings-language option[value=\"zh-TW\"]', element => element.textContent),
+        translated('繁體中文'));
+    assert.equal(await page.$eval('.err-subtitle', element => element.textContent),
+        translated('必要模組載入失敗'));
+    assert.equal(await page.$eval('#text-edit-overlay', element => element.getAttribute('aria-label')),
+        translated('文字編輯器'));
+    for (const [selector, label] of [
+        ['#btn-undo', '復原'],
+        ['#btn-redo', '取消復原'],
+        ['#btn-export-json', '匯出 JSON'],
+        ['#btn-import-json', '匯入 JSON'],
+        ['#btn-export-png', '匯出 PNG'],
+        ['#btn-cloud-boards', '帳號與雲端白板'],
+        ['#btn-settings', '設定'],
+        ['[data-tool="select"]', '選取'],
+        ['[data-tool="pan"]', '平移'],
+        ['[data-tool="rectangle"]', '矩形'],
+        ['[data-tool="circle"]', '圓形'],
+        ['[data-tool="line"]', '線段'],
+        ['[data-tool="arrow"]', '箭頭'],
+        ['[data-tool="text"]', '文字'],
+        ['[data-tool="markdown"]', 'Markdown'],
+        ['[data-tool="pen"]', '畫筆'],
+        ['[data-tool="matrix"]', '矩陣'],
+        ['[data-tool="stack"]', '堆疊'],
+        ['[data-tool="queue"]', '佇列'],
+        ['[data-tool="tree"]', '樹'],
+        ['[data-tool="graph"]', '圖論'],
+        ['#btn-zoom-out', '縮小'],
+        ['#zoom-display', '重置縮放為 100%'],
+        ['#btn-zoom-in', '放大'],
+        ['#btn-fit-view', '顯示全部'],
+        ['#layer-up', '上移'],
+        ['#layer-down', '下移']
+    ]) {
+        assert.equal(await page.$eval(selector, element => element.getAttribute('aria-label')), translated(label),
+            `${selector} must have a localized accessible name`);
+    }
+    const alternateLocale = locale === 'zh-TW' ? 'en' : 'zh-TW';
+    const languageLabels = [
+        ['#btn-fit-view', '顯示全部'],
+        ['[data-tool="select"]', '選取'],
+        ['#layer-up', '上移'],
+        ['#prop-x', 'X 位置']
+    ];
+    const setLanguage = language => page.evaluate(value => {
+        const selector = document.getElementById('settings-language');
+        selector.value = value;
+        selector.dispatchEvent(new Event('change', { bubbles: true }));
+    }, language);
+    await page.evaluate(async () => {
+        const { ShapeElement } = await import('/js/elements/ShapeElement.js');
+        const app = window.__whiteboard;
+        const layer = new ShapeElement(20, 20);
+        layer.label = '設定';
+        app.elements.push(layer);
+        app.layerManager._reindex();
+        app.layerPanel.update();
+    });
+    const userLayerName = await page.$eval('.layer-name', element => element.textContent);
+    const layerActionNames = [
+        ['.layer-name', '選取 '],
+        ['.layer-visibility', '圖層可見 '],
+        ['.layer-lock', '圖層鎖定 ']
+    ];
+    for (const [selector, prefix] of layerActionNames) {
+        assert.equal(await page.$eval(selector, element => element.getAttribute('aria-label')),
+            translateText(prefix + userLayerName, locale));
+    }
+    assert.equal(await page.$eval('.layer-name', element => element.getAttribute('title')), userLayerName);
+    await setLanguage(alternateLocale);
+    assert.equal(await page.evaluate(() => document.documentElement.lang), alternateLocale);
+    for (const [selector, label] of languageLabels) {
+        assert.equal(await page.$eval(selector, element => element.getAttribute('aria-label')),
+            translateText(label, alternateLocale), `${selector} must update its accessible name after a language change`);
+    }
+    for (const [selector, prefix] of layerActionNames) {
+        assert.equal(await page.$eval(selector, element => element.getAttribute('aria-label')),
+            translateText(prefix + userLayerName, alternateLocale));
+    }
+    assert.equal(await page.$eval('.layer-name', element => element.getAttribute('title')), userLayerName,
+        'A language change must leave the user-defined layer name unchanged.');
+    await setLanguage(locale);
+    for (const [selector, prefix] of layerActionNames) {
+        assert.equal(await page.$eval(selector, element => element.getAttribute('aria-label')),
+            translateText(prefix + userLayerName, locale));
+    }
+    for (const [id, label] of [
+        ['prop-x', 'X 位置'],
+        ['prop-y', 'Y 位置'],
+        ['prop-w', '寬度'],
+        ['prop-h', '高度'],
+        ['prop-rot', '旋轉角度']
+    ]) {
+        assert.equal(await page.$eval('#' + id, element => element.getAttribute('aria-label')), translated(label));
+        assert.deepEqual(await page.$eval('#' + id, element =>
+            [...element.parentElement.querySelectorAll('.num-spinners button')]
+                .map(button => button.getAttribute('aria-label'))),
+        [translated('增加' + label), translated('減少' + label)]);
+    }
+    for (const [id, label] of [
+        ['settings-grid-spacing', '格線間距'],
+        ['settings-pen-size', '預設筆刷大小'],
+        ['settings-pen-smoothing', '筆刷平滑度'],
+        ['settings-stroke-width', '預設線寬']
+    ]) {
+        assert.equal(await page.$eval('#' + id, element => element.getAttribute('aria-label')), translated(label));
+    }
+    for (const [id, label] of [
+        ['ctx-rename', '重新命名'],
+        ['ctx-duplicate', '複製'],
+        ['ctx-matrix-prefix', '轉換為前綴和'],
+        ['ctx-matrix-diff', '轉換為差分'],
+        ['ctx-layer-up', '上移一層'],
+        ['ctx-layer-down', '下移一層'],
+        ['ctx-bring-front', '移至最上層'],
+        ['ctx-send-back', '移至最下層'],
+        ['ctx-delete', '刪除']
+    ]) {
+        assert.equal(await page.$eval('#' + id + ' .ctx-label', element => element.textContent), translated(label));
+    }
     await page.evaluate(async () => {
         const app = window.__whiteboard;
         app._dismissPendingDialogs();
@@ -30,7 +154,7 @@ export async function checkInterface(page) {
     await page.mouse.up();
     assert.equal(await page.evaluate(() => window.__whiteboard.elements[0].selectedCells.size), 9,
         'Dragging across a matrix must select its rectangular cell range.');
-    assert.equal(await page.$eval('#selected-cells-status', el => el.textContent), '已選取 9 格');
+    assert.equal(await page.$eval('#selected-cells-status', el => el.textContent), translated('已選取 9 格'));
     await page.mouse.click(131, 131, { count: 2 });
     const batchOpened = await page.evaluate(() => ({
         open: Boolean(document.querySelector('.modal-overlay textarea')),
@@ -58,6 +182,14 @@ export async function checkInterface(page) {
     });
     await page.click('#property-panel .color-swatch-custom');
     await page.waitForSelector('.custom-color-popup');
+    assert.equal(await page.$eval('.custom-color-popup', element => element.getAttribute('aria-label')),
+        translated('自訂顏色'));
+    assert.equal(await page.$eval('.ccp-hex', element => element.getAttribute('aria-label')),
+        translated('十六進位色碼'));
+    assert.deepEqual(await page.$$eval('.custom-color-popup input[type="range"]', elements =>
+        elements.map(element => element.getAttribute('aria-label'))),
+    ['R', 'G', 'B'].map(channel => translated(channel + ' 色彩分量')));
+    assert.equal(await page.$eval('.ccp-apply', element => element.textContent), translated('套用'));
     const beforeColor = await page.evaluate(() => window.__whiteboard.elements[0].color);
     await fill('.ccp-hex', '#xyzxyz');
     assert.equal(await page.$eval('.ccp-apply', button => button.disabled), true);
@@ -68,19 +200,47 @@ export async function checkInterface(page) {
     assert.equal(await page.$('.custom-color-popup'), null);
 
     await page.evaluate(() => window.__whiteboard._createGraph(350, 100));
+    await page.evaluate(() => {
+        const mode = [...document.querySelectorAll('.modal-overlay select')]
+            .find(select => [...select.options].some(option => option.value === 'adj-list'));
+        if (!mode) throw new Error('Graph adjacency-list mode is unavailable.');
+        mode.value = 'adj-list';
+        mode.dispatchEvent(new Event('change', { bubbles: true }));
+    });
+    assert.equal(await page.$eval('.dialog-format-hint', element => element.textContent),
+        translated('N 後接 N 行：每行先填 M，再填 M 個鄰點編號。'));
+    await page.evaluate(() => {
+        const mode = [...document.querySelectorAll('.modal-overlay select')]
+            .find(select => [...select.options].some(option => option.value === 'adj-list'));
+        mode.value = 'edge-list';
+        mode.dispatchEvent(new Event('change', { bubbles: true }));
+    });
+    assert.equal(await page.$eval('.dialog-format-hint', element => element.textContent),
+        translated('N M 後接 M 行邊：u v [w]'));
+    await setLanguage(alternateLocale);
+    assert.equal(await page.$eval('.dialog-format-hint', element => element.textContent),
+        translateText('N M 後接 M 行邊：u v [w]', alternateLocale));
+    await setLanguage(locale);
+    assert.equal(await page.$eval('.dialog-format-hint', element => element.textContent),
+        translated('N M 後接 M 行邊：u v [w]'));
+    assert.deepEqual(await page.$eval('.modal-overlay textarea', input => input.getAttribute('aria-describedby').split(/\s+/)),
+        ['text-input-dialog-format-hint', 'text-input-dialog-error']);
     await fill('.modal-overlay textarea', '3 2\n1 2');
     await page.click('.modal-actions .btn-primary');
     assert.equal(await page.$eval('.modal-overlay textarea', input => input.value), '3 2\n1 2');
-    assert.equal(await page.$eval('.dialog-error', error => !error.hidden && Boolean(error.textContent)), true,
+    assert.equal(await page.$eval('.dialog-error', error => !error.hidden), true,
         'Invalid graph input must remain editable with an inline error.');
+    assert.equal(await page.$eval('.dialog-error', error => error.textContent),
+        translated('標頭宣告 2 條邊，實際有 1 行。'));
+    assert.equal(await page.$eval('.modal-overlay textarea', input => input.getAttribute('aria-invalid')), 'true');
     assert.equal(await page.$eval('#toolbar', el => el.inert), true);
     await page.focus('.modal-actions .btn-primary');
     await page.keyboard.press('Tab');
-    assert.equal(await page.evaluate(() => document.activeElement.getAttribute('aria-label')), '圖的輸入格式');
+    assert.equal(await page.evaluate(() => document.activeElement.getAttribute('aria-label')), translated('圖輸入格式'));
     await page.keyboard.down('Shift');
     await page.keyboard.press('Tab');
     await page.keyboard.up('Shift');
-    assert.equal(await page.evaluate(() => document.activeElement.textContent), '確認');
+    assert.equal(await page.evaluate(() => document.activeElement.textContent), translated('確認'));
     await fill('.modal-overlay textarea', '3 2\n1 2\n2 3');
     await page.keyboard.down('Control');
     await page.keyboard.press('Enter');
@@ -203,6 +363,14 @@ export async function checkInterface(page) {
     await page.keyboard.press('Escape');
     await page.setViewport({ width: 390, height: 844 });
     await page.evaluate(() => window.__whiteboard._createMarkdown(100, 100));
+    assert.equal(await page.$eval('#markdown-dialog-title .md-icon + span', element => element.textContent),
+        translated('Markdown 編輯器'));
+    assert.equal(await page.$eval('.markdown-editor-pane textarea', element => element.getAttribute('aria-label')),
+        translated('Markdown 原始碼'));
+    assert.equal(await page.$eval('.markdown-preview-content', element => element.getAttribute('aria-label')),
+        translated('Markdown 預覽'));
+    assert.ok((await page.$eval('.markdown-editor-pane textarea', element => element.getAttribute('placeholder')))
+        .startsWith(translated('輸入 Markdown…')));
     await fill('.markdown-editor-pane textarea', '# 題解\n[連結](https://example.com)\n\n```cpp\nint value = 1;\n```');
     await page.waitForFunction(() => document.querySelector('.markdown-preview-content h1')?.textContent === '題解');
     assert.equal(await page.evaluate(() => {
@@ -227,13 +395,115 @@ export async function checkInterface(page) {
     });
     await page.setViewport({ width: 1000, height: 700 });
     await checkMultilineText(page);
+    await checkDataStructureDialogs(page, locale);
     await checkCellEditing(page);
     await checkMatrixClipboard(page);
     await checkFitView(page);
 }
 
+async function checkDataStructureDialogs(page, locale) {
+    const dialogs = [
+        {
+            type: 'matrix',
+            title: '編輯矩陣',
+            label: '編輯矩陣內容',
+            hint: '輸入矩陣資料；單一字元會填滿全部格子。'
+        },
+        {
+            type: 'stack',
+            title: '編輯堆疊',
+            label: '編輯堆疊內容',
+            hint: '數值以空格或換行分隔。',
+            placeholder: '例：1 2 3 4 5'
+        },
+        {
+            type: 'queue',
+            title: '編輯佇列',
+            label: '編輯佇列內容',
+            hint: '數值以空格或換行分隔。',
+            placeholder: '例：1 2 3 4 5'
+        }
+    ];
+
+    for (const item of dialogs) {
+        await page.evaluate(type => window.__whiteboard._createDataStructure(type, 180, 180), item.type);
+        assert.equal(await page.$eval('#text-input-dialog-title', element => element.textContent),
+            translateText(item.title, locale));
+        assert.equal(await page.$eval('.modal-overlay textarea', element => element.getAttribute('aria-label')),
+            translateText(item.label, locale));
+        assert.equal(await page.$eval('.dialog-format-hint', element => element.textContent),
+            translateText(item.hint, locale));
+        if (item.placeholder) {
+            assert.equal(await page.$eval('.modal-overlay textarea', element => element.getAttribute('placeholder')),
+                translateText(item.placeholder, locale));
+        }
+        await page.keyboard.press('Escape');
+        assert.equal(await page.$('.modal-overlay'), null);
+    }
+
+    await page.evaluate(async () => {
+        const { MatrixElement } = await import('/js/elements/MatrixElement.js');
+        const app = window.__whiteboard;
+        const matrix = new MatrixElement(180, 180);
+        matrix.setFromText('1 2\n3 4');
+        matrix.selectedCells = new Set(['0,0', '0,1', '1,0']);
+        app.elements.push(matrix);
+        app._editSelectedMatrixCells(matrix);
+    });
+    assert.equal(await page.$eval('#text-input-dialog-title', element => element.textContent),
+        translateText('編輯選取的 3 格', locale));
+    assert.equal(await page.$eval('.dialog-format-hint', element => element.textContent),
+        translateText('單一值填滿所有選取格；或輸入 3 個值。', locale));
+    assert.equal(await page.$eval('.modal-overlay textarea', element => element.getAttribute('aria-label')),
+        translateText('編輯選取的 3 格內容', locale));
+    assert.equal(await page.$eval('.modal-overlay textarea', element => element.getAttribute('placeholder')),
+        translateText('例：1 2 3', locale));
+    await page.keyboard.press('Escape');
+    await page.evaluate(() => {
+        const app = window.__whiteboard;
+        app.elements = [];
+        app.layerManager._reindex();
+        app._refreshUI();
+    });
+}
+
 async function checkFitView(page) {
     await page.setViewport({ width: 1000, height: 700 });
+    const browserLocale = await page.evaluate(() => document.documentElement.lang);
+    await page.evaluate(() => window.__whiteboard._createTree(100, 100));
+    await page.evaluate(() => {
+        const mode = [...document.querySelectorAll('.modal-overlay select')]
+            .find(select => [...select.options].some(option => option.value === 'parent'));
+        if (!mode) throw new Error('Tree parent-array mode is unavailable.');
+        mode.value = 'parent';
+        mode.dispatchEvent(new Event('change', { bubbles: true }));
+    });
+    await fill('.modal-overlay textarea', '0\n3\n2\n3');
+    await page.click('.modal-actions .btn-primary');
+    assert.equal(await page.$eval('.dialog-error', element => element.textContent),
+        translateText('有 3 個節點無法從根節點到達。', browserLocale));
+    await page.keyboard.press('Escape');
+    assert.equal(await page.$('.modal-overlay'), null);
+
+    await page.evaluate(() => window.__whiteboard._createTree(100, 100));
+    const treeHint = '編號預設從 1 起始；0 起始請勾選。單節點亦須指定。';
+    const treePlaceholder = await page.$eval('.modal-overlay textarea', input => input.placeholder);
+    assert.ok(treePlaceholder.includes(translateText(treeHint, browserLocale)));
+    assert.equal(await page.$eval('label[for="dialog-zerobased"]', element => element.textContent),
+        translateText('0 起始編號', browserLocale));
+    await page.click('#dialog-zerobased');
+    await page.$eval('.modal-overlay textarea', input => {
+        input.value = '1';
+        input.dispatchEvent(new Event('input', { bubbles: true }));
+    });
+    await page.click('.modal-actions .btn-primary');
+    assert.equal(await page.evaluate(() => window.__whiteboard.elements.at(-1).root.value), '0',
+        'A single-node tree must use ID 0 when the 0-based option is selected.');
+    await page.evaluate(() => {
+        const app = window.__whiteboard;
+        app.elements = []; app.history.clear(); app.selectionManager.clear(); app.layerManager._reindex();
+        app.camera.reset(); app._refreshUI();
+    });
     await page.evaluate(() => window.__whiteboard._createTree(100, 100));
     await page.$eval('.modal-overlay textarea', input => {
         input.value = ['7', ...Array.from({ length: 6 }, (_, i) => `1 ${i + 2} ${i + 1}000000000`)].join('\n');

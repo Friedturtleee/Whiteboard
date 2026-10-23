@@ -45,76 +45,76 @@
 
     <!-- Top Bar (actions) -->
     <div id="top-bar">
-        <button class="top-bar-btn" id="btn-undo" data-tooltip="復原 (Ctrl+Z)">
+        <button type="button" class="top-bar-btn" id="btn-undo" aria-label="復原" data-tooltip="復原 (Ctrl+Z)">
             <span class="material-symbols-outlined">undo</span>
         </button>
-        <button class="top-bar-btn" id="btn-redo" data-tooltip="取消復原 (Ctrl+Shift+Z)">
+        <button type="button" class="top-bar-btn" id="btn-redo" aria-label="取消復原" data-tooltip="取消復原 (Ctrl+Shift+Z)">
             <span class="material-symbols-outlined">redo</span>
         </button>
         <span style="width:1px;height:20px;background:var(--border-color)"></span>
-        <button class="top-bar-btn" id="btn-export-json" data-tooltip="匯出 JSON">
+        <button type="button" class="top-bar-btn" id="btn-export-json" aria-label="匯出 JSON" data-tooltip="匯出 JSON">
             <span class="material-symbols-outlined">download</span>
         </button>
-        <button class="top-bar-btn" id="btn-import-json" data-tooltip="匯入 JSON">
+        <button type="button" class="top-bar-btn" id="btn-import-json" aria-label="匯入 JSON" data-tooltip="匯入 JSON">
             <span class="material-symbols-outlined">upload</span>
         </button>
-        <button class="top-bar-btn" id="btn-export-png" data-tooltip="匯出 PNG">
+        <button type="button" class="top-bar-btn" id="btn-export-png" aria-label="匯出 PNG" data-tooltip="匯出 PNG">
             <span class="material-symbols-outlined">image</span>
         </button>
-        <button class="top-bar-btn" id="btn-cloud-boards" data-tooltip="帳號與雲端白板" aria-label="帳號與雲端白板">
+        <button type="button" class="top-bar-btn" id="btn-cloud-boards" data-tooltip="帳號與雲端白板" aria-label="帳號與雲端白板">
             <span class="material-symbols-outlined">cloud</span>
         </button>
         <span style="width:1px;height:20px;background:var(--border-color)"></span>
-        <button class="top-bar-btn" id="btn-settings" data-tooltip="設定">
+        <button type="button" class="top-bar-btn" id="btn-settings" aria-label="設定" data-tooltip="設定">
             <span class="material-symbols-outlined">settings</span>
         </button>
     </div>
 
     <!-- Left Toolbar -->
     <div id="toolbar" role="toolbar" aria-label="繪圖工具（可捲動）" aria-orientation="vertical">
-        <button class="toolbar-btn active" data-tool="select" data-tooltip="選取 (V)">
+        <button type="button" class="toolbar-btn active" data-tool="select" aria-label="選取" data-tooltip="選取 (V)">
             <span class="material-symbols-outlined">near_me</span>
         </button>
-        <button class="toolbar-btn" data-tool="pan" data-tooltip="平移 (H)">
+        <button type="button" class="toolbar-btn" data-tool="pan" aria-label="平移" data-tooltip="平移 (H)">
             <span class="material-symbols-outlined">pan_tool</span>
         </button>
         <div class="toolbar-separator"></div>
-        <button class="toolbar-btn" data-tool="rectangle" data-tooltip="矩形 (R)">
+        <button type="button" class="toolbar-btn" data-tool="rectangle" aria-label="矩形" data-tooltip="矩形 (R)">
             <span class="material-symbols-outlined">rectangle</span>
         </button>
-        <button class="toolbar-btn" data-tool="circle" data-tooltip="圓形 (C)">
+        <button type="button" class="toolbar-btn" data-tool="circle" aria-label="圓形" data-tooltip="圓形 (C)">
             <span class="material-symbols-outlined">circle</span>
         </button>
-        <button class="toolbar-btn" data-tool="line" data-tooltip="線段 (L)">
+        <button type="button" class="toolbar-btn" data-tool="line" aria-label="線段" data-tooltip="線段 (L)">
             <span class="material-symbols-outlined">show_chart</span>
         </button>
-        <button class="toolbar-btn" data-tool="arrow" data-tooltip="箭頭 (A)">
+        <button type="button" class="toolbar-btn" data-tool="arrow" aria-label="箭頭" data-tooltip="箭頭 (A)">
             <span class="material-symbols-outlined">trending_flat</span>
         </button>
-        <button class="toolbar-btn" data-tool="text" data-tooltip="文字 (T)">
+        <button type="button" class="toolbar-btn" data-tool="text" aria-label="文字" data-tooltip="文字 (T)">
             <span class="material-symbols-outlined">title</span>
         </button>
-        <button class="toolbar-btn" data-tool="markdown" data-tooltip="Markdown (M)">
+        <button type="button" class="toolbar-btn" data-tool="markdown" aria-label="Markdown" data-tooltip="Markdown (M)">
             <span class="material-symbols-outlined">markdown</span>
         </button>
-        <button class="toolbar-btn" data-tool="pen" data-tooltip="畫筆 (P)">
+        <button type="button" class="toolbar-btn" data-tool="pen" aria-label="畫筆" data-tooltip="畫筆 (P)">
             <span class="material-symbols-outlined">draw</span>
         </button>
         <div class="toolbar-separator"></div>
-        <button class="toolbar-btn" data-tool="matrix" data-tooltip="矩陣">
+        <button type="button" class="toolbar-btn" data-tool="matrix" aria-label="矩陣" data-tooltip="矩陣">
             <span class="material-symbols-outlined">grid_on</span>
         </button>
-        <button class="toolbar-btn" data-tool="stack" data-tooltip="堆疊">
+        <button type="button" class="toolbar-btn" data-tool="stack" aria-label="堆疊" data-tooltip="堆疊">
             <span class="material-symbols-outlined">layers</span>
         </button>
-        <button class="toolbar-btn" data-tool="queue" data-tooltip="佇列">
+        <button type="button" class="toolbar-btn" data-tool="queue" aria-label="佇列" data-tooltip="佇列">
             <span class="material-symbols-outlined">queue</span>
         </button>
         <div class="toolbar-separator"></div>
-        <button class="toolbar-btn" data-tool="tree" data-tooltip="樹">
+        <button type="button" class="toolbar-btn" data-tool="tree" aria-label="樹" data-tooltip="樹">
             <span class="material-symbols-outlined">account_tree</span>
         </button>
-        <button class="toolbar-btn" data-tool="graph" data-tooltip="圖論">
+        <button type="button" class="toolbar-btn" data-tool="graph" aria-label="圖論" data-tooltip="圖論">
             <span class="material-symbols-outlined">hub</span>
         </button>
     </div>
@@ -137,7 +137,7 @@
                     <button id="edit-selected-cells" type="button">編輯選取格</button>
                     <button id="clear-selected-cells" type="button">清空選取格</button>
                 </div>
-                <p class="selection-help">拖曳選取；Ctrl/⌘ 點選多選，Shift 選取範圍。<br>Enter 編輯；Ctrl/⌘+C/X/V 複製、剪下、貼上。</p>
+                <p class="selection-help">拖曳選格；Ctrl/⌘ 點選多格，Shift 選範圍。<br>Enter 編輯；Ctrl/⌘+C/X/V 複製、剪下或貼上。</p>
             </div>
         </div>
         <div class="panel-section">
@@ -145,47 +145,47 @@
             <div class="panel-row">
                 <div class="num-field">
                     <span class="num-label">X</span>
-                    <input type="number" id="prop-x">
+                    <input type="number" id="prop-x" aria-label="X 位置">
                     <div class="num-spinners">
-                        <button onclick="const i=this.closest('.num-field').querySelector('input');i.stepUp();i.dispatchEvent(new Event('input'))">&#9652;</button>
-                        <button onclick="const i=this.closest('.num-field').querySelector('input');i.stepDown();i.dispatchEvent(new Event('input'))">&#9662;</button>
+                        <button type="button" aria-label="增加X 位置" onclick="const i=this.closest('.num-field').querySelector('input');i.stepUp();i.dispatchEvent(new Event('input'))">&#9652;</button>
+                        <button type="button" aria-label="減少X 位置" onclick="const i=this.closest('.num-field').querySelector('input');i.stepDown();i.dispatchEvent(new Event('input'))">&#9662;</button>
                     </div>
                 </div>
                 <div class="num-field">
                     <span class="num-label">Y</span>
-                    <input type="number" id="prop-y">
+                    <input type="number" id="prop-y" aria-label="Y 位置">
                     <div class="num-spinners">
-                        <button onclick="const i=this.closest('.num-field').querySelector('input');i.stepUp();i.dispatchEvent(new Event('input'))">&#9652;</button>
-                        <button onclick="const i=this.closest('.num-field').querySelector('input');i.stepDown();i.dispatchEvent(new Event('input'))">&#9662;</button>
+                        <button type="button" aria-label="增加Y 位置" onclick="const i=this.closest('.num-field').querySelector('input');i.stepUp();i.dispatchEvent(new Event('input'))">&#9652;</button>
+                        <button type="button" aria-label="減少Y 位置" onclick="const i=this.closest('.num-field').querySelector('input');i.stepDown();i.dispatchEvent(new Event('input'))">&#9662;</button>
                     </div>
                 </div>
             </div>
             <div class="panel-row">
                 <div class="num-field">
                     <span class="num-label">W</span>
-                    <input type="number" id="prop-w" min="1">
+                    <input type="number" id="prop-w" aria-label="寬度" min="1">
                     <div class="num-spinners">
-                        <button onclick="const i=this.closest('.num-field').querySelector('input');i.stepUp();i.dispatchEvent(new Event('input'))">&#9652;</button>
-                        <button onclick="const i=this.closest('.num-field').querySelector('input');i.stepDown();i.dispatchEvent(new Event('input'))">&#9662;</button>
+                        <button type="button" aria-label="增加寬度" onclick="const i=this.closest('.num-field').querySelector('input');i.stepUp();i.dispatchEvent(new Event('input'))">&#9652;</button>
+                        <button type="button" aria-label="減少寬度" onclick="const i=this.closest('.num-field').querySelector('input');i.stepDown();i.dispatchEvent(new Event('input'))">&#9662;</button>
                     </div>
                 </div>
                 <div class="num-field">
                     <span class="num-label">H</span>
-                    <input type="number" id="prop-h" min="1">
+                    <input type="number" id="prop-h" aria-label="高度" min="1">
                     <div class="num-spinners">
-                        <button onclick="const i=this.closest('.num-field').querySelector('input');i.stepUp();i.dispatchEvent(new Event('input'))">&#9652;</button>
-                        <button onclick="const i=this.closest('.num-field').querySelector('input');i.stepDown();i.dispatchEvent(new Event('input'))">&#9662;</button>
+                        <button type="button" aria-label="增加高度" onclick="const i=this.closest('.num-field').querySelector('input');i.stepUp();i.dispatchEvent(new Event('input'))">&#9652;</button>
+                        <button type="button" aria-label="減少高度" onclick="const i=this.closest('.num-field').querySelector('input');i.stepDown();i.dispatchEvent(new Event('input'))">&#9662;</button>
                     </div>
                 </div>
             </div>
             <div class="panel-row">
                 <div class="num-field">
                     <span class="num-label">∠</span>
-                    <input type="number" id="prop-rot" min="-360" max="360" step="1">
+                    <input type="number" id="prop-rot" aria-label="旋轉角度" min="-360" max="360" step="1">
                     <span class="num-suffix">°</span>
                     <div class="num-spinners">
-                        <button onclick="const i=this.closest('.num-field').querySelector('input');i.stepUp();i.dispatchEvent(new Event('input'))">&#9652;</button>
-                        <button onclick="const i=this.closest('.num-field').querySelector('input');i.stepDown();i.dispatchEvent(new Event('input'))">&#9662;</button>
+                        <button type="button" aria-label="增加旋轉角度" onclick="const i=this.closest('.num-field').querySelector('input');i.stepUp();i.dispatchEvent(new Event('input'))">&#9652;</button>
+                        <button type="button" aria-label="減少旋轉角度" onclick="const i=this.closest('.num-field').querySelector('input');i.stepDown();i.dispatchEvent(new Event('input'))">&#9662;</button>
                     </div>
                 </div>
             </div>
@@ -258,8 +258,8 @@
         <div class="layer-panel-header">
             <span>圖層</span>
             <div style="display:flex;gap:2px">
-                <button id="layer-up" title="上移"><span class="material-symbols-outlined">keyboard_arrow_up</span></button>
-                <button id="layer-down" title="下移"><span class="material-symbols-outlined">keyboard_arrow_down</span></button>
+                <button type="button" id="layer-up" title="上移" aria-label="上移"><span class="material-symbols-outlined">keyboard_arrow_up</span></button>
+                <button type="button" id="layer-down" title="下移" aria-label="下移"><span class="material-symbols-outlined">keyboard_arrow_down</span></button>
                 <button id="toggle-layers" type="button" aria-label="收合圖層" aria-expanded="true" aria-controls="layer-list"><span class="material-symbols-outlined" aria-hidden="true">expand_more</span></button>
             </div>
         </div>
@@ -293,23 +293,23 @@
                 </label>
                 <div class="settings-row">
                     <span>格線間距</span>
-                    <input type="range" id="settings-grid-spacing" min="20" max="120" step="10" value="40" style="flex:1;margin:0 8px">
+                    <input type="range" id="settings-grid-spacing" aria-label="格線間距" min="20" max="120" step="10" value="40" style="flex:1;margin:0 8px">
                     <span id="settings-grid-spacing-val" style="min-width:28px;text-align:right;font-size:11px">40</span>
                 </div>
                 <div class="settings-section-title" style="margin-top:12px">畫筆與線條</div>
                 <div class="settings-row">
                     <span>預設筆刷大小</span>
-                    <input type="range" id="settings-pen-size" min="1" max="20" step="1" value="2" style="flex:1;margin:0 8px">
+                    <input type="range" id="settings-pen-size" aria-label="預設筆刷大小" min="1" max="20" step="1" value="2" style="flex:1;margin:0 8px">
                     <span id="settings-pen-size-val" style="min-width:28px;text-align:right;font-size:11px">2</span>
                 </div>
                 <div class="settings-row">
                     <span>筆刷平滑度</span>
-                    <input type="range" id="settings-pen-smoothing" min="1" max="10" step="1" value="3" style="flex:1;margin:0 8px">
+                    <input type="range" id="settings-pen-smoothing" aria-label="筆刷平滑度" min="1" max="10" step="1" value="3" style="flex:1;margin:0 8px">
                     <span id="settings-pen-smoothing-val" style="min-width:28px;text-align:right;font-size:11px">3</span>
                 </div>
                 <div class="settings-row">
                     <span>預設線寬</span>
-                    <input type="range" id="settings-stroke-width" min="1" max="10" step="1" value="2" style="flex:1;margin:0 8px">
+                    <input type="range" id="settings-stroke-width" aria-label="預設線寬" min="1" max="10" step="1" value="2" style="flex:1;margin:0 8px">
                     <span id="settings-stroke-width-val" style="min-width:28px;text-align:right;font-size:11px">2</span>
                 </div>
                 <div class="settings-section-title" style="margin-top:12px">其他</div>
@@ -323,39 +323,39 @@
 
     <!-- Bottom Zoom Bar -->
     <div id="zoom-bar">
-        <button class="zoom-bar-btn" id="btn-zoom-out" data-tooltip="縮小 (Ctrl+-)">
+        <button type="button" class="zoom-bar-btn" id="btn-zoom-out" aria-label="縮小" data-tooltip="縮小 (Ctrl+-)">
             <span class="material-symbols-outlined">remove</span>
         </button>
-        <button type="button" class="zoom-display" id="zoom-display" data-tooltip="重置縮放為 100%">100%</button>
-        <button class="zoom-bar-btn" id="btn-zoom-in" data-tooltip="放大 (Ctrl+=)">
+        <button type="button" class="zoom-display" id="zoom-display" aria-label="重置縮放為 100%" data-tooltip="重置縮放為 100%">100%</button>
+        <button type="button" class="zoom-bar-btn" id="btn-zoom-in" aria-label="放大" data-tooltip="放大 (Ctrl+=)">
             <span class="material-symbols-outlined">add</span>
         </button>
-        <button type="button" class="zoom-bar-btn" id="btn-fit-view" data-tooltip="顯示全部（Shift+1）；顯示選取（Shift+2）">
+        <button type="button" class="zoom-bar-btn" id="btn-fit-view" aria-label="顯示全部" data-tooltip="顯示全部（Shift+1）；顯示選取（Shift+2）">
             <span class="material-symbols-outlined">fit_screen</span>
         </button>
     </div>
 
     <!-- Right-click Context Menu -->
     <div id="context-menu" role="menu" aria-label="物件操作">
-        <button type="button" role="menuitem" class="ctx-item" id="ctx-rename"><span class="material-symbols-outlined">edit</span> 重新命名</button>
-        <button type="button" role="menuitem" class="ctx-item" id="ctx-duplicate"><span class="material-symbols-outlined">content_copy</span> 複製</button>
-        <button type="button" role="menuitem" class="ctx-item" id="ctx-matrix-prefix" style="display:none;"><span class="material-symbols-outlined">functions</span> 轉換為前綴和</button>
-        <button type="button" role="menuitem" class="ctx-item" id="ctx-matrix-diff" style="display:none;"><span class="material-symbols-outlined">difference</span> 轉換為差分</button>
+        <button type="button" role="menuitem" class="ctx-item" id="ctx-rename"><span class="material-symbols-outlined">edit</span><span class="ctx-label">重新命名</span></button>
+        <button type="button" role="menuitem" class="ctx-item" id="ctx-duplicate"><span class="material-symbols-outlined">content_copy</span><span class="ctx-label">複製</span></button>
+        <button type="button" role="menuitem" class="ctx-item" id="ctx-matrix-prefix" style="display:none;"><span class="material-symbols-outlined">functions</span><span class="ctx-label">轉換為前綴和</span></button>
+        <button type="button" role="menuitem" class="ctx-item" id="ctx-matrix-diff" style="display:none;"><span class="material-symbols-outlined">difference</span><span class="ctx-label">轉換為差分</span></button>
         <div class="ctx-separator"></div>
-        <button type="button" role="menuitem" class="ctx-item" id="ctx-layer-up"><span class="material-symbols-outlined">keyboard_arrow_up</span> 上移一層</button>
-        <button type="button" role="menuitem" class="ctx-item" id="ctx-layer-down"><span class="material-symbols-outlined">keyboard_arrow_down</span> 下移一層</button>
+        <button type="button" role="menuitem" class="ctx-item" id="ctx-layer-up"><span class="material-symbols-outlined">keyboard_arrow_up</span><span class="ctx-label">上移一層</span></button>
+        <button type="button" role="menuitem" class="ctx-item" id="ctx-layer-down"><span class="material-symbols-outlined">keyboard_arrow_down</span><span class="ctx-label">下移一層</span></button>
         <div class="ctx-separator" id="ctx-sep1"></div>
-        <button type="button" role="menuitem" class="ctx-item" id="ctx-bring-front"><span class="material-symbols-outlined">flip_to_front</span> 移至最上層</button>
-        <button type="button" role="menuitem" class="ctx-item" id="ctx-send-back"><span class="material-symbols-outlined">flip_to_back</span> 移至最下層</button>
+        <button type="button" role="menuitem" class="ctx-item" id="ctx-bring-front"><span class="material-symbols-outlined">flip_to_front</span><span class="ctx-label">移至最上層</span></button>
+        <button type="button" role="menuitem" class="ctx-item" id="ctx-send-back"><span class="material-symbols-outlined">flip_to_back</span><span class="ctx-label">移至最下層</span></button>
         <div class="ctx-separator" id="ctx-sep2"></div>
-        <button type="button" role="menuitem" class="ctx-item ctx-danger" id="ctx-delete"><span class="material-symbols-outlined">delete</span> 刪除</button>
+        <button type="button" role="menuitem" class="ctx-item ctx-danger" id="ctx-delete"><span class="material-symbols-outlined">delete</span><span class="ctx-label">刪除</span></button>
     </div>
 
     <!-- Inline Rename Input -->
     <input type="text" id="rename-input" autocomplete="off" aria-label="物件名稱">
 
     <!-- Inline Text Editor -->
-    <textarea id="text-edit-overlay" autocomplete="off" spellcheck="false" wrap="off"></textarea>
+    <textarea id="text-edit-overlay" aria-label="文字編輯器" autocomplete="off" spellcheck="false" wrap="off"></textarea>
 
     <!-- ═══════════════════════════════════════
          Error Overlay  (shown on module crash)
@@ -367,7 +367,7 @@
                 <span class="err-icon material-symbols-outlined">error</span>
                 <div>
                     <div class="err-code">Load failed</div>
-                    <div class="err-subtitle">必要模組Load failed</div>
+                    <div class="err-subtitle">A required module failed to load</div>
                 </div>
             </div>
             <div class="err-divider"></div>
@@ -632,7 +632,7 @@
         setProgress(20, 'Loading application…');
         const script = document.createElement('script');
         script.type = 'module';
-        script.src  = 'js/app.js?v=6';
+        script.src  = 'js/app.js?v=7';
         script.onload = () => {
             setProgress(90, 'Initializing…');
             appReady = true;

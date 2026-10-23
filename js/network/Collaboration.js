@@ -73,7 +73,7 @@ export class Collaboration {
                 } else {
                     iconEl.textContent = 'cloud_off';
                     iconEl.style.color = '#ff4444'; // Red
-                    textEl.textContent = '連線中...';
+                    textEl.textContent = '連線中…';
                     statusEl.dataset.tooltip = '連線中或已中斷';
                 }
             }

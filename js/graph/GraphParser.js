@@ -115,7 +115,7 @@ export class GraphParser {
         if (header.length !== 1) {
             return { error: '鄰接列表標頭應為 N。' };
         }
-        const nResult = GraphParser._nonNegativeInteger(header[0], 'N', 1);
+        const nResult = GraphParser._nonNegativeInteger(header[0], 'N', firstContentIndex + 1);
         if (nResult.error) return nResult;
         const n = nResult.value;
         if (n === 0) return { error: 'N 須大於 0。' };
@@ -148,7 +148,7 @@ export class GraphParser {
 
         for (let row = 0; row < n; row++) {
             const parts = lines[rowStart + row].split(/\s+/);
-            const lineNumber = row + 2;
+            const lineNumber = rowStart + row + 1;
             const degreeResult = GraphParser._nonNegativeInteger(parts[0], '鄰居數', lineNumber);
             if (degreeResult.error) return degreeResult;
             const degree = degreeResult.value;

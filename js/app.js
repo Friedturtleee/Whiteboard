@@ -1822,7 +1822,7 @@ class App {
     _showDataStructureDialog(el, isNew = false) {
         const typeLabel = { matrix: '矩陣', stack: '堆疊', queue: '佇列' }[el.type] || el.type;
         const placeholder = el.type === 'matrix'
-            ? '輸入矩陣資料；單一值會填滿全部格子。'
+            ? '輸入矩陣資料；單一字元會填滿全部格子。'
             : '數值以空格或換行分隔。\n例：1 2 3 4 5';
         const oldText = el.inputText || '';
         const oldInputIsEmpty = isEmptyDataStructureInput(oldText);
@@ -1921,7 +1921,7 @@ class App {
         this.textInputDialog.show({
             element: el,
             title: '編輯樹',
-            placeholder: 'N 後接 N−1 行：u v [w]\n節點編號為 1–N；0-based 請勾選。單節點請指定編號方式。\n例：\n4\n1 2\n1 3\n3 4',
+            placeholder: 'N 後接 N−1 行：u v [w]\n編號預設從 1 起始；0 起始請勾選。單節點亦須指定。\n例：\n4\n1 2\n1 3\n3 4',
             getPlaceholder: ({ mode }) => ({
                 rooted: 'N 後接 N−1 行：父節點 子節點 [w]\n例：\n4\n1 2\n1 3\n3 4',
                 parent: '每行填父節點編號；根填 0。\n例：\n0\n1\n1\n2',
@@ -2037,10 +2037,10 @@ class App {
             placeholder: 'N M 後接 M 行邊：u v [w]\n例：\n4 3\n1 2\n2 3 7\n3 4',
             getPlaceholder: ({ graphMode, zeroBased }) => {
                 if (graphMode === 'adj-list') {
-                    return 'N 後接 N 行：M 和 M 個鄰點\n例：\n4\n' +
+                    return 'N 後接 N 行：每行先填 M，再填 M 個鄰點編號。\n例：\n4\n' +
                         (zeroBased ? '2 1 2\n1 0\n2 0 3\n1 2' : '2 2 3\n1 1\n2 1 4\n1 3');
                 }
-                return 'N M 後接 M 行：u v [w]\n例：\n4 3\n' +
+                return 'N M 後接 M 行邊：u v [w]\n例：\n4 3\n' +
                     (zeroBased ? '0 1\n1 2 7\n2 3' : '1 2\n2 3 7\n3 4');
             },
             defaultText: originalText,
@@ -2743,7 +2743,12 @@ class App {
         header.className = 'markdown-dialog-header';
         const h3 = document.createElement('h3');
         h3.id = 'markdown-dialog-title';
-        h3.innerHTML = '<span class="md-icon">MD</span> Markdown 編輯器';
+        const markdownIcon = document.createElement('span');
+        markdownIcon.className = 'md-icon';
+        markdownIcon.textContent = 'MD';
+        const markdownTitle = document.createElement('span');
+        markdownTitle.textContent = 'Markdown 編輯器';
+        h3.append(markdownIcon, markdownTitle);
         dialog.setAttribute('aria-labelledby', h3.id);
         header.appendChild(h3);
         dialog.appendChild(header);

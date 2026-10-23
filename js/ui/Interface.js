@@ -1,13 +1,17 @@
 /** Labels, bounded tooltips, and collapsible panels for the canvas UI. */
-export function initInterface() {
-    document.querySelectorAll('[data-tooltip]').forEach(control => {
-        control.setAttribute('aria-label', control.dataset.tooltip);
+export function labelTooltipControls(root) {
+    root.querySelectorAll('[data-tooltip]').forEach(control => {
+        if (!control.getAttribute('aria-label')?.trim()) control.setAttribute('aria-label', control.dataset.tooltip);
         control.querySelectorAll('.material-symbols-outlined').forEach(icon =>
             icon.setAttribute('aria-hidden', 'true'));
     });
-    document.querySelectorAll('button[title]').forEach(button => {
-        if (!button.hasAttribute('aria-label')) button.setAttribute('aria-label', button.title);
+    root.querySelectorAll('button[title]').forEach(button => {
+        if (!button.getAttribute('aria-label')?.trim()) button.setAttribute('aria-label', button.title);
     });
+}
+
+export function initInterface() {
+    labelTooltipControls(document);
     document.querySelectorAll('button .material-symbols-outlined').forEach(icon =>
         icon.setAttribute('aria-hidden', 'true'));
     const fields = { 'prop-x': 'X 位置', 'prop-y': 'Y 位置', 'prop-w': '寬度',
