@@ -56,7 +56,10 @@ export class Toolbar {
                 ? `${btn.dataset.baseTooltip}（${READ_ONLY_NOTE}）`
                 : btn.dataset.baseTooltip;
             if (btn.dataset.tooltip !== undefined) btn.dataset.tooltip = tooltip;
-            if (tooltip) btn.setAttribute('aria-label', tooltip);
+            // Keep the short accessible name (no shortcut text); only add the note when read-only.
+            if (btn.dataset.baseLabel === undefined) btn.dataset.baseLabel = btn.getAttribute('aria-label') || '';
+            const label = btn.dataset.baseLabel;
+            if (label) btn.setAttribute('aria-label', readOnly ? `${label}（${READ_ONLY_NOTE}）` : label);
             if (readOnly) btn.setAttribute('aria-disabled', 'true');
             else btn.removeAttribute('aria-disabled');
         });

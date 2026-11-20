@@ -1,14 +1,14 @@
 <!DOCTYPE html>
-<html lang="zh-TW">
+<html lang="en">
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <meta name="referrer" content="no-referrer">
-    <title>CP WhiteBoard — 競程白板</title>
+    <title>CP WhiteBoard — Competitive Programming Whiteboard</title>
     <script src="js/cloud-config.js"></script>
     <link rel="icon" type="image/svg+xml" href="costume1.svg">
     <link rel="stylesheet" href="css/colors.css">
-    <link rel="stylesheet" href="css/main.css">
+    <link rel="stylesheet" href="css/main.css?v=2">
     <link rel="stylesheet" href="css/toolbar.css">
     <link rel="stylesheet" href="css/panels.css">
     <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Material+Symbols+Outlined:opsz,wght,FILL,GRAD@20..48,100..700,0..1,-50..200">
@@ -34,7 +34,7 @@
         <div class="loading-content">
             <div class="loading-logo">CP</div>
             <div class="loading-bar"><div class="loading-fill" id="loading-fill"></div></div>
-            <div class="loading-text" id="loading-text">載入中…</div>
+            <div class="loading-text" id="loading-text">Loading…</div>
         </div>
     </div>
 
@@ -43,79 +43,79 @@
 
     <!-- Top Bar (actions) -->
     <div id="top-bar">
-        <button class="top-bar-btn" id="btn-undo" data-tooltip="復原 (Ctrl+Z)">
+        <button type="button" class="top-bar-btn" id="btn-undo" aria-label="復原" data-tooltip="復原 (Ctrl+Z)">
             <span class="material-symbols-outlined">undo</span>
         </button>
-        <button class="top-bar-btn" id="btn-redo" data-tooltip="取消復原 (Ctrl+Shift+Z)">
+        <button type="button" class="top-bar-btn" id="btn-redo" aria-label="取消復原" data-tooltip="取消復原 (Ctrl+Shift+Z)">
             <span class="material-symbols-outlined">redo</span>
         </button>
         <span class="top-bar-sep" role="separator" aria-orientation="vertical"></span>
-        <button class="top-bar-btn" id="btn-export-json" data-tooltip="匯出 JSON (Ctrl+S)">
+        <button type="button" class="top-bar-btn" id="btn-export-json" aria-label="匯出 JSON" data-tooltip="匯出 JSON (Ctrl+S)">
             <span class="material-symbols-outlined">download</span>
         </button>
-        <button class="top-bar-btn" id="btn-import-json" data-tooltip="匯入 JSON">
+        <button type="button" class="top-bar-btn" id="btn-import-json" aria-label="匯入 JSON" data-tooltip="匯入 JSON">
             <span class="material-symbols-outlined">upload</span>
         </button>
-        <button class="top-bar-btn" id="btn-export-png" data-tooltip="匯出 PNG">
+        <button type="button" class="top-bar-btn" id="btn-export-png" aria-label="匯出 PNG" data-tooltip="匯出 PNG">
             <span class="material-symbols-outlined">image</span>
         </button>
-        <button class="top-bar-btn" id="btn-cloud-boards" data-tooltip="帳號與雲端白板" aria-label="帳號與雲端白板">
+        <button type="button" class="top-bar-btn" id="btn-cloud-boards" data-tooltip="帳號與雲端白板" aria-label="帳號與雲端白板">
             <span class="material-symbols-outlined">cloud</span>
         </button>
         <span class="top-bar-sep" role="separator" aria-orientation="vertical"></span>
-        <button class="top-bar-btn" id="btn-settings" data-tooltip="設定">
+        <button type="button" class="top-bar-btn" id="btn-settings" aria-label="設定" data-tooltip="設定">
             <span class="material-symbols-outlined">settings</span>
         </button>
-        <button class="top-bar-btn" id="btn-shortcuts" type="button" data-tooltip="快捷鍵說明 (?)" aria-haspopup="dialog">
+        <button type="button" class="top-bar-btn" id="btn-shortcuts" aria-label="快捷鍵" data-tooltip="快捷鍵說明 (?)" aria-haspopup="dialog">
             <span class="material-symbols-outlined">help</span>
         </button>
     </div>
 
     <!-- Left Toolbar -->
     <div id="toolbar" role="toolbar" aria-label="繪圖工具（可捲動）" aria-orientation="vertical">
-        <button class="toolbar-btn active" data-tool="select" data-tooltip="選取 (V，Esc 返回選取)">
+        <button type="button" class="toolbar-btn active" data-tool="select" aria-label="選取" data-tooltip="選取 (V，Esc 返回選取)">
             <span class="material-symbols-outlined">near_me</span>
         </button>
-        <button class="toolbar-btn" data-tool="pan" data-tooltip="平移 (H)">
+        <button type="button" class="toolbar-btn" data-tool="pan" aria-label="平移" data-tooltip="平移 (H)">
             <span class="material-symbols-outlined">pan_tool</span>
         </button>
         <div class="toolbar-separator"></div>
-        <button class="toolbar-btn" data-tool="rectangle" data-tooltip="矩形 (R)">
+        <button type="button" class="toolbar-btn" data-tool="rectangle" aria-label="矩形" data-tooltip="矩形 (R)">
             <span class="material-symbols-outlined">rectangle</span>
         </button>
-        <button class="toolbar-btn" data-tool="circle" data-tooltip="圓形 (C)">
+        <button type="button" class="toolbar-btn" data-tool="circle" aria-label="圓形" data-tooltip="圓形 (C)">
             <span class="material-symbols-outlined">circle</span>
         </button>
-        <button class="toolbar-btn" data-tool="line" data-tooltip="線段 (L)">
+        <button type="button" class="toolbar-btn" data-tool="line" aria-label="線段" data-tooltip="線段 (L)">
             <span class="material-symbols-outlined">show_chart</span>
         </button>
-        <button class="toolbar-btn" data-tool="arrow" data-tooltip="箭頭 (A)">
+        <button type="button" class="toolbar-btn" data-tool="arrow" aria-label="箭頭" data-tooltip="箭頭 (A)">
             <span class="material-symbols-outlined">trending_flat</span>
         </button>
-        <button class="toolbar-btn" data-tool="text" data-tooltip="文字 (T)">
+        <button type="button" class="toolbar-btn" data-tool="text" aria-label="文字" data-tooltip="文字 (T)">
             <span class="material-symbols-outlined">title</span>
         </button>
-        <button class="toolbar-btn" data-tool="markdown" data-tooltip="Markdown (M)">
+        <button type="button" class="toolbar-btn" data-tool="markdown" aria-label="Markdown" data-tooltip="Markdown (M)">
             <span class="material-symbols-outlined">markdown</span>
         </button>
-        <button class="toolbar-btn" data-tool="pen" data-tooltip="畫筆 (P)">
+        <button type="button" class="toolbar-btn" data-tool="pen" aria-label="畫筆" data-tooltip="畫筆 (P)">
             <span class="material-symbols-outlined">draw</span>
         </button>
         <div class="toolbar-separator"></div>
-        <button class="toolbar-btn" data-tool="matrix" data-tooltip="矩陣">
+        <button type="button" class="toolbar-btn" data-tool="matrix" aria-label="矩陣" data-tooltip="矩陣">
             <span class="material-symbols-outlined">grid_on</span>
         </button>
-        <button class="toolbar-btn" data-tool="stack" data-tooltip="堆疊">
+        <button type="button" class="toolbar-btn" data-tool="stack" aria-label="堆疊" data-tooltip="堆疊">
             <span class="material-symbols-outlined">layers</span>
         </button>
-        <button class="toolbar-btn" data-tool="queue" data-tooltip="佇列">
+        <button type="button" class="toolbar-btn" data-tool="queue" aria-label="佇列" data-tooltip="佇列">
             <span class="material-symbols-outlined">queue</span>
         </button>
         <div class="toolbar-separator"></div>
-        <button class="toolbar-btn" data-tool="tree" data-tooltip="樹">
+        <button type="button" class="toolbar-btn" data-tool="tree" aria-label="樹" data-tooltip="樹">
             <span class="material-symbols-outlined">account_tree</span>
         </button>
-        <button class="toolbar-btn" data-tool="graph" data-tooltip="圖論">
+        <button type="button" class="toolbar-btn" data-tool="graph" aria-label="圖論" data-tooltip="圖論">
             <span class="material-symbols-outlined">hub</span>
         </button>
     </div>
@@ -146,47 +146,47 @@
             <div class="panel-row">
                 <div class="num-field">
                     <span class="num-label">X</span>
-                    <input type="number" id="prop-x">
+                    <input type="number" id="prop-x" aria-label="X 位置">
                     <div class="num-spinners">
-                        <button type="button" class="num-step" data-step="up" tabindex="-1">&#9652;</button>
-                        <button type="button" class="num-step" data-step="down" tabindex="-1">&#9662;</button>
+                        <button type="button" class="num-step" data-step="up" tabindex="-1" aria-label="增加X 位置">&#9652;</button>
+                        <button type="button" class="num-step" data-step="down" tabindex="-1" aria-label="減少X 位置">&#9662;</button>
                     </div>
                 </div>
                 <div class="num-field">
                     <span class="num-label">Y</span>
-                    <input type="number" id="prop-y">
+                    <input type="number" id="prop-y" aria-label="Y 位置">
                     <div class="num-spinners">
-                        <button type="button" class="num-step" data-step="up" tabindex="-1">&#9652;</button>
-                        <button type="button" class="num-step" data-step="down" tabindex="-1">&#9662;</button>
+                        <button type="button" class="num-step" data-step="up" tabindex="-1" aria-label="增加Y 位置">&#9652;</button>
+                        <button type="button" class="num-step" data-step="down" tabindex="-1" aria-label="減少Y 位置">&#9662;</button>
                     </div>
                 </div>
             </div>
             <div class="panel-row">
                 <div class="num-field">
                     <span class="num-label">W</span>
-                    <input type="number" id="prop-w" min="1">
+                    <input type="number" id="prop-w" aria-label="寬度" min="1">
                     <div class="num-spinners">
-                        <button type="button" class="num-step" data-step="up" tabindex="-1">&#9652;</button>
-                        <button type="button" class="num-step" data-step="down" tabindex="-1">&#9662;</button>
+                        <button type="button" class="num-step" data-step="up" tabindex="-1" aria-label="增加寬度">&#9652;</button>
+                        <button type="button" class="num-step" data-step="down" tabindex="-1" aria-label="減少寬度">&#9662;</button>
                     </div>
                 </div>
                 <div class="num-field">
                     <span class="num-label">H</span>
-                    <input type="number" id="prop-h" min="1">
+                    <input type="number" id="prop-h" aria-label="高度" min="1">
                     <div class="num-spinners">
-                        <button type="button" class="num-step" data-step="up" tabindex="-1">&#9652;</button>
-                        <button type="button" class="num-step" data-step="down" tabindex="-1">&#9662;</button>
+                        <button type="button" class="num-step" data-step="up" tabindex="-1" aria-label="增加高度">&#9652;</button>
+                        <button type="button" class="num-step" data-step="down" tabindex="-1" aria-label="減少高度">&#9662;</button>
                     </div>
                 </div>
             </div>
             <div class="panel-row">
                 <div class="num-field">
                     <span class="num-label">∠</span>
-                    <input type="number" id="prop-rot" min="-360" max="360" step="1">
+                    <input type="number" id="prop-rot" aria-label="旋轉角度" min="-360" max="360" step="1">
                     <span class="num-suffix">°</span>
                     <div class="num-spinners">
-                        <button type="button" class="num-step" data-step="up" tabindex="-1">&#9652;</button>
-                        <button type="button" class="num-step" data-step="down" tabindex="-1">&#9662;</button>
+                        <button type="button" class="num-step" data-step="up" tabindex="-1" aria-label="增加旋轉角度">&#9652;</button>
+                        <button type="button" class="num-step" data-step="down" tabindex="-1" aria-label="減少旋轉角度">&#9662;</button>
                     </div>
                 </div>
             </div>
@@ -260,8 +260,8 @@
         <div class="layer-panel-header">
             <span>圖層</span>
             <div class="layer-panel-tools">
-                <button id="layer-up" type="button" title="上移所選圖層"><span class="material-symbols-outlined">keyboard_arrow_up</span></button>
-                <button id="layer-down" type="button" title="下移所選圖層"><span class="material-symbols-outlined">keyboard_arrow_down</span></button>
+                <button type="button" id="layer-up" title="上移所選圖層" aria-label="上移"><span class="material-symbols-outlined">keyboard_arrow_up</span></button>
+                <button type="button" id="layer-down" title="下移所選圖層" aria-label="下移"><span class="material-symbols-outlined">keyboard_arrow_down</span></button>
                 <button id="toggle-layers" type="button" aria-label="收合圖層" aria-expanded="true" aria-controls="layer-list"><span class="material-symbols-outlined" aria-hidden="true">expand_more</span></button>
             </div>
         </div>
@@ -270,7 +270,7 @@
     </aside>
 
     <!-- Hidden file input for JSON import -->
-    <input type="file" id="json-file-input" accept=".json" hidden>
+    <input type="file" id="json-file-input" accept=".json" aria-label="匯入 JSON" hidden>
 
     <!-- Settings Modal -->
     <div id="settings-modal">
@@ -280,6 +280,14 @@
                 <button id="settings-close" aria-label="關閉設定"><span class="material-symbols-outlined" aria-hidden="true">close</span></button>
             </div>
             <div class="settings-body">
+                <div class="settings-section-title">語言</div>
+                <label class="settings-row">
+                    <span>介面語言</span>
+                    <select id="settings-language">
+                        <option value="en">English</option>
+                        <option value="zh-TW">繁體中文</option>
+                    </select>
+                </label>
                 <div class="settings-section-title">格線</div>
                 <label class="settings-row">
                     <span>顯示格線</span>
@@ -317,39 +325,39 @@
 
     <!-- Bottom Zoom Bar -->
     <div id="zoom-bar">
-        <button class="zoom-bar-btn" id="btn-zoom-out" data-tooltip="縮小 (Ctrl+-)">
+        <button type="button" class="zoom-bar-btn" id="btn-zoom-out" aria-label="縮小" data-tooltip="縮小 (Ctrl+-)">
             <span class="material-symbols-outlined">remove</span>
         </button>
-        <button type="button" class="zoom-display" id="zoom-display" data-tooltip="重置縮放為 100%">100%</button>
-        <button class="zoom-bar-btn" id="btn-zoom-in" data-tooltip="放大 (Ctrl+=)">
+        <button type="button" class="zoom-display" id="zoom-display" aria-label="重置縮放為 100%" data-tooltip="重置縮放為 100%">100%</button>
+        <button type="button" class="zoom-bar-btn" id="btn-zoom-in" aria-label="放大" data-tooltip="放大 (Ctrl+=)">
             <span class="material-symbols-outlined">add</span>
         </button>
-        <button type="button" class="zoom-bar-btn" id="btn-fit-view" data-tooltip="顯示全部 (Shift+1；Shift+2 顯示選取)">
+        <button type="button" class="zoom-bar-btn" id="btn-fit-view" aria-label="顯示全部" data-tooltip="顯示全部（Shift+1）；顯示選取（Shift+2）">
             <span class="material-symbols-outlined">fit_screen</span>
         </button>
     </div>
 
     <!-- Right-click Context Menu -->
     <div id="context-menu" role="menu" aria-label="物件操作">
-        <button type="button" role="menuitem" class="ctx-item" id="ctx-rename"><span class="material-symbols-outlined">edit</span> 重新命名</button>
-        <button type="button" role="menuitem" class="ctx-item" id="ctx-duplicate"><span class="material-symbols-outlined">content_copy</span> 複製</button>
-        <button type="button" role="menuitem" class="ctx-item" id="ctx-matrix-prefix" style="display:none;"><span class="material-symbols-outlined">functions</span> 轉換為前綴和</button>
-        <button type="button" role="menuitem" class="ctx-item" id="ctx-matrix-diff" style="display:none;"><span class="material-symbols-outlined">difference</span> 轉換為差分</button>
+        <button type="button" role="menuitem" class="ctx-item" id="ctx-rename"><span class="material-symbols-outlined">edit</span><span class="ctx-label">重新命名</span></button>
+        <button type="button" role="menuitem" class="ctx-item" id="ctx-duplicate"><span class="material-symbols-outlined">content_copy</span><span class="ctx-label">複製</span></button>
+        <button type="button" role="menuitem" class="ctx-item" id="ctx-matrix-prefix" style="display:none;"><span class="material-symbols-outlined">functions</span><span class="ctx-label">轉換為前綴和</span></button>
+        <button type="button" role="menuitem" class="ctx-item" id="ctx-matrix-diff" style="display:none;"><span class="material-symbols-outlined">difference</span><span class="ctx-label">轉換為差分</span></button>
         <div class="ctx-separator"></div>
-        <button type="button" role="menuitem" class="ctx-item" id="ctx-layer-up"><span class="material-symbols-outlined">keyboard_arrow_up</span> 上移一層</button>
-        <button type="button" role="menuitem" class="ctx-item" id="ctx-layer-down"><span class="material-symbols-outlined">keyboard_arrow_down</span> 下移一層</button>
+        <button type="button" role="menuitem" class="ctx-item" id="ctx-layer-up"><span class="material-symbols-outlined">keyboard_arrow_up</span><span class="ctx-label">上移一層</span></button>
+        <button type="button" role="menuitem" class="ctx-item" id="ctx-layer-down"><span class="material-symbols-outlined">keyboard_arrow_down</span><span class="ctx-label">下移一層</span></button>
         <div class="ctx-separator" id="ctx-sep1"></div>
-        <button type="button" role="menuitem" class="ctx-item" id="ctx-bring-front"><span class="material-symbols-outlined">flip_to_front</span> 移至最上層</button>
-        <button type="button" role="menuitem" class="ctx-item" id="ctx-send-back"><span class="material-symbols-outlined">flip_to_back</span> 移至最下層</button>
+        <button type="button" role="menuitem" class="ctx-item" id="ctx-bring-front"><span class="material-symbols-outlined">flip_to_front</span><span class="ctx-label">移至最上層</span></button>
+        <button type="button" role="menuitem" class="ctx-item" id="ctx-send-back"><span class="material-symbols-outlined">flip_to_back</span><span class="ctx-label">移至最下層</span></button>
         <div class="ctx-separator" id="ctx-sep2"></div>
-        <button type="button" role="menuitem" class="ctx-item ctx-danger" id="ctx-delete"><span class="material-symbols-outlined">delete</span> 刪除</button>
+        <button type="button" role="menuitem" class="ctx-item ctx-danger" id="ctx-delete"><span class="material-symbols-outlined">delete</span><span class="ctx-label">刪除</span></button>
     </div>
 
     <!-- Inline Rename Input -->
     <input type="text" id="rename-input" autocomplete="off" aria-label="物件名稱">
 
     <!-- Inline Text Editor -->
-    <textarea id="text-edit-overlay" autocomplete="off" spellcheck="false" wrap="off"></textarea>
+    <textarea id="text-edit-overlay" aria-label="文字編輯器" autocomplete="off" spellcheck="false" wrap="off"></textarea>
 
     <!-- ═══════════════════════════════════════
          Error Overlay  (shown on module crash)
@@ -360,21 +368,21 @@
             <div class="err-header">
                 <span class="err-icon material-symbols-outlined" aria-hidden="true">error</span>
                 <div>
-                    <div class="err-code" id="err-title">載入失敗</div>
-                    <div class="err-subtitle">無法載入所需的模組檔案</div>
+                    <div class="err-code" id="err-title">Load failed</div>
+                    <div class="err-subtitle">A required module failed to load</div>
                 </div>
             </div>
             <div class="err-divider"></div>
-            <div class="err-section-label">⚡ 錯誤詳情</div>
+            <div class="err-section-label">Error details</div>
             <pre id="err-message" class="err-message"></pre>
-            <div class="err-section-label err-section-spaced">📍 發生位置</div>
+            <div class="err-section-label err-section-spaced">Error location</div>
             <pre id="err-stack" class="err-stack"></pre>
             <div class="err-actions">
                 <button class="err-btn err-btn-primary" type="button" id="err-reload">
-                    <span class="material-symbols-outlined" aria-hidden="true">refresh</span> 重新載入
+                    <span class="material-symbols-outlined" aria-hidden="true">refresh</span> Reload
                 </button>
                 <button class="err-btn" type="button" id="err-clear-reload">
-                    <span class="material-symbols-outlined" aria-hidden="true">delete_sweep</span> 清除暫存並重載
+                    <span class="material-symbols-outlined" aria-hidden="true">delete_sweep</span> Clear local cache and reload
                 </button>
             </div>
         </div>
@@ -535,7 +543,7 @@
         if (msgEl) msgEl.textContent = title + '\n' + (detail || '');
         if (stackEl) {
             // Highlight lines that point to our source files
-            const raw = stack || '（無堆疊資訊）';
+            const raw = stack || '(No stack information)';
             stackEl.innerHTML = raw
                 .replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;')
                 .split('\n')
@@ -556,7 +564,7 @@
         if (e.target && e.target !== window && e.target.nodeType === 1) return;
         // Benign browser notice, not an application error.
         if (/ResizeObserver loop/.test(e.message || '')) return;
-        const msg = e.message || '未知錯誤';
+        const msg = e.message || 'Unknown error';
         const src = (e.filename ? e.filename.replace(location.origin, '') : '') +
                     (e.lineno ? ':' + e.lineno : '') +
                     (e.colno  ? ':' + e.colno  : '');
@@ -576,7 +584,7 @@
     const AUTOSAVE_KEY = 'cp_whiteboard_autosave_whiteboard';
     document.getElementById('err-reload')?.addEventListener('click', () => location.reload());
     document.getElementById('err-clear-reload')?.addEventListener('click', () => {
-        if (!confirm('這會刪除此瀏覽器中自動儲存的白板內容，且無法復原。\n確定要清除暫存並重新載入嗎？')) return;
+        if (!confirm('This will delete the autosaved board in this browser and cannot be undone.\nClear the local cache and reload?')) return;
         try {
             localStorage.removeItem(AUTOSAVE_KEY);
             // Backups of unreadable autosaves are only removed when the user explicitly agrees.
@@ -585,11 +593,11 @@
                 const key = localStorage.key(i);
                 if (key && key.startsWith(AUTOSAVE_KEY + '_corrupt')) backups.push(key);
             }
-            if (backups.length && confirm('偵測到 ' + backups.length + ' 份損毀自動儲存的備份。\n是否一併刪除？（選「取消」會保留備份）')) {
+            if (backups.length && confirm('Found ' + backups.length + (backups.length === 1 ? ' backup of a corrupted autosave.' : ' backups of corrupted autosaves.') + '\nDelete them as well? (Cancel keeps the backups.)')) {
                 backups.forEach(key => localStorage.removeItem(key));
             }
         } catch (err) {
-            alert('無法清除暫存：' + (err && err.message ? err.message : err));
+            alert('Could not clear the cache: ' + (err && err.message ? err.message : err));
             return;
         }
         location.reload();
@@ -612,7 +620,7 @@
 
         function tryDismiss() {
             if (!appReady || !fontsReady) return;
-            setProgress(100, '就緒');
+            setProgress(100, 'Ready');
             setTimeout(() => {
                 if (screen) {
                     screen.classList.add('fade-out');
@@ -622,42 +630,42 @@
         }
 
         // Step 1: Wait for Fonts
-        setProgress(10, '載入字型…');
+        setProgress(10, 'Loading fonts…');
 
         const fontTimeout = setTimeout(() => {
             fontsReady = true;
-            setProgress(60, '字型載入逾時，繼續…');
+            setProgress(60, 'Font loading timed out. Continuing…');
             tryDismiss();
         }, 3000);
 
         document.fonts.ready.then(() => {
             clearTimeout(fontTimeout);
-            setProgress(60, '字型就緒');
+            setProgress(60, 'Fonts ready');
             fontsReady = true;
             tryDismiss();
         }).catch(() => {
             clearTimeout(fontTimeout);
             fontsReady = true;
-            setProgress(60, '字型載入失敗');
+            setProgress(60, 'Font loading failed');
             tryDismiss();
         });
 
         // Step 2: Load app module
-        setProgress(20, '載入應用程式…');
+        setProgress(20, 'Loading application…');
         const script = document.createElement('script');
         script.type = 'module';
-        script.src  = 'js/app.js?v=3';
+        script.src  = 'js/app.js?v=8';
         script.onload = () => {
-            setProgress(90, '初始化…');
+            setProgress(90, 'Initializing…');
             appReady = true;
             tryDismiss();
         };
         script.onerror = (e) => {
             // Direct top-level script load failure
             showError(
-                'app.js 載入失敗 (404 or SyntaxError)',
+                'Main application failed to load (404 or syntax error)',
                 'js/app.js',
-                '無法取得主程式腳本。\n請確認伺服器是否正常運行，以及檔案是否存在。'
+                'Could not load the application. Check the server or application files.'
             );
         };
         document.body.appendChild(script);

@@ -57,52 +57,88 @@ export function formatDataToken(value) {
     return /[\s,"\u3000]/u.test(text) ? JSON.stringify(text) : text;
 }
 
+function readJSONString(input, start) {
+    let escaped = false;
+    for (let end = start + 1; end < input.length; end++) {
+        const char = input[end];
+        if (escaped) escaped = false;
+        else if (char === '\\') escaped = true;
+        else if (char === '"') {
+            try { return { value: JSON.parse(input.slice(start, end + 1)), end: end + 1 }; }
+            catch { return null; }
+        }
+    }
+    return null;
+}
+
+/** Tabs and physical newlines inside quoted cells indicate spreadsheet input. */
+export function isTabularMatrixInput(text) {
+    const input = String(text);
+    if (input.includes('\t')) return true;
+    let quoted = false, atRowStart = true;
+    for (let index = 0; index < input.length; index++) {
+        const char = input[index];
+        const newline = char === '\n' || char === '\r';
+        if (quoted) {
+            if (newline) return true;
+            if (char === '"') {
+                if (input[index + 1] === '"') index++;
+                else quoted = false;
+            }
+        } else if (newline) atRowStart = true;
+        else {
+            if (atRowStart && char === '"') {
+                const json = readJSONString(input, index);
+                if (json && (json.end === input.length || /[\s,]/.test(input[json.end]))) {
+                    index = json.end - 1;
+                } else quoted = true;
+            }
+            atRowStart = false;
+        }
+    }
+    return false;
+}
+
 /** Read CP whitespace input or tabular clipboard text, retaining empty cells. */
 export function parsePastedMatrixRows(text) {
-    const input = String(text ?? '').replace(/\r\n?/g, '\n');
-    if (!input) return [[]];
-    const records = [], row = [];
-    let tabular = false;
-    let field = '', quoted = false, escaped = false;
-    const flush = () => {
-        row.push(field);
-        field = ''; escaped = false;
-    };
-    for (const char of input) {
-        if (!quoted && (char === '\t' || char === '\n')) {
-            flush();
-            if (char === '\t') tabular = true;
-            else records.push(row.splice(0));
-            continue;
+    const input = String(text ?? '').replace(/\r\n?/g, '\n').replace(/\n+$/, '');
+    if (!isTabularMatrixInput(input)) return input.split('\n').map(row => splitDataTokens(row));
+    const boundary = index => index === input.length || input[index] === '\t' || input[index] === '\n';
+    const readQuoted = start => {
+        // Whiteboard copies use JSON strings. Accept one only when it ends at
+        // a cell boundary; spreadsheet quoting uses doubled quotes instead.
+        const json = readJSONString(input, start);
+        if (json && boundary(json.end)) return json;
+
+        let value = '';
+        for (let end = start + 1; end < input.length; end++) {
+            const char = input[end];
+            if (char === '"') {
+                if (input[end + 1] === '"') { value += '"'; end++; continue; }
+                if (boundary(end + 1)) return { value, end: end + 1 };
+                // Preserve a malformed quoted field as entered.
+                while (!boundary(++end)) {}
+                return { value: input.slice(start, end), end };
+            }
+            value += char;
         }
-        if (char === '"' && !escaped && (quoted || field === '' ||
-            (field.startsWith('"') && field.endsWith('"')))) quoted = !quoted;
-        field += char;
-        escaped = char === '\\' && !escaped;
-    }
-    // A final record separator terminates the last row. Additional separators
-    // represent real empty rows and must survive spreadsheet paste.
-    if (field || row.length || !input.endsWith('\n') || quoted) {
-        flush();
-        records.push(row);
-    }
-    const decode = value => {
-        if (value.startsWith('"') && value.endsWith('"')) {
-            try {
-                const parsed = JSON.parse(value);
-                if (typeof parsed === 'string') return parsed;
-            } catch { /* Native TSV uses doubled quotes and literal newlines. */ }
-            if (/^"(?:[^"]|"")*"$/u.test(value)) return value.slice(1, -1).replace(/""/g, '"');
-        }
-        return value === '\u3000' ? '' : value;
+        return { value: input.slice(start), end: input.length };
     };
-    if (tabular) return records.map(record => record.map(decode));
-    // CP whitespace input commonly ends in extra blank lines. Only TSV has
-    // explicit empty fields, so retain the existing CP trailing-line behavior.
-    while (records.length > 1 && records.at(-1)[0] === '') records.pop();
-    return records.map(([value]) => {
-        const decoded = decode(value);
-        if (decoded !== value || value === '""') return [decoded];
-        return splitDataTokens(value);
-    });
+    const rows = [], row = [];
+    let start = 0;
+    while (start <= input.length) {
+        let field;
+        if (input[start] === '"') field = readQuoted(start);
+        else {
+            let end = start;
+            while (!boundary(end)) end++;
+            field = { value: input.slice(start, end), end };
+        }
+        row.push(field.value === '\u3000' ? '' : field.value);
+        if (field.end === input.length) break;
+        if (input[field.end] === '\n') rows.push(row.splice(0));
+        start = field.end + 1;
+    }
+    rows.push(row);
+    return rows;
 }

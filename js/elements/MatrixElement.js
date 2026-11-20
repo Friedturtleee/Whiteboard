@@ -2,7 +2,7 @@
  * MatrixElement — 2D matrix visualization for competitive programming.
  */
 import { Element } from '../core/Element.js';
-import { formatDataToken, splitDataTokens } from '../core/DataTokens.js';
+import { formatDataToken, splitDataTokens, parsePastedMatrixRows, isTabularMatrixInput } from '../core/DataTokens.js?v=2';
 import { drawCanvasCellText } from '../core/CanvasTextFit.js';
 import { getLocalViewport } from '../canvas/Viewport.js';
 
@@ -13,6 +13,24 @@ const MAX_MATRIX_ROWS = 200;
 const MAX_MATRIX_COLS = 200;
 const MAX_MATRIX_CELLS = 10000;
 const MAX_MATRIX_INPUT_LENGTH = 1000000;
+const graphemeSegmenter = typeof Intl !== 'undefined' && typeof Intl.Segmenter === 'function'
+    ? new Intl.Segmenter(undefined, { granularity: 'grapheme' })
+    : null;
+
+function splitCharacters(value) {
+    return graphemeSegmenter
+        ? Array.from(graphemeSegmenter.segment(value), item => item.segment)
+        : Array.from(value);
+}
+
+function formatMatrixCell(value, singleColumn) {
+    const token = formatDataToken(value);
+    const text = String(value ?? '');
+    // A one-cell row is otherwise ambiguous with a compact character grid.
+    return singleColumn && text.length > 1 && !/^\d+$/.test(text) && token === text
+        ? JSON.stringify(text)
+        : token;
+}
 
 function remapGridKeys(keys, axis, at, action) {
     const next = new Set();
@@ -197,7 +215,7 @@ export class MatrixElement extends Element {
     setFromText(text) {
         const rawText = String(text ?? '');
         if (rawText.length > MAX_MATRIX_INPUT_LENGTH) {
-            return '矩陣輸入不可超過 1 MB。';
+            return '矩陣資料不得超過 1 MB。';
         }
         // Support dimension format: "3*5" or "3x5" or "3 * 5" → creates empty matrix
         const dimMatch = rawText.trim().match(/^(\d+)\s*[*xX×]\s*(\d+)$/);
@@ -207,7 +225,7 @@ export class MatrixElement extends Element {
             if (!Number.isSafeInteger(rows) || !Number.isSafeInteger(cols) ||
                 rows < 1 || cols < 1 || rows > MAX_MATRIX_ROWS || cols > MAX_MATRIX_COLS ||
                 rows * cols > MAX_MATRIX_CELLS) {
-                return '矩陣尺寸上限為 200 × 200，且總格數不可超過 10000。';
+                return '矩陣上限為 200 × 200，最多 10,000 格。';
             }
             const data = Array.from({ length: rows }, () => new Array(cols).fill(''));
             this.inputText = rawText;
@@ -221,12 +239,40 @@ export class MatrixElement extends Element {
             return null;
         }
 
-        // Do not call trim() on each line: U+3000 is our intentional empty-cell
-        // marker, and trimming it would silently remove leading/trailing cells.
-        const lines = rawText
-            .replace(/\r/g, '')
-            .split('\n')
-            .filter(line => !/^[ \t]*$/.test(line));
+        // A single grapheme fills the current grid; tabs keep their table meaning.
+        const singleValues = splitDataTokens(rawText, { multiline: true });
+        const singleValue = singleValues[0];
+        const isSingleCharacter = singleValues.length === 1 &&
+            (singleValue === ''
+                ? rawText === EMPTY_CELL
+                : splitCharacters(singleValue).length === 1);
+        if (this.rows > 0 && this.cols > 0 &&
+            !rawText.includes('\t') && isSingleCharacter) {
+            const value = singleValue === '' ? '' : singleValue;
+            const tokenLength = formatMatrixCell(value, this.cols === 1).length;
+            const expandedLength = this.rows * (this.cols * tokenLength + this.cols - 1) + this.rows - 1;
+            if (expandedLength > MAX_MATRIX_INPUT_LENGTH) {
+                return '套用後資料不得超過 1 MB。';
+            }
+
+            this.inputText = rawText;
+            this.selectedCells.clear();
+            this._lastCellKey = null;
+            this.highlights = {};
+            this.data = Array.from(
+                { length: this.rows },
+                () => new Array(this.cols).fill(value)
+            );
+            this._updateSize();
+            return null;
+        }
+
+        // Keep tabs because they separate spreadsheet cells, including empty ones.
+        // U+3000 is also an intentional empty-cell marker.
+        const tabular = isTabularMatrixInput(rawText);
+        const lines = tabular
+            ? parsePastedMatrixRows(rawText)
+            : rawText.replace(/\r/g, '').split('\n').filter(line => !/^ *$/.test(line));
 
         if (lines.length === 0) {
             this.inputText = rawText;
@@ -246,24 +292,33 @@ export class MatrixElement extends Element {
         }
         let cols = 0;
         const data = [];
-        const tokenRows = lines.map(line => splitDataTokens(line));
-        // CP character grid (e.g. "#..#" / "abc" rows): split a row into
-        // characters only when EVERY row is a single, unquoted, non-numeric
-        // token and at least one is longer than one character. A single
-        // column of numbers ("-5", "3.14", "10") is therefore never split.
-        const isCharGrid = tokenRows.every((vals, index) =>
+        // Combined input rules, evaluated in this order (the dimension form
+        // "RxC" and the single-character fill are handled earlier):
+        //  1. Tabular input (tabs, or quoted cells containing physical
+        //     newlines) keeps every cell exactly as parsed, including empty
+        //     cells, and is NEVER split into characters.
+        //  2. Otherwise each non-blank line is tokenised on whitespace/commas.
+        //  3. CP character grid ("#..#" / "abc" rows): a line is split into
+        //     characters only when EVERY line is a single, unquoted,
+        //     non-numeric token and at least one has more than one grapheme.
+        //     Requiring the whole input to qualify keeps a single column of
+        //     numbers ("-5", "3.14", "10") or mixed words intact, while still
+        //     splitting "#..#" over ".##." and one-line "AB". getTextFromData quotes
+        //     multi-character one-cell rows so edited columns round-trip.
+        const tokenRows = tabular ? lines : lines.map(line => splitDataTokens(line));
+        const isCharGrid = !tabular && tokenRows.every((vals, index) =>
             vals.length === 1 && !/^\s*"/.test(lines[index]) && !NUMERIC_TOKEN.test(vals[0])) &&
-            tokenRows.some(vals => Array.from(vals[0]).length > 1);
+            tokenRows.some(vals => splitCharacters(vals[0]).length > 1);
         for (let r = 0; r < lines.length; r++) {
             let vals = tokenRows[r];
-            if (isCharGrid) vals = Array.from(vals[0]);
+            if (isCharGrid) vals = splitCharacters(vals[0]);
             if (vals.length > MAX_MATRIX_COLS) {
                 return '矩陣最多支援 200 欄。';
             }
             data[r] = vals;
             cols = Math.max(cols, vals.length);
             if ((r + 1) * cols > MAX_MATRIX_CELLS) {
-                return '矩陣總格數不可超過 10000。';
+                return '矩陣最多 10,000 格。';
             }
         }
         // Pad shorter rows
@@ -281,11 +336,13 @@ export class MatrixElement extends Element {
         return null;
     }
 
+    getTextFromData(data = this.data) {
+        return data.map(row => row.map(value => formatMatrixCell(value, row.length === 1))
+            .join(' ')).join('\n');
+    }
+
     updateTextFromData() {
-        // Convert empty cells to the visual placeholder '　' when building the text representation
-        this.inputText = this.data
-            .map(row => row.map(formatDataToken).join(' '))
-            .join('\n');
+        this.inputText = this.getTextFromData();
     }
 
     draw(ctx, camera) {

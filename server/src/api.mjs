@@ -1,6 +1,8 @@
 const MAX_BODY_BYTES = 32 * 1024;
 const MAX_TITLE_LENGTH = 80;
 const MAX_BOARDS_PER_USER = 500;
+const BOARD_LIST_PAGE_SIZE = 200;
+const MAX_BOARD_LIST_OFFSET = 1_000_000;
 const MAX_MEMBERS_PER_BOARD = 100;
 const MAX_LINKS_PER_BOARD = 100;
 const TICKET_LIFETIME_MS = 30_000;
@@ -130,7 +132,7 @@ async function getBoardByShareToken(env, token) {
   ).bind(tokenHash, Date.now()).first();
 }
 
-async function listBoards(env, userId) {
+async function listBoards(env, userId, offset) {
   return env.DB.prepare(
     `SELECT id, title, owner_user_id, created_at, updated_at, cleanup_pending, schema_version, 'owner' AS role
        FROM boards WHERE owner_user_id = ? AND (deleted_at IS NULL OR cleanup_pending = 1)
@@ -138,8 +140,8 @@ async function listBoards(env, userId) {
      SELECT b.id, b.title, b.owner_user_id, b.created_at, b.updated_at, 0 AS cleanup_pending, b.schema_version, m.role
        FROM board_members m JOIN boards b ON b.id = m.board_id
       WHERE m.user_id = ? AND b.deleted_at IS NULL
-     ORDER BY updated_at DESC LIMIT 200`
-  ).bind(userId, userId).all();
+     ORDER BY updated_at DESC, id DESC LIMIT ? OFFSET ?`
+  ).bind(userId, userId, BOARD_LIST_PAGE_SIZE + 1, offset).all();
 }
 
 async function listMembers(env, boardId) {
@@ -258,8 +260,19 @@ export async function handleApiRequest(request, env, userId = null, clerkClient 
 
   if (path === '/api/boards' && method === 'GET') {
     if (!userId) return error('Unauthorized.', 401);
-    const result = await listBoards(env, userId);
-    return json({ boards: result.results || [] });
+    const offset = url.searchParams.has('offset') ? Number(url.searchParams.get('offset')) : 0;
+    if (!Number.isSafeInteger(offset) || offset < 0 || offset > MAX_BOARD_LIST_OFFSET) {
+      return error('Board list offset is invalid.');
+    }
+    const result = await listBoards(env, userId, offset);
+    const fetched = result.results || [];
+    const hasMore = fetched.length > BOARD_LIST_PAGE_SIZE;
+    const boards = fetched.slice(0, BOARD_LIST_PAGE_SIZE);
+    return json({
+      boards,
+      hasMore,
+      nextOffset: hasMore ? offset + boards.length : null
+    });
   }
 
   if (path === '/api/boards' && method === 'POST') {
@@ -469,3 +482,4 @@ export async function handleApiRequest(request, env, userId = null, clerkClient 
   }
   return error('Not found.', 404);
 }
+

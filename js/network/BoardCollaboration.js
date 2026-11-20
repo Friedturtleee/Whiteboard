@@ -1,8 +1,8 @@
 import * as Y from 'https://esm.sh/yjs@13.6.31?bundle';
 import * as encoding from 'https://esm.sh/lib0@0.2.117/encoding?bundle';
 import * as decoding from 'https://esm.sh/lib0@0.2.117/decoding?bundle';
-import { Serializer } from '../core/Serializer.js';
-import { validateWhiteboardElement } from '../core/WhiteboardElementValidation.js';
+import { Serializer } from '../core/Serializer.js?v=2';
+import { validateWhiteboardElement } from '../core/WhiteboardElementValidation.js?v=2';
 import { validateTreeElementSource } from '../core/TreeSourceValidation.js';
 import { MIN_CAMERA_ZOOM, MAX_CAMERA_ZOOM } from '../canvas/Camera.js';
 
@@ -53,8 +53,8 @@ function toPlain(value) {
     if (typeof value === 'string' && value.startsWith(ARRAY_VALUE_PREFIX)) {
         let parsed;
         try { parsed = JSON.parse(value.slice(ARRAY_VALUE_PREFIX.length)); }
-        catch { throw new Error('Invalid shared array value.'); }
-        if (!Array.isArray(parsed)) throw new Error('Invalid shared array value.');
+        catch { throw new Error('同步資料格式無效。'); }
+        if (!Array.isArray(parsed)) throw new Error('同步資料格式無效。');
         return parsed;
     }
     return value;
@@ -288,7 +288,7 @@ export class BoardCollaboration {
                             finally { this.isApplyingRemote = false; }
                             this._applyCameraIfAvailable();
                         } else {
-                            throw new Error('Unknown Yjs synchronization message.');
+                            throw new Error('收到未知的同步訊息。');
                         }
                         decoder.pos = payloadOffset + syncDecoder.pos;
                         if (this.role !== 'viewer' && subtype === SYNC_STEP1) {
@@ -347,7 +347,7 @@ export class BoardCollaboration {
         if (!isValidCamera(camera)) {
             if (!sharedCamera) return false;
             camera = toPlain(sharedCamera);
-            if (!isValidCamera(camera)) throw new Error('Shared board camera metadata is invalid.');
+            if (!isValidCamera(camera)) throw new Error('白板視角資料無效。');
         }
         this.app.camera.x = camera.x;
         this.app.camera.y = camera.y;
@@ -364,7 +364,7 @@ export class BoardCollaboration {
             return this._syncLocalState();
         } catch (error) {
             this.status = 'error';
-            this.app.cloudBoards?.renderStatus(error.message || '白板同步失敗，請先匯出資料。');
+            this.app.cloudBoards?.renderStatus(error.message || '白板同步失敗。請先匯出資料。');
             return false;
         }
     }
@@ -401,7 +401,7 @@ export class BoardCollaboration {
     _validateElements(elements) {
         if (elements.length > MAX_ELEMENTS) {
             this.status = 'error';
-            this.app.cloudBoards?.renderStatus('白板元素超過雲端限制，請匯出 JSON。');
+            this.app.cloudBoards?.renderStatus('白板元素數量超出雲端上限。請匯出 JSON。');
             return false;
         }
         const ids = new Set();
@@ -409,23 +409,23 @@ export class BoardCollaboration {
         try {
             for (const data of elements) {
                 if (!data || typeof data.id !== 'string' || !data.id || ids.has(data.id)) {
-                    throw new Error('白板含有無效或重複的元素 ID。');
+                    throw new Error('白板物件 ID 無效或重複。');
                 }
                 ids.add(data.id);
                 validateWhiteboardElement(data);
                 if (data.type === 'tree') validateTreeElementSource(data);
                 const size = new TextEncoder().encode(JSON.stringify(data)).byteLength;
-                if (size > MAX_ELEMENT_BYTES) throw new Error('單一元素超過雲端限制，請匯出 JSON。');
+                if (size > MAX_ELEMENT_BYTES) throw new Error('單一元素超出雲端大小上限。請匯出 JSON。');
                 bytes += size;
             }
         } catch (error) {
             this.status = 'error';
-            this.app.cloudBoards?.renderStatus(error.message || '無法序列化白板資料。');
+            this.app.cloudBoards?.renderStatus(error.message || '白板資料無法轉換。');
             return false;
         }
         if (bytes > MAX_BOARD_BYTES) {
             this.status = 'error';
-            this.app.cloudBoards?.renderStatus('白板資料超過雲端限制，請匯出 JSON。');
+            this.app.cloudBoards?.renderStatus('白板資料超出雲端大小上限。請匯出 JSON。');
             return false;
         }
         return true;

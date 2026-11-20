@@ -10,6 +10,7 @@
  * Pipeline: Markdown → HTML (with hljs + KaTeX) → hidden DOM div → html2canvas → Canvas image
  */
 import { Element } from '../core/Element.js';
+import { i18n } from '../ui/I18n.js';
 
 const MAX_RENDER_DIMENSION = 16_384;
 const MAX_RENDER_PIXELS = 16_000_000;
@@ -68,10 +69,10 @@ export class MarkdownElement extends Element {
     static renderToHTML(md) {
         if (typeof md !== 'string' || !md.trim()) return '';
         if (md.length > MarkdownElement.MAX_SOURCE_LENGTH) {
-            return '<p>Markdown source exceeds the 1 MB rendering limit.</p>';
+            return '<p>Markdown 預覽資料不得超過 1 MB。</p>';
         }
         if (exceedsRenderLineLimit(md, MarkdownElement.MAX_RENDER_LINES)) {
-            return '<p>Markdown preview is limited to 2000 lines. Shorten the source to render it.</p>';
+            return '<p>Markdown 預覽上限為 2,000 行；請縮短內容。</p>';
         }
 
         // 1. Limit blockquote nesting to 5 levels
@@ -225,6 +226,7 @@ export class MarkdownElement extends Element {
     _render() {
         const revision = ++this._renderRevision;
         this._rendering = true;
+        this._renderLimitNotice = false;
 
         const md = this.markdownText;
         if (!md || !md.trim()) {
@@ -232,8 +234,12 @@ export class MarkdownElement extends Element {
             this._rendering = false;
             return;
         }
+        if (md.length > MarkdownElement.MAX_SOURCE_LENGTH) {
+            this._showRenderLimitNotice(i18n.t('Markdown preview data must be 1 MB or less.'));
+            return;
+        }
         if (exceedsRenderLineLimit(md, MarkdownElement.MAX_RENDER_LINES)) {
-            this._showRenderLimitNotice();
+            this._showRenderLimitNotice(i18n.t('Markdown preview limit is 2,000 lines. Shorten the content.'));
             return;
         }
 
@@ -306,7 +312,7 @@ export class MarkdownElement extends Element {
                 }).catch(() => {
                     if (container.parentNode) container.parentNode.removeChild(container);
                     if (revision === this._renderRevision) {
-                        this._showRenderLimitNotice('Markdown 渲染失敗，請檢查內容後重試。');
+                        this._showRenderLimitNotice(i18n.t('Markdown 渲染失敗，請檢查內容後重試。'));
                     }
                 });
             } else {
@@ -316,7 +322,8 @@ export class MarkdownElement extends Element {
         });
     }
 
-    _showRenderLimitNotice(message = 'Markdown is too large to render. Shorten it to show the canvas preview.') {
+    _showRenderLimitNotice(message = i18n.t('Markdown is too large to render. Shorten it to show the canvas preview.')) {
+        this._renderLimitNotice = true;
         const width = Math.min(Math.max(this._renderWidth || 600, 240), 1200);
         const height = 48;
         const scale = 2;
@@ -460,7 +467,7 @@ export class MarkdownElement extends Element {
                 .map(node => serializer.serializeToString(node)).join('');
         } catch {
             if (revision === this._renderRevision) {
-                this._showRenderLimitNotice('Markdown 渲染失敗（無法產生預覽）。');
+                this._showRenderLimitNotice(i18n.t('Markdown 渲染失敗（無法產生預覽）。'));
             }
             return;
         }
@@ -493,7 +500,7 @@ export class MarkdownElement extends Element {
         img.onerror = () => {
             URL.revokeObjectURL(url);
             if (revision === this._renderRevision) {
-                this._showRenderLimitNotice('Markdown 渲染失敗（預覽圖載入錯誤）。');
+                this._showRenderLimitNotice(i18n.t('Markdown 渲染失敗（預覽圖載入錯誤）。'));
             }
         };
         img.src = url;

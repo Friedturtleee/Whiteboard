@@ -3,8 +3,9 @@
  * Supports: Binary Tree, BST, AVL, Red-Black Tree.
  * Can be created from text input or value list.
  */
+import { i18n } from '../ui/I18n.js';
 import { Element } from '../core/Element.js';
-import { MAX_TREE_INPUT_LENGTH, MAX_TREE_NODES, TreeParser } from './TreeParser.js';
+import { MAX_TREE_INPUT_LENGTH, MAX_TREE_NODES, TreeParser } from './TreeParser.js?v=2';
 import { TreeLayout } from './TreeLayout.js';
 import { TreeRenderer } from './TreeRenderer.js';
 
@@ -29,7 +30,8 @@ export class TreeElement extends Element {
         this.inputMode = 'auto';
         this.label = 'Tree';
         this.hasWeights = false;
-        // "0-based" checkbox of the input dialog (auto mode, single-node trees).
+        // Vertex numbering starts at 0 (the dialog's "0-based" checkbox, or a
+        // 0 detected by the contest-format parser). Persisted in serialize().
         this.zeroBased = false;
         this._nodeValueOverrides = {};
         this._edgeWeightOverrides = {};
@@ -47,7 +49,7 @@ export class TreeElement extends Element {
     buildFromText(text, mode = 'auto', forceZeroBased = false) {
         const input = String(text ?? '');
         if (input.length > MAX_TREE_INPUT_LENGTH) {
-            return '樹資料不可超過 1 MB。';
+            return '樹資料不得超過 1 MB。';
         }
         if (!['auto', 'rooted', 'parent', 'edge', 'values'].includes(mode)) {
             return '未知的樹輸入格式。';
@@ -106,14 +108,17 @@ export class TreeElement extends Element {
         }
 
         if (result?.error) return result.error;
-        if (!result?.root) return input.trim() ? '無法建立樹，請檢查輸入格式。' : null;
+        if (!result?.root) return input.trim() ? '樹資料格式錯誤。' : null;
 
         this.root = result.root;
         this._nextDynamicNodePortId = 0;
         this._nodePortIdsByNode = this._captureNodePortIds(this.root);
         this.inputText = input;
         this.inputMode = mode;
-        this.zeroBased = Boolean(forceZeroBased) && mode === 'auto';
+        // Either the user ticked "0-based" in auto mode (kept even when the
+        // input has no contest-format header, so the checkbox state survives
+        // re-opening the dialog) or the parser detected vertex 0 itself.
+        this.zeroBased = result.zeroBased === true || (Boolean(forceZeroBased) && mode === 'auto');
         this.hasWeights = result.hasWeights || false;
         this._nodeValueOverrides = {};
         this._edgeWeightOverrides = {};
@@ -183,7 +188,7 @@ export class TreeElement extends Element {
             ctx.font = '13px sans-serif';
             ctx.textAlign = 'center';
             ctx.textBaseline = 'middle';
-            ctx.fillText('雙擊輸入樹結構', this.x + this.width / 2, this.y + this.height / 2);
+            ctx.fillText(i18n.t('雙擊編輯樹資料'), this.x + this.width / 2, this.y + this.height / 2);
             ctx.restore();
             return;
         }
@@ -657,6 +662,7 @@ export class TreeElement extends Element {
         // Reused elements (especially those updated by remote sync) must not
         // keep nodes or offsets from an older snapshot when the source is empty.
         this.root = null;
+        this.zeroBased = false;
         this._nodePortIdsByNode = new Map();
         this._nextDynamicNodePortId = 0;
         this._offsetX = undefined;
@@ -678,6 +684,9 @@ export class TreeElement extends Element {
         if (!['auto', 'rooted', 'parent', 'edge', 'values'].includes(this.inputMode)) {
             throw new TypeError('Saved tree input mode is invalid.');
         }
+        if (data.zeroBased !== undefined && typeof data.zeroBased !== 'boolean') {
+            throw new TypeError('Saved tree numbering is invalid.');
+        }
         this.hasWeights = data.hasWeights || false;
         // Absent in files saved before the flag was persisted (treated as false).
         const savedZeroBased = data.zeroBased === true;
@@ -687,7 +696,7 @@ export class TreeElement extends Element {
         // Rebuild tree from saved text
         if (this.inputText) {
             let error;
-            if (data.inputMode === undefined) {
+            if (data.inputMode === undefined && !savedZeroBased) {
                 // Before the mode selector was saved, the editor wrote rooted
                 // parent/child rows. Prefer that interpretation when valid so
                 // undirected auto-detection cannot silently change the root.
@@ -697,7 +706,7 @@ export class TreeElement extends Element {
                 error = this.buildFromText(this.inputText, this.inputMode, savedZeroBased);
             }
             if (error) throw new TypeError('Saved tree data is invalid: ' + error);
-            this.zeroBased = savedZeroBased;
+            this.zeroBased = savedZeroBased || this.zeroBased;
             // Restore relative offsets
             if (data._relOffsetX !== undefined) {
                 this._relOffsetX = data._relOffsetX;

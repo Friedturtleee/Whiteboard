@@ -52,6 +52,8 @@ function buildShortcutsDialog() {
                 if (index) dd.append(' + ');
                 const kbd = document.createElement('kbd');
                 kbd.textContent = key === 'Mod' ? (isMac ? '⌘' : 'Ctrl') : key;
+                // Physical key caps ("Delete", "Esc"...) must not be run through the translator.
+                if (!/[^\x20-\x7e]/.test(kbd.textContent)) kbd.dataset.noI18n = '';
                 dd.appendChild(kbd);
             });
             list.append(dt, dd);
@@ -91,16 +93,21 @@ export function toggleShortcutsDialog() {
     release = bindModal(dialog, { onCancel: dismiss, onConfirm: dismiss, initialFocus: close });
 }
 
-/** Labels, bounded tooltips, number steppers, shortcut help and collapsible panels for the canvas UI. */
-export function initInterface() {
-    document.querySelectorAll('[data-tooltip]').forEach(control => {
-        control.setAttribute('aria-label', control.dataset.tooltip);
+/** Labels, bounded tooltips, and collapsible panels for the canvas UI. */
+export function labelTooltipControls(root) {
+    root.querySelectorAll('[data-tooltip]').forEach(control => {
+        if (!control.getAttribute('aria-label')?.trim()) control.setAttribute('aria-label', control.dataset.tooltip);
         control.querySelectorAll('.material-symbols-outlined').forEach(icon =>
             icon.setAttribute('aria-hidden', 'true'));
     });
-    document.querySelectorAll('button[title]').forEach(button => {
-        if (!button.hasAttribute('aria-label')) button.setAttribute('aria-label', button.title);
+    root.querySelectorAll('button[title]').forEach(button => {
+        if (!button.getAttribute('aria-label')?.trim()) button.setAttribute('aria-label', button.title);
     });
+}
+
+/** Labels, bounded tooltips, number steppers, shortcut help and collapsible panels for the canvas UI. */
+export function initInterface() {
+    labelTooltipControls(document);
     document.querySelectorAll('button .material-symbols-outlined').forEach(icon =>
         icon.setAttribute('aria-hidden', 'true'));
     const fields = { 'prop-x': 'X 位置', 'prop-y': 'Y 位置', 'prop-w': '寬度',

@@ -6,7 +6,7 @@ import * as decoding from 'lib0/decoding';
 import { createClerkClient, verifyToken } from '@clerk/backend';
 import { DurableObject } from 'cloudflare:workers';
 import { validateWhiteboardElement } from '../../js/core/WhiteboardElementValidation.js';
-import { validateTreeElementSource } from '../../js/core/TreeSourceValidation.js';
+import { validateTreeElementSource } from './tree-source.mjs';
 import { MIN_CAMERA_ZOOM, MAX_CAMERA_ZOOM } from '../../js/canvas/Camera.js';
 import { authenticateRequest, getAllowedOrigins, getRoomId, isAllowedOrigin } from './auth.mjs';
 import { consumeConnectTicket, handleApiRequest } from './api.mjs';

@@ -15,21 +15,21 @@ import { SelectionManager } from './core/SelectionManager.js';
 import { LayerManager } from './core/LayerManager.js';
 import { Transform } from './core/Transform.js';
 import { History } from './core/History.js';
-import { Serializer } from './core/Serializer.js';
-import { formatDataToken, splitDataTokens } from './core/DataTokens.js';
+import { Serializer } from './core/Serializer.js?v=2';
+import { formatDataToken, splitDataTokens } from './core/DataTokens.js?v=2';
 import { MATRIX_CLIPBOARD_TYPE, encodeMatrixClipboard, planMatrixPaste } from './core/MatrixClipboard.js';
 import { AutosaveStore } from './core/AutosaveStore.js';
 
 // ── Elements ────────────────────────────────────────────
 import { ShapeElement } from './elements/ShapeElement.js';
 import { TextElement } from './elements/TextElement.js';
-import { MatrixElement } from './elements/MatrixElement.js';
+import { MatrixElement } from './elements/MatrixElement.js?v=5';
 import { StackElement } from './elements/StackElement.js';
 import { QueueElement } from './elements/QueueElement.js';
 import { PenElement } from './elements/PenElement.js';
 import { MermaidElement } from './elements/MermaidElement.js';
 import { MarkdownElement } from './elements/MarkdownElement.js';
-import { TreeElement } from './tree/TreeElement.js';
+import { TreeElement } from './tree/TreeElement.js?v=2';
 import { GraphElement } from './graph/GraphElement.js';
 
 // ── UI ──────────────────────────────────────────────────
@@ -39,7 +39,8 @@ import { LayerPanel } from './ui/LayerPanel.js';
 import { TextInputDialog } from './ui/TextInputDialog.js';
 import { initInterface } from './ui/Interface.js';
 import { bindModal } from './ui/Modal.js';
-import { CloudBoards } from './network/CloudBoards.js';
+import { CloudBoards } from './network/CloudBoards.js?v=2';
+import { i18n } from './ui/I18n.js';
 
 // ── Tunables ────────────────────────────────────────────
 const AUTOSAVE_DELAY_MS = 1200;            // debounce before writing the local snapshot
@@ -74,11 +75,10 @@ const MAX_DATA_STRUCTURE_INPUT_LENGTH = 1_000_000;
 
 function inlineDataInputLength(element, index, value) {
     if (element.type === 'matrix') {
-        return element.data
-            .map((row, rowIndex) => row.map((item, colIndex) => formatDataToken(
-                rowIndex === index.row && colIndex === index.col ? value : item
-            )).join(' '))
-            .join('\n').length;
+        const data = element.data.map((row, rowIndex) => rowIndex === index.row
+            ? row.map((item, colIndex) => colIndex === index.col ? value : item)
+            : row);
+        return element.getTextFromData(data).length;
     }
     return element.items.map((item, itemIndex) => formatDataToken(
         itemIndex === index ? value : item
@@ -88,7 +88,7 @@ function inlineDataInputLength(element, index, value) {
 // ═════════════════════════════════════════════════════════
 // Application Singleton
 // ═════════════════════════════════════════════════════════
-class App {
+export class App {
     constructor() {
         // ── State ───────────────────────────────────────
         this.elements = [];
@@ -420,7 +420,7 @@ class App {
             const file = e.target.files[0];
             if (!file) return;
             if (this.cloudBoards?.isCloudBoard) {
-                this._toast('請先返回本機白板，再匯入 JSON，避免覆蓋尚未同步的雲端內容。');
+                this._toast('請先返回本機白板，再匯入 JSON，以免覆蓋尚未同步的內容。');
                 e.target.value = '';
                 return;
             }
@@ -436,7 +436,7 @@ class App {
                 await Serializer.importJSON(this, file);
             } catch (err) {
                 this._skipAutosave = false;
-                this._toast('匯入失敗: ' + err.message, 'error');
+                this._toast('匯入失敗：' + err.message, 'error');
                 e.target.value = '';
                 return;
             }
@@ -448,7 +448,7 @@ class App {
             // leaves the previous autosave intact.
             const saved = this._flushAutosave();
             if (saved) this._toast('已匯入');
-            else this._toast('已匯入，但無法寫入自動儲存（先前的自動存檔仍保留）。請立即匯出 JSON 備份。', 'error');
+            else this._toast('匯入完成，但自動儲存失敗。請立即匯出 JSON。', 'error');
             e.target.value = '';
         });
     }
@@ -1549,7 +1549,7 @@ class App {
         }
         el.deserialize(JSON.parse(JSON.stringify(snapshot)));
         this.layerManager._reindex();
-        this.renderer.markDirty();
+        this._updateConnectedLines([el.id]);
     }
 
     // ═════════════════════════════════════════════════════
@@ -1672,15 +1672,15 @@ class App {
 
         this.textInputDialog.show({
             element: el,
-            title: `批次輸入 ${cells.length} 個矩陣格`,
-            placeholder: `依列、欄順序輸入 ${cells.length} 個值（空格或換行分隔）。\n只輸入一個值會套用到全部選取格；含空白的值請加雙引號。\n例：1 2 3`,
+            title: `編輯選取的 ${cells.length} 格`,
+            placeholder: `單一值填滿所有選取格；或輸入 ${cells.length} 個值。\n例：1 2 3`,
             onConfirm: text => {
                 if (text.length > MAX_DATA_STRUCTURE_INPUT_LENGTH) {
-                    return '批次輸入不可超過 1 MB。';
+                    return '輸入資料不得超過 1 MB。';
                 }
                 const values = splitDataTokens(text, { multiline: true });
                 if (values.length !== 1 && values.length !== cells.length) {
-                    return `請輸入 1 個值（套用全部），或剛好 ${cells.length} 個值。`;
+                    return `輸入 1 個值套用全部，或輸入 ${cells.length} 個值。`;
                 }
 
                 return this._applyMatrixCellValues(el, cells, values);
@@ -1695,8 +1695,8 @@ class App {
             newData[row][col] = values.length === 1 ? values[0] : values[index];
         });
         if (cells.every(([row, col]) => oldData[row][col] === newData[row][col])) return null;
-        const newText = newData.map(row => row.map(formatDataToken).join(' ')).join('\n');
-        if (newText.length > MAX_DATA_STRUCTURE_INPUT_LENGTH) return '資料總輸入不可超過 1 MB，已保留原值。';
+        const newText = el.getTextFromData(newData);
+        if (newText.length > MAX_DATA_STRUCTURE_INPUT_LENGTH) return '輸入資料不得超過 1 MB。已保留原值。';
         const apply = data => {
             el.data = data.map(row => [...row]); el.updateTextFromData(); this.renderer.markDirty();
         };
@@ -1748,7 +1748,7 @@ class App {
             const text = event.clipboardData.getData('text/plain');
             if (!text) return;
             if (text.length > MAX_DATA_STRUCTURE_INPUT_LENGTH) {
-                this._toast('貼上資料不可超過 1 MB。'); return;
+                this._toast('貼上資料不得超過 1 MB。'); return;
             }
             const { el } = selected;
             const plan = planMatrixPaste(el, selected.cells, text, event.clipboardData.getData(MATRIX_CLIPBOARD_TYPE));
@@ -2133,13 +2133,28 @@ class App {
     // ═════════════════════════════════════════════════════
     // Data Structure Creation & Dialog
     // ═════════════════════════════════════════════════════
+    /** Programmatically create a matrix/stack/queue and open its input dialog (also used by browser tests). */
+    _createDataStructure(type, wx, wy) {
+        let el;
+        if (type === 'matrix') el = new MatrixElement(wx, wy);
+        else if (type === 'stack') el = new StackElement(wx, wy);
+        else el = new QueueElement(wx, wy);
+        this._applyInheritedColor(el);
+        el.strokeWidth = this.settings.defaultStrokeWidth || 2;
+        this.elements.push(el);
+        this.layerManager._reindex();
+        this._pushCreation(el, { discardable: true });
+        this.selectionManager.select(el);
+        this._showDataStructureDialog(el, true);
+        this._refreshUI();
+    }
+
     _showDataStructureDialog(el, isNew = false) {
         const typeLabel = { matrix: '矩陣', stack: '堆疊', queue: '佇列' }[el.type] || el.type;
         const placeholder = el.type === 'matrix'
-            ? '輸入矩陣，每行一列，數值以空格分隔；含空白的單格可用雙引號\n例：\n1 2 3\n4 5 6\n"two words" 8\n\n或輸入維度建立空矩陣，例：3*5'
-            : '輸入數值，以空格或換行分隔；含空白的單一值可用雙引號\n例：1 2 3 4 5';
+            ? '輸入矩陣資料；單一字元會填滿全部格子。'
+            : '數值以空格或換行分隔。\n例：1 2 3 4 5';
         const oldText = el.inputText || '';
-        const oldInputIsEmpty = isEmptyDataStructureInput(oldText);
         const originalState = JSON.parse(JSON.stringify(el.serialize()));
         const originalIndex = this.elements.indexOf(el);
         const restoreOriginal = () => this._restoreElementSnapshot(el, originalState, originalIndex);
@@ -2151,14 +2166,12 @@ class App {
             onInput: (text) => {
                 if (isEmptyDataStructureInput(text)) return;
                 const error = el.setFromText(text);
-                if (!error) this.renderer.markDirty();
+                if (!error) this._updateConnectedLines([el.id]);
                 return error;
             },
             onCancel: () => {
                 if (isNew) {
                     this._discardPendingElementCreation(el);
-                } else if (oldInputIsEmpty) {
-                    this._deleteElement(el);
                 } else {
                     restoreOriginal();
                     this.selectionManager.clear();
@@ -2182,7 +2195,7 @@ class App {
                 if (isEmptyDataStructureInput(text) || (el.width === 0 && el.height === 0)) {
                     if (isNew) {
                         this._discardPendingElementCreation(el);
-                    } else if (!oldInputIsEmpty) {
+                    } else {
                         this.history.push({
                             description: `Delete ${el.type}`,
                             undo: restoreOriginal,
@@ -2195,6 +2208,7 @@ class App {
                     return;
                 }
                 this.toolbar.setTool('select');
+                this._updateConnectedLines([el.id]);
                 if (oldText !== text) {
                     const newState = JSON.parse(JSON.stringify(el.serialize()));
                     this.history.push({
@@ -2229,24 +2243,25 @@ class App {
         const originalText = el.inputText || '';
         const originalType = el.treeType;
         const originalMode = el.inputMode || 'auto';
+        const originalZeroBased = el.zeroBased;
         const originalState = JSON.parse(JSON.stringify(el.serialize()));
         const originalIndex = this.elements.indexOf(el);
         const restoreOriginal = () => this._restoreElementSnapshot(el, originalState, originalIndex);
         this.textInputDialog.show({
             element: el,
             title: '編輯樹',
-            placeholder: '競程格式：第一行 N，接著 N-1 行無向邊 u v（節點編號可用 1 到 N，或 0 到 N-1）\n例：\n4\n2 1\n2 3\n4 2\n\n加權樹可輸入 u v w。N=1 時沒有邊可判斷編號，請用 0-based 選項指定。',
+            placeholder: 'N 後接 N−1 行：u v [w]\n編號預設從 1 起始；0 起始請勾選。單節點亦須指定。\n例：\n4\n1 2\n1 3\n3 4',
             getPlaceholder: ({ mode }) => ({
-                rooted: '第一行 N，接著 N-1 行：父節點 子節點 [權重]\n例：\n4\n2 1\n2 3\n4 2',
-                parent: '每行填一個父節點編號，第 i 行代表節點 i 的父節點（根填 0）\n例：\n0\n1\n1\n2',
-                edge: '每行一條邊：u v [權重]，不填節點數標頭\n例：\n1 2\n1 3\n2 4',
-                values: '依序輸入數值，以空格或換行分隔\n例：\n5 2 8 1 3 7 9'
+                rooted: 'N 後接 N−1 行：父節點 子節點 [w]\n例：\n4\n1 2\n1 3\n3 4',
+                parent: '每行填父節點編號；根填 0。\n例：\n0\n1\n1\n2',
+                edge: '每行輸入 u v [w]；不含節點數。\n例：\n1 2\n1 3\n2 4',
+                values: '依序輸入數值，以空格或換行分隔。\n例：5 2 8 1 3 7 9'
             })[mode],
             defaultText: originalText,
             showTypeSelect: true,
             showZeroBasedCheckbox: true,
             zeroBasedModes: ['auto'],
-            zeroBased: el.root?.value === '0',
+            zeroBased: originalZeroBased,
             types: [
                 { value: 'tree', label: '一般樹', selected: el.treeType === 'tree' },
                 { value: 'binary', label: '二元樹', selected: el.treeType === 'binary' },
@@ -2266,14 +2281,13 @@ class App {
                 if (type) el.treeType = type;
                 const error = el.buildFromText(text, mode || 'auto', zeroBased);
                 if (!type || error) el.treeType = prevType;
+                if (!error) this._updateConnectedLines([el.id]);
                 this.renderer.markDirty();
                 return error;
             },
             onCancel: () => {
                 if (isNew) {
                     this._discardPendingElementCreation(el);
-                } else if (!originalText.trim()) {
-                    this._deleteElement(el);
                 } else {
                     restoreOriginal();
                     this.selectionManager.clear();
@@ -2282,9 +2296,19 @@ class App {
                 this._refreshUI();
             },
             onConfirm: (text, type, mode, _directed, zeroBased) => {
+                if (!isNew && originalText === text && originalType === (type || originalType) &&
+                    originalMode === (mode || 'auto') &&
+                    (originalMode !== 'auto' || originalZeroBased === zeroBased)) {
+                    restoreOriginal();
+                    this.toolbar.setTool('select');
+                    this.renderer.markDirty();
+                    this._refreshUI();
+                    this._fitView([el]);
+                    return;
+                }
                 const prevType = el.treeType;
                 if (type) el.treeType = type;
-                const error = el.buildFromText(text, mode || 'auto', zeroBased);
+                const error = text.trim() ? el.buildFromText(text, mode || 'auto', zeroBased) : null;
                 if (error) {
                     el.treeType = prevType;
                     return error;
@@ -2292,7 +2316,7 @@ class App {
                 if (!text.trim() || (el.width === 0 && el.height === 0)) {
                     if (isNew) {
                         this._discardPendingElementCreation(el);
-                    } else if (originalText.trim()) {
+                    } else {
                         this.history.push({
                             description: 'Delete Tree',
                             undo: restoreOriginal,
@@ -2305,8 +2329,13 @@ class App {
                     return;
                 }
                 this.toolbar.setTool('select');
-                if (originalText !== text || originalType !== el.treeType ||
-                    originalMode !== el.inputMode) {
+                const changed = originalText !== text || originalType !== el.treeType ||
+                    originalMode !== el.inputMode || originalZeroBased !== el.zeroBased;
+                // Preview parsing rebuilds the tree and clears inline overrides.
+                // Confirming the original input must retain those edits.
+                if (!isNew && !changed) restoreOriginal();
+                this._updateConnectedLines([el.id]);
+                if (changed) {
                     const newState = JSON.parse(JSON.stringify(el.serialize()));
                     this.history.push({
                         description: 'Edit Tree',
@@ -2348,13 +2377,13 @@ class App {
         this.textInputDialog.show({
             element: el,
             title: '編輯圖',
-            placeholder: '第一行: N M (節點數、邊數)\n之後每行: u v [邊權重]\n例：\n4 5\n1 2\n2 3 7\n3 4 2\n4 1\n1 3 5',
+            placeholder: 'N M 後接 M 行邊：u v [w]\n例：\n4 3\n1 2\n2 3 7\n3 4',
             getPlaceholder: ({ graphMode, zeroBased }) => {
                 if (graphMode === 'adj-list') {
-                    return '第一行 N，接著 N 行：鄰居數 M，接 M 個鄰居編號\n例：\n4\n' +
+                    return 'N 後接 N 行：每行先填 M，再填 M 個鄰點編號。\n例：\n4\n' +
                         (zeroBased ? '2 1 2\n1 0\n2 0 3\n1 2' : '2 2 3\n1 1\n2 1 4\n1 3');
                 }
-                return '第一行 N M（節點數、邊數），接著 M 行：u v [權重]\n例：\n4 3\n' +
+                return 'N M 後接 M 行邊：u v [w]\n例：\n4 3\n' +
                     (zeroBased ? '0 1\n1 2 7\n2 3' : '1 2\n2 3 7\n3 4');
             },
             defaultText: originalText,
@@ -2367,14 +2396,13 @@ class App {
             onInput: (text, _type, _mode, directed, zeroBased, graphMode) => {
                 if (!text.trim()) return;
                 const error = el.buildFromText(text, directed, zeroBased, graphMode);
+                if (!error) this._updateConnectedLines([el.id]);
                 this.renderer.markDirty();
                 return error;
             },
             onCancel: () => {
                 if (isNew) {
                     this._discardPendingElementCreation(el);
-                } else if (!originalText.trim()) {
-                    this._deleteElement(el);
                 } else {
                     restoreOriginal();
                     this.selectionManager.clear();
@@ -2383,13 +2411,22 @@ class App {
                 this._refreshUI();
             },
             onConfirm: (text, _type, _mode, directed, zeroBased, graphMode) => {
+                if (!isNew && originalText === text && originalDirected === directed &&
+                    originalZeroBased === zeroBased && originalGraphMode === graphMode) {
+                    restoreOriginal();
+                    this.toolbar.setTool('select');
+                    this.renderer.markDirty();
+                    this._refreshUI();
+                    this._fitView([el]);
+                    return;
+                }
                 const error = el.buildFromText(text, directed, zeroBased, graphMode);
                 if (error) return error;
                 
                 if (!text.trim() || (el.width === 0 && el.height === 0)) {
                     if (isNew) {
                         this._discardPendingElementCreation(el);
-                    } else if (originalText.trim()) {
+                    } else {
                         this.history.push({
                             description: 'Delete Graph',
                             undo: restoreOriginal,
@@ -2403,10 +2440,13 @@ class App {
                 }
                 this.toolbar.setTool('select');
                 
-                if (originalText !== text ||
+                const changed = originalText !== text ||
                     originalDirected !== directed ||
                     originalZeroBased !== zeroBased ||
-                    originalGraphMode !== graphMode) {
+                    originalGraphMode !== graphMode;
+                if (!isNew && !changed) restoreOriginal();
+                this._updateConnectedLines([el.id]);
+                if (changed) {
                     const newState = JSON.parse(JSON.stringify(el.serialize()));
                     this.history.push({
                         description: 'Edit Graph',
@@ -2532,7 +2572,7 @@ class App {
             if (newValue !== oldValue && inlineDataInputLength(
                 matrixEl, { row, col }, newValue
             ) > MAX_DATA_STRUCTURE_INPUT_LENGTH) {
-                this._toast('資料總輸入不可超過 1 MB，已保留原值。', 4000);
+                this._toast('輸入資料不得超過 1 MB。已保留原值。', 4000);
                 newValue = oldValue;
             }
             if (matrixEl.data[row]) {
@@ -2678,7 +2718,7 @@ class App {
             let newValue = cancelled || enteredValue === oldText ? oldValue : enteredValue;
             if (newValue !== oldValue && inlineDataInputLength(element, index, newValue) >
                 MAX_DATA_STRUCTURE_INPUT_LENGTH) {
-                this._toast('資料總輸入不可超過 1 MB，已保留原值。', 4000);
+                this._toast('輸入資料不得超過 1 MB。已保留原值。', 4000);
                 newValue = oldValue;
             }
             applyValue(newValue);
@@ -3082,7 +3122,12 @@ class App {
         header.className = 'markdown-dialog-header';
         const h3 = document.createElement('h3');
         h3.id = 'markdown-dialog-title';
-        h3.innerHTML = '<span class="md-icon">MD</span> Markdown 編輯器';
+        const markdownIcon = document.createElement('span');
+        markdownIcon.className = 'md-icon';
+        markdownIcon.textContent = 'MD';
+        const markdownTitle = document.createElement('span');
+        markdownTitle.textContent = 'Markdown 編輯器';
+        h3.append(markdownIcon, markdownTitle);
         dialog.setAttribute('aria-labelledby', h3.id);
         header.appendChild(h3);
         dialog.appendChild(header);
@@ -3102,7 +3147,7 @@ class App {
         textarea.dataset.tabIndent = '';
         textarea.value = el.markdownText || '';
         textarea.maxLength = MarkdownElement.MAX_SOURCE_LENGTH;
-        textarea.placeholder = '在此輸入 Markdown…\n\n# 標題\n## 副標題\n\n- 列表項目\n- **粗體** 和 *斜體*\n\n```python\nprint("Hello")\n```';
+        textarea.placeholder = '輸入 Markdown…\n\n# 標題\n\n- 清單項目\n- **粗體**、*斜體*';
         textarea.spellcheck = false;
 
         // Tab key inserts spaces
@@ -3162,7 +3207,10 @@ class App {
         const updatePreview = () => {
             const md = textarea.value;
             try {
-                previewContent.innerHTML = MarkdownElement.renderToHTML(md);
+                const previewHTML = MarkdownElement.renderToHTML(md)
+                    .replace('Markdown 預覽資料不得超過 1 MB。', i18n.t('Markdown 預覽資料不得超過 1 MB。'))
+                    .replace('Markdown 預覽上限為 2,000 行；請縮短內容。', i18n.t('Markdown 預覽上限為 2,000 行；請縮短內容。'));
+                previewContent.innerHTML = previewHTML;
             } catch (_) {
                 previewContent.innerHTML = `<pre style="white-space:pre-wrap">${md.replace(/</g, '&lt;')}</pre>`;
             }
@@ -3895,7 +3943,7 @@ class App {
             return Number(value);
         }));
         if (matrixData.some(row => row.some(value => !Number.isFinite(value)))) {
-            this._toast('矩陣前綴和／差分只接受有限數值；空格會視為 0。');
+            this._toast('前綴和與差分僅支援有限數值；空白格視為 0。');
             return;
         }
         let newMatrixData = [];
@@ -3968,20 +4016,19 @@ class App {
         }
 
         if (newMatrixData.some(row => row.some(value => !Number.isFinite(value)))) {
-            this._toast('矩陣運算結果超出數值範圍，未建立複製。');
+            this._toast('數值超出範圍，未建立矩陣。');
             return;
         }
         const resultRows = newMatrixData.length;
         const resultCols = (newMatrixData[0] || []).length;
         if (resultRows > 200 || resultCols > 200 || resultRows * resultCols > 10000) {
-            this._toast('矩陣運算結果超出支援尺寸，未建立複製。');
+            this._toast('結果超出矩陣尺寸上限。');
             return;
         }
         
-        // Convert to string and set
-        const newText = newMatrixData.map(row => row.join(' ')).join('\n');
-        data.inputText = newText;
+        // Use the editor's format so negative and decimal one-cell rows remain intact.
         data.data = newMatrixData.map(row => row.map(String));
+        data.inputText = el.getTextFromData(data.data);
         data.rows = newMatrixData.length;
         data.cols = (newMatrixData[0] || []).length;
         
@@ -4257,10 +4304,13 @@ class App {
 
     _handleCorruptAutosave(key, { backupKey, error }) {
         this._setAutosaveStatus('locked');
-        this._toast((backupKey
+        // Translate each sentence separately: the dictionary matches whole lines only.
+        const sep = i18n.locale === 'zh-TW' ? '' : ' ';
+        this._toast(i18n.t(backupKey
             ? '自動存檔已損毀，原始資料已備份。'
             : '自動存檔已損毀，且無法建立備份（原資料仍保留在瀏覽器中）。') +
-            '為避免覆蓋，自動儲存已暫停。' + (error?.message ? `（${error.message}）` : ''), 'error', 15000);
+            sep + i18n.t('為避免覆蓋，自動儲存已暫停。') +
+            (error?.message ? ` (${error.message})` : ''), 'error', 15000);
         // Deferred so the page can paint before the blocking prompt appears.
         setTimeout(() => {
             if (!this.autosaveStore.isLocked(key)) return;
@@ -4272,7 +4322,10 @@ class App {
 }
 
 // ── Boot ────────────────────────────────────────────────
-const app = new App();
+if (typeof window !== 'undefined' && typeof document !== 'undefined') {
+    i18n.start();
+    const app = new App();
 
-// Expose for debugging
-window.__whiteboard = app;
+    // Expose for debugging
+    window.__whiteboard = app;
+}

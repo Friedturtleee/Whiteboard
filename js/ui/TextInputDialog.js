@@ -1,10 +1,9 @@
 import { bindModal } from './Modal.js';
 
-const DISCARD_PROMPT = '捨棄已輸入的內容？';
 
-/** Pull the "例：" sample out of a multi-line placeholder (inline `例：1 2 3` or a block up to the next blank line). */
+/** Pull the "例：" (or translated "Example:") sample out of a multi-line placeholder (inline `例：1 2 3` or a block up to the next blank line). */
 function extractExample(text) {
-    const match = /(?:^|\n)例：[ \t]*([^\n]*)\n?([\s\S]*)$/.exec(text || '');
+    const match = /(?:^|\n)(?:例|Example)[：:][ \t]*([^\n]*)\n?([\s\S]*)$/.exec(text || '');
     if (!match) return '';
     const inline = match[1].trim();
     if (inline) return inline;
@@ -64,11 +63,11 @@ export class TextInputDialog {
         let graphModeSelect = null;
         if (opts.showGraphModeSelect) {
             graphModeSelect = document.createElement('select');
-            graphModeSelect.setAttribute('aria-label', '圖的輸入格式');
+            graphModeSelect.setAttribute('aria-label', '圖輸入格式');
             graphModeSelect.classList.add('dialog-select-tight');
             const graphModes = [
-                { value: 'edge-list', label: '邊列表 (N M, 再列 edges)' },
-                { value: 'adj-list',  label: '鄰接列表 (N, 再 N 行 M neighbors)' }
+                { value: 'edge-list', label: '邊列表' },
+                { value: 'adj-list',  label: '鄰接列表' }
             ];
             for (const m of graphModes) {
                 const opt = document.createElement('option');
@@ -112,7 +111,7 @@ export class TextInputDialog {
                 zeroBasedCb.checked = opts.zeroBased || false;
                 const cbLabel = document.createElement('label');
                 cbLabel.htmlFor = 'dialog-zerobased';
-                cbLabel.textContent = '0-based';
+                cbLabel.textContent = '0 起始編號';
                 zeroBasedWrap.appendChild(zeroBasedCb);
                 zeroBasedWrap.appendChild(cbLabel);
                 cbRow.appendChild(zeroBasedWrap);
@@ -125,14 +124,14 @@ export class TextInputDialog {
         let modeSelect = null;
         if (opts.showModeSelect) {
             modeSelect = document.createElement('select');
-            modeSelect.setAttribute('aria-label', '樹的輸入格式');
+            modeSelect.setAttribute('aria-label', '樹輸入格式');
             modeSelect.classList.add('dialog-select-tight');
             const modes = [
-                { value: 'auto',   label: '自動偵測（CP 樹：N，接 N-1 條無向邊）' },
-                { value: 'rooted', label: '有根邊列表（N，接 父 子）' },
+                { value: 'auto',   label: '競程格式' },
+                { value: 'rooted', label: '有根邊列表（父節點、子節點）' },
                 { value: 'parent', label: '父節點陣列' },
-                { value: 'edge',   label: '無標頭邊列表（每行：u v [權重]）' },
-                { value: 'values', label: '數值列表（依樹類型建立）' }
+                { value: 'edge',   label: '無標頭邊列表' },
+                { value: 'values', label: '數值列表' }
             ];
             for (const m of modes) {
                 const opt = document.createElement('option');
@@ -151,6 +150,7 @@ export class TextInputDialog {
         const textareaBackdrop = document.createElement('div');
         textareaBackdrop.className = 'dialog-editor-backdrop';
         textareaBackdrop.setAttribute('aria-hidden', 'true');
+        textareaBackdrop.dataset.noI18n = '';   // mirrors the user's text; never translate it
 
         const textarea = document.createElement('textarea');
         textarea.className = 'dialog-editor-input';
@@ -158,7 +158,7 @@ export class TextInputDialog {
         textarea.maxLength = 1_000_000;
         textarea.spellcheck = false;
         textarea.wrap = 'off';
-        textarea.placeholder = opts.placeholder || '在此輸入...';
+        textarea.placeholder = opts.placeholder || '請輸入資料…';
         textarea.value = opts.defaultText || '';
         const initialText = textarea.value;
         const isDirty = () => textarea.value !== initialText;
@@ -211,7 +211,6 @@ export class TextInputDialog {
         errorMessage.className = 'dialog-error';
         errorMessage.setAttribute('role', 'alert');
         errorMessage.hidden = true;
-        textarea.setAttribute('aria-describedby', errorMessage.id);
         const showError = error => {
             errorMessage.textContent = typeof error === 'string' ? error : '';
             errorMessage.hidden = !errorMessage.textContent;
@@ -229,13 +228,15 @@ export class TextInputDialog {
 
         // One-line summary above the editor + the full multi-line format help in a collapsible block.
         const formatHint = document.createElement('p');
+        formatHint.id = 'text-input-dialog-format-hint';
         formatHint.className = 'dialog-format-hint';
 
         const formatDetails = document.createElement('details');
         formatDetails.className = 'dialog-format-details';
         const formatSummary = document.createElement('summary');
         formatSummary.textContent = '格式說明';
-        const formatBody = document.createElement('pre');
+        // A <div> (not <pre>): the i18n layer skips <pre>, and this text must be translated.
+        const formatBody = document.createElement('div');
         formatBody.className = 'dialog-format-body';
         const exampleBtn = document.createElement('button');
         exampleBtn.type = 'button';
@@ -253,9 +254,11 @@ export class TextInputDialog {
         });
 
         const updatePlaceholder = () => {
-            const placeholder = opts.getPlaceholder?.(_getValues()) || opts.placeholder || '在此輸入…';
-            textarea.placeholder = placeholder;
+            const placeholder = opts.getPlaceholder?.(_getValues()) || opts.placeholder || '請輸入資料…';
             const lines = placeholder.split('\n');
+            // The first line is the always-visible hint above the editor; the textarea itself only
+            // shows the remaining lines (e.g. the example). The full text lives in the collapsible help.
+            textarea.placeholder = lines.slice(1).join('\n');
             formatHint.textContent = lines[0];
             formatDetails.hidden = lines.length < 2;
             formatBody.textContent = placeholder;
@@ -266,6 +269,7 @@ export class TextInputDialog {
             }
         };
         updatePlaceholder();
+        textarea.setAttribute('aria-describedby', `${formatHint.id} ${errorMessage.id}`);
 
         // Real-time preview — debounced
         const _fireInput = () => {
@@ -309,13 +313,10 @@ export class TextInputDialog {
             onCancel?.();
         };
         this._cancelHandler = fireCancel;
-        // User-initiated dismissal (Esc / 取消): unsaved input needs an explicit okay to discard.
+        // Esc / 取消 are explicit choices to dismiss, so they cancel directly; only an accidental
+        // background click is protected (see the overlay click handler below).
         const requestCancel = () => {
             if (this._overlay !== overlay) return;
-            if (isDirty() && !confirm(DISCARD_PROMPT)) {
-                textarea.focus();
-                return;
-            }
             fireCancel();
         };
         const fireConfirm = () => {
@@ -350,7 +351,7 @@ export class TextInputDialog {
         dialog.appendChild(errorMessage);
         const hint = document.createElement('p');
         hint.className = 'dialog-keyboard-hint';
-        hint.textContent = 'Ctrl / ⌘ + Enter 確認 · Esc 取消';
+        hint.textContent = 'Ctrl/⌘+Enter 確認；Esc 取消';
         dialog.appendChild(hint);
         dialog.appendChild(actions);
         overlay.appendChild(dialog);

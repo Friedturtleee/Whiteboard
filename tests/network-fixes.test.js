@@ -156,7 +156,7 @@ test('Serializer rejects exactly what the shared validator rejects', () => {
         assert.throws(() => Serializer.loadJSONData(app, { elements: [record] }), TypeError);
     }
     assert.doesNotThrow(() => Serializer.loadJSONData(app, { elements: [rect('ok')] }));
-    assert.throws(() => Serializer.loadJSONData(app, { elements: [rect('d'), rect('d')] }), /duplicate/);
+    assert.throws(() => Serializer.loadJSONData(app, { elements: [rect('d'), rect('d')] }), /duplicate|重複/);
 });
 
 test('tree source validation rejects overrides for unknown nodes', () => {

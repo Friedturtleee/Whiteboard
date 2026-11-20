@@ -54,9 +54,9 @@ export class QueueElement extends Element {
 
     setFromText(text) {
         const rawText = String(text ?? '');
-        if (rawText.length > 1000000) return '最多輸入 10000 個元素。';
+        if (rawText.length > 1000000) return '輸入資料不得超過 1 MB。';
         const vals = splitDataTokens(rawText, { multiline: true });
-        if (vals.length > MAX_ITEMS) return '最多輸入 10000 個元素。';
+        if (vals.length > MAX_ITEMS) return '最多輸入 10,000 項。';
         this.inputText = rawText;
         this.items = vals;
         this.highlights = {};

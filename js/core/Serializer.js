@@ -3,15 +3,15 @@
  */
 import { ShapeElement } from '../elements/ShapeElement.js';
 import { TextElement } from '../elements/TextElement.js';
-import { MatrixElement } from '../elements/MatrixElement.js';
+import { MatrixElement } from '../elements/MatrixElement.js?v=5';
 import { StackElement } from '../elements/StackElement.js';
 import { QueueElement } from '../elements/QueueElement.js';
 import { PenElement } from '../elements/PenElement.js';
 import { MermaidElement } from '../elements/MermaidElement.js';
 import { MarkdownElement } from '../elements/MarkdownElement.js';
-import { TreeElement } from '../tree/TreeElement.js';
+import { TreeElement } from '../tree/TreeElement.js?v=2';
 import { GraphElement } from '../graph/GraphElement.js';
-import { validateWhiteboardElement } from './WhiteboardElementValidation.js';
+import { validateWhiteboardElement } from './WhiteboardElementValidation.js?v=2';
 import { MIN_CAMERA_ZOOM, MAX_CAMERA_ZOOM } from '../canvas/Camera.js';
 import { elementsInPaintOrder } from './ElementOrder.js';
 
@@ -65,7 +65,7 @@ export class Serializer {
     static importJSON(app, file) {
         return new Promise((resolve, reject) => {
             if (!file || !Number.isFinite(file.size) || file.size > MAX_IMPORT_FILE_BYTES) {
-                reject(new TypeError('Whiteboard file is missing or exceeds the 25 MB import limit.'));
+                reject(new TypeError('JSON 檔案不存在或超過 25 MB。'));
                 return;
             }
             const reader = new FileReader();
@@ -86,26 +86,26 @@ export class Serializer {
     /** Validate and build an import off-canvas before replacing the current board. */
     static loadJSONData(app, data, { preserveExternalConnections = false } = {}) {
         if (!data || typeof data !== 'object' || !Array.isArray(data.elements)) {
-            throw new TypeError('Whiteboard file must contain an elements array.');
+            throw new TypeError('JSON 檔案格式錯誤，缺少物件清單。');
         }
         if (data.elements.length > MAX_IMPORTED_ELEMENTS) {
-            throw new TypeError('Whiteboard file exceeds the 10000-element import limit.');
+            throw new TypeError('JSON 檔案超過 10,000 個物件上限。');
         }
 
         const importedElements = [];
         const elementIds = new Set();
         for (const ed of data.elements) {
             if (!ed || typeof ed !== 'object' || Array.isArray(ed) || typeof ed.type !== 'string') {
-                throw new TypeError('Whiteboard file contains an invalid element record.');
+                throw new TypeError('JSON 檔案含無效的白板物件。');
             }
             validateWhiteboardElement(ed);
             if (!Object.prototype.hasOwnProperty.call(TYPE_MAP, ed.type)) {
-                throw new TypeError('Unsupported whiteboard element type: ' + ed.type);
+                throw new TypeError('不支援的白板物件類型：' + ed.type);
             }
             if (ed.id !== undefined) {
                 // Shape and format are checked by the shared validator above;
                 // this set enforces the document-wide uniqueness constraint.
-                if (elementIds.has(ed.id)) throw new TypeError('Whiteboard file contains a duplicate element ID.');
+                if (elementIds.has(ed.id)) throw new TypeError('白板物件 ID 重複。');
                 elementIds.add(ed.id);
             }
 
@@ -120,7 +120,7 @@ export class Serializer {
             ![camera.x, camera.y, camera.zoom].every(Number.isFinite) ||
             Math.abs(camera.x) > MAX_WORLD_COORDINATE || Math.abs(camera.y) > MAX_WORLD_COORDINATE ||
             camera.zoom < MIN_CAMERA_ZOOM || camera.zoom > MAX_CAMERA_ZOOM)) {
-            throw new TypeError('Whiteboard file contains invalid camera settings.');
+            throw new TypeError('白板視角設定無效。');
         }
 
         const importedById = new Map(importedElements.map(element => [element.id, element]));

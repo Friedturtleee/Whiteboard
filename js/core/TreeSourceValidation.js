@@ -10,8 +10,9 @@ export function validateTreeElementSource(data) {
     if (data.inputText === '') return;
     const lines = data.inputText.replace(/\r/g, '').split('\n').map(line => line.trim()).filter(Boolean);
     const inputMode = data.inputMode;
+    const zeroBased = data.zeroBased === true;
     let parsed;
-    if (inputMode === undefined) {
+    if (inputMode === undefined && !zeroBased) {
         // Legacy clients wrote parent/child rows without recording a mode. Keep
         // their original root interpretation, then fall back for older auto input.
         parsed = TreeParser.parseRootedFormat(lines);
@@ -24,7 +25,7 @@ export function validateTreeElementSource(data) {
         parsed = values.length > MAX_TREE_NODES
             ? { error: 'Tree input contains too many values.' }
             : TreeParser._buildByType(values, data.treeType || 'tree');
-    } else parsed = TreeParser.autoDetectAndParse(data.inputText, data.treeType || 'tree');
+    } else parsed = TreeParser.autoDetectAndParse(data.inputText, data.treeType || 'tree', zeroBased);
     if (parsed?.error || !parsed?.root) throw new Error('Tree source cannot be restored.');
 
     const validPaths = new Set();
