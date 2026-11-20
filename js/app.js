@@ -149,6 +149,7 @@ export class App {
         this.layerPanel = new LayerPanel(this);
         this.textInputDialog = new TextInputDialog(this);
         initInterface();
+        this._bindEmptyHint();
 
         // ── Bind Events ─────────────────────────────────
         // ── Settings ────────────────────────────────────
@@ -469,9 +470,33 @@ export class App {
     _updatePanels() {
         this.propertyPanel.update();
         this.layerPanel.update();
+        this._updateEmptyHint();
         this._updateZoomDisplay();
         this._updateHistoryButtons();
         this.renderer.markDirty();
+    }
+
+    // Empty-board welcome: shown while the board has no elements and Select is the active tool.
+    _bindEmptyHint() {
+        document.querySelectorAll('#empty-hint [data-create]').forEach(button => {
+            button.addEventListener('click', () => {
+                if (this.cloudBoards?.isReadOnly) return;
+                const { x, y } = this.camera.screenToWorld(this.canvas.clientWidth / 2, this.canvas.clientHeight / 2);
+                const type = button.dataset.create;
+                if (type === 'tree') this._createTree(x - 150, y - 100);
+                else if (type === 'graph') this._createGraph(x - 200, y - 175);
+                else this._createDataStructure(type, x - 60, y - 60);
+            });
+        });
+        this._updateEmptyHint();
+    }
+
+    _updateEmptyHint() {
+        const hint = document.getElementById('empty-hint');
+        if (!hint) return;
+        const show = this.elements.length === 0 && this.toolbar?.currentTool === 'select' &&
+            !this.cloudBoards?.isReadOnly;
+        if (hint.hidden === show) hint.hidden = !show;
     }
 
     /** rAF-throttled panel refresh for pointermove (drag / resize / rotate). Never saves. */
@@ -1411,7 +1436,8 @@ export class App {
         let h = Math.abs(rawH);
 
         // Shift → force square (or for matrix: snap to equal aspect)
-        if (shiftKey && tool !== 'matrix') {
+        // The circle tool always keeps a 1:1 box so it stays a true circle while dragging.
+        if ((shiftKey || tool === 'circle') && tool !== 'matrix') {
             const side = Math.max(w, h);
             w = side; h = side;
         }
@@ -1497,6 +1523,10 @@ export class App {
             } else if (tool === 'graph') {
                 el.x = startWx; el.y = startWy;
                 el.width = 400; el.height = 350;
+            } else if (tool === 'circle') {
+                // A plain click must give a true circle, not the 120x80 default used by rectangles.
+                el.x = startWx; el.y = startWy;
+                el.width = 100; el.height = 100;
             } else {
                 el.x = startWx; el.y = startWy;
                 el.width = 120; el.height = 80;

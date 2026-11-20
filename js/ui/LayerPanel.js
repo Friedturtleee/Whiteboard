@@ -1,4 +1,45 @@
 import { elementsInFrontOrder } from '../core/ElementOrder.js';
+import { i18n } from './I18n.js';
+
+/** Friendly layer names (translated through the i18n dictionary, which has these tool labels). */
+const TYPE_NAMES = {
+    rectangle: '矩形', circle: '圓形', line: '線段', arrow: '箭頭', text: '文字', markdown: 'Markdown',
+    pen: '畫筆', matrix: '矩陣', stack: '堆疊', queue: '佇列', tree: '樹', graph: '圖論'
+};
+const SNIPPET_LENGTH = 18;
+/** Element.label starts out as the English type name; only a different value is a user's rename. */
+const DEFAULT_LABELS = new Set(['rectangle', 'circle', 'ellipse', 'line', 'arrow', 'text', 'markdown', 'matrix',
+    'pen', 'queue', 'stack', 'tree', 'graph']);
+const customLabel = el => el.label && !DEFAULT_LABELS.has(String(el.label).toLowerCase()) ? el.label : '';
+
+/** First non-empty line of text/markdown content, trimmed for the layer list. */
+function contentSnippet(el) {
+    const raw = el.type === 'text' ? el.text : el.type === 'markdown' ? el.markdownText : '';
+    if (typeof raw !== 'string') return '';
+    const line = raw.split(/\r?\n/).map(l => l.replace(/^[#>*\-\s]+/, '').trim()).find(Boolean) || '';
+    return line.length > SNIPPET_LENGTH ? `${line.slice(0, SNIPPET_LENGTH)}…` : line;
+}
+
+/**
+ * Readable names for every layer: the user's own label, else the text content, else "<type> <n>"
+ * where n counts layers of the same type from the back (only added when there are several).
+ */
+function buildLayerNames(elements) {
+    const totals = new Map();
+    const kind = el => el.shapeType || el.type;
+    for (const el of elements) totals.set(kind(el), (totals.get(kind(el)) || 0) + 1);
+    const seen = new Map();
+    const names = new Map();
+    for (const el of elements) {
+        const k = kind(el);
+        const n = (seen.get(k) || 0) + 1;
+        seen.set(k, n);
+        // I18n deliberately skips .layer-name (it may hold user text), so translate the type name here.
+        const base = TYPE_NAMES[k] ? i18n.t(TYPE_NAMES[k]) : k;
+        names.set(el, customLabel(el) || contentSnippet(el) || (totals.get(k) > 1 ? `${base} ${n}` : base));
+    }
+    return names;
+}
 
 /**
  * LayerPanel — bottom-right panel for z-order management.
@@ -94,6 +135,7 @@ export class LayerPanel {
 
         // Front-most layer first.
         const sorted = elementsInFrontOrder(elements);
+        const layerNames = buildLayerNames(elements);
         const next = new Map();
         for (const el of sorted) {
             let row = this._rows.get(el.id);
@@ -101,7 +143,7 @@ export class LayerPanel {
                 row?.item.remove();
                 row = this._createRow(el);
             }
-            this._syncRow(row, el, selection.isSelected(el));
+            this._syncRow(row, el, selection.isSelected(el), layerNames.get(el));
             next.set(el.id, row);
         }
         for (const [id, row] of this._rows) {
@@ -132,9 +174,8 @@ export class LayerPanel {
         if (this._downButton) this._downButton.disabled = none || indexes.every((index, i) => index === i);
     }
 
-    _syncRow(row, el, isSelected) {
+    _syncRow(row, el, isSelected, layerName = el.label || el.type) {
         const state = row.state;
-        const layerName = `${el.label || el.type} #${el.id}`;
         const hidden = Boolean(el.hidden);
         const locked = Boolean(el.locked);
         const { item, name, vis, lock, colorDot } = row.parts;

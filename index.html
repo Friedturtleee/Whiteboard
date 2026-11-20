@@ -41,6 +41,18 @@
     <!-- Main Canvas -->
     <canvas id="main-canvas" tabindex="0" aria-label="白板畫布"></canvas>
 
+    <!-- Empty-board welcome (shown only while the board is empty and Select is active) -->
+    <div id="empty-hint" hidden>
+        <h2 class="empty-hint-title">從這裡開始</h2>
+        <p class="empty-hint-text">選擇左側工具繪圖，或直接建立競程資料結構。</p>
+        <div class="empty-hint-actions">
+            <button type="button" class="empty-hint-btn" data-create="tree">建立樹</button>
+            <button type="button" class="empty-hint-btn" data-create="graph">建立圖</button>
+            <button type="button" class="empty-hint-btn" data-create="matrix">建立矩陣</button>
+        </div>
+        <p class="empty-hint-sub">按 ? 查看快捷鍵。雙擊物件可編輯內容。</p>
+    </div>
+
     <!-- Top Bar (actions) -->
     <div id="top-bar">
         <button type="button" class="top-bar-btn" id="btn-undo" aria-label="復原" data-tooltip="復原 (Ctrl+Z)">

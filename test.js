@@ -247,7 +247,8 @@ try {
         const getVisibilityButton = () => document.querySelector(
             `.layer-item[data-el-id="${element.id}"] .layer-visibility`
         );
-        const layerName = `${element.label || element.type} #${element.id}`;
+        // Layers show a readable name (label, text content or "<type> <n>"); buttons are named after it.
+        const layerName = document.querySelector(`.layer-item[data-el-id="${element.id}"] .layer-name`).textContent;
         const visibilityButton = getVisibilityButton();
         const visibilityAccessible = visibilityButton?.tagName === 'BUTTON' &&
             visibilityButton.getAttribute('aria-label') === `圖層可見 ${layerName}` &&

@@ -89,6 +89,7 @@ export class Toolbar {
         else if (['rectangle', 'circle', 'line', 'arrow', 'text', 'markdown', 'pen'].includes(tool)) canvas.classList.add('crosshair');
 
         this.app.propertyPanel?.update();
+        this.app._updateEmptyHint?.();
         this.app.renderer.markDirty();
     }
 }

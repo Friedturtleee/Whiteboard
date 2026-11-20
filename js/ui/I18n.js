@@ -1,6 +1,12 @@
 const translationLines = String.raw`CP WhiteBoard — 競程白板|CP WhiteBoard — Competitive Programming Whiteboard
 白板畫布|Whiteboard canvas
 載入中…|Loading…
+從這裡開始|Get started
+選擇左側工具繪圖，或直接建立競程資料結構。|Pick a tool on the left to draw, or create a contest data structure directly.
+建立樹|Create tree
+建立圖|Create graph
+建立矩陣|Create matrix
+按 ? 查看快捷鍵。雙擊物件可編輯內容。|Press ? for keyboard shortcuts. Double-click an object to edit it.
 復原 (Ctrl+Z)|Undo (Ctrl+Z)
 取消復原 (Ctrl+Shift+Z)|Redo (Ctrl+Shift+Z)
 匯出 JSON|Export JSON
@@ -452,6 +458,8 @@ function translateLine(value, locale) {
     const dictionary = locale === "zh-TW" ? ENGLISH_TO_TRADITIONAL : TRADITIONAL_TO_ENGLISH;
     if (dictionary.has(value)) return dictionary.get(value);
     let match;
+    // "<known label> <number>", e.g. numbered layer names such as "矩形 2" / "Rectangle 2".
+    if ((match = value.match(/^(.+) (\d+)$/)) && dictionary.has(match[1])) return dictionary.get(match[1]) + " " + match[2];
     if (locale !== "zh-TW") {
         if ((match = value.match(/^(.+)（雲端白板為唯讀，僅能使用「選取」與「平移」）$/))) return translateLine(match[1], locale) + " (This cloud board is read-only; only Select and Pan are available)";
         if ((match = value.match(/^貼上 1 個值，或剛好 (\d+) 個值。$/))) return "Paste one value or exactly " + match[1] + (match[1] === "1" ? " value." : " values.");
@@ -701,6 +709,7 @@ class I18n {
             for (const element of app.elements || []) {
                 if (element.type === "markdown" && element._renderLimitNotice) element._render();
             }
+            app.layerPanel?.update();
             app.renderer?.markDirty();
         }
     }
