@@ -779,7 +779,8 @@ export class App {
                 if (el.optimize) el.optimize(2 / this.camera.zoom);
                 this.layerManager._reindex();
                 this._pushCreation(el);
-                this.selectionManager.select(el);
+                // A finished stroke is not selected: no handles/box get in the way of the next stroke.
+                this.selectionManager.clear();
             } else {
                 // Too few points — discard ghost element
                 const idx = this.elements.indexOf(el);
@@ -1505,7 +1506,10 @@ export class App {
         this.layerManager._reindex();
         const opensDataStructureDialog = ['matrix', 'stack', 'queue', 'tree', 'graph'].includes(tool);
         this._pushCreation(el, { discardable: opensDataStructureDialog });
-        this.selectionManager.select(el);
+        // Plain shapes stay unselected after drawing; only elements that open an edit dialog are
+        // selected (the dialog and property actions operate on the selection).
+        if (opensDataStructureDialog) this.selectionManager.select(el);
+        else this.selectionManager.clear();
         this._isCreating = false;
         this._creatingElement = null;
         this._createStart = null;

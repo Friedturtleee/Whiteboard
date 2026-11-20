@@ -1101,3 +1101,16 @@ button:disabled { opacity: 0.45; cursor: default; }
     #settings-close .material-symbols-outlined { font-size: 24px; }
     select, input[type="number"], input[type="text"] { font-size: 16px; }
 }
+
+/* Colour-only mode: a drawing tool is active and nothing is selected, so only the colour picker is shown. */
+#property-panel.color-only #property-panel-content > .panel-section:not(#color-section) {
+    display: none;
+}
+#property-panel.color-only #color-section .panel-section-title {
+    display: none;
+}
+#property-panel.color-only #color-section {
+    border-bottom: 0;
+    margin-bottom: 0;
+    padding-bottom: 0;
+}

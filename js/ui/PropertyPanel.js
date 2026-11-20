@@ -23,6 +23,16 @@ export class PropertyPanel {
     /** Shared preset palette (see ColorPicker.js) + the custom "+" swatch. */
     static COLORS = PALETTE_COLORS;
 
+    /** Tools that do not create anything; the colour-only panel is hidden for them. */
+    static NON_DRAWING_TOOLS = ['select', 'pan'];
+
+    /** Colour-only mode: only the colour section is shown (see css `#property-panel.color-only`). */
+    _setColorOnly(on) {
+        this._panel.classList.toggle('color-only', on);
+        const title = document.getElementById('property-panel-title');
+        if (title) title.textContent = on ? '色彩' : '屬性';
+    }
+
     /** Show / clear the valid-range helper text for a numeric field. */
     _markInvalid(input, invalid, message = '') {
         input.setAttribute('aria-invalid', String(invalid));
@@ -668,9 +678,16 @@ export class PropertyPanel {
         this._invalidFields.clear();
         if (this._hint) this._hint.hidden = true;
         if (selected.length === 0) {
-            this._panel.classList.remove('visible');
+            // With a drawing tool active the colour picker stays visible (colour-only mode) so the
+            // colour of the next shape can be chosen before drawing. Select / pan hide the panel.
+            const tool = this.app.toolbar?.currentTool;
+            const drawing = Boolean(tool) && !PropertyPanel.NON_DRAWING_TOOLS.includes(tool);
+            this._setColorOnly(drawing);
+            this._panel.classList.toggle('visible', drawing);
+            if (drawing) this._updateColorSelection(this.app.currentColor);
             return;
         }
+        this._setColorOnly(false);
         this._panel.classList.add('visible');
 
         const el = selected[0];
