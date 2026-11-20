@@ -1,0 +1,50 @@
+import { MAX_TREE_NODES, TreeParser } from '../tree/TreeParser.js';
+
+/**
+ * Pure tree-source validation shared by the browser collaboration client and
+ * the Worker. The input must already have passed validateWhiteboardElement().
+ * Throws when the tree source cannot be restored or an override targets a
+ * node/edge that does not exist.
+ */
+export function validateTreeElementSource(data) {
+    if (data.inputText === '') return;
+    const lines = data.inputText.replace(/\r/g, '').split('\n').map(line => line.trim()).filter(Boolean);
+    const inputMode = data.inputMode;
+    let parsed;
+    if (inputMode === undefined) {
+        // Legacy clients wrote parent/child rows without recording a mode. Keep
+        // their original root interpretation, then fall back for older auto input.
+        parsed = TreeParser.parseRootedFormat(lines);
+        if (parsed.error) parsed = TreeParser.autoDetectAndParse(data.inputText, data.treeType || 'tree');
+    } else if (inputMode === 'rooted') parsed = TreeParser.parseRootedFormat(lines);
+    else if (inputMode === 'parent') parsed = TreeParser.parseParentFormat(lines);
+    else if (inputMode === 'edge') parsed = TreeParser.parseEdgeFormat(lines);
+    else if (inputMode === 'values') {
+        const values = data.inputText.replace(/,/g, ' ').trim().split(/\s+/).filter(Boolean);
+        parsed = values.length > MAX_TREE_NODES
+            ? { error: 'Tree input contains too many values.' }
+            : TreeParser._buildByType(values, data.treeType || 'tree');
+    } else parsed = TreeParser.autoDetectAndParse(data.inputText, data.treeType || 'tree');
+    if (parsed?.error || !parsed?.root) throw new Error('Tree source cannot be restored.');
+
+    const validPaths = new Set();
+    const pending = [{ node: parsed.root, path: 'r' }];
+    while (pending.length) {
+        const { node, path } = pending.pop();
+        if (!node || validPaths.has(path)) continue;
+        validPaths.add(path);
+        (node.children || []).forEach((child, index) => {
+            if (child) pending.push({ node: child, path: `${path}.${index}` });
+        });
+    }
+    for (const [path, value] of Object.entries(data.nodeValueOverrides || {})) {
+        if (!validPaths.has(path) || typeof value === 'object') {
+            throw new Error('Tree node override points to an unknown node.');
+        }
+    }
+    for (const path of Object.keys(data.edgeWeightOverrides || {})) {
+        if (!validPaths.has(path) || path === 'r') {
+            throw new Error('Tree edge-weight override points to an unknown edge.');
+        }
+    }
+}

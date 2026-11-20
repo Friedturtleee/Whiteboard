@@ -10,7 +10,7 @@ export function bindModal(dialog, { onCancel, onConfirm, initialFocus } = {}) {
     dialog.setAttribute('aria-modal', 'true');
     dialog.tabIndex = -1;
     const controls = () => [...dialog.querySelectorAll(
-        'button:not(:disabled), input:not(:disabled), select:not(:disabled), textarea:not(:disabled), a[href], [tabindex="0"]'
+        'button:not(:disabled), input:not(:disabled), select:not(:disabled), textarea:not(:disabled), summary, a[href], [tabindex="0"]'
     )].filter(element => !element.hidden && element.getClientRects().length);
     const focusFirst = () => (initialFocus?.isConnected ? initialFocus : controls()[0] || dialog)
         .focus({ preventScroll: true });

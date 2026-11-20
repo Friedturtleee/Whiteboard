@@ -1,11 +1,20 @@
 /**
  * Toolbar — manages tool selection from the left toolbar.
  */
+const READ_ONLY_TOOLS = ['pan', 'select'];
+const READ_ONLY_NOTE = '雲端白板為唯讀，僅能使用「選取」與「平移」';
+
 export class Toolbar {
     constructor(app) {
         this.app = app;
         this.currentTool = 'select';
+        this._lastReadOnlyHint = 0;
         this._init();
+    }
+
+    _isReadOnly() {
+        return Boolean(this.app.cloudBoards?.isReadOnly) ||
+            document.body.classList.contains('wb-cloud-readonly');
     }
 
     _init() {
@@ -28,10 +37,40 @@ export class Toolbar {
             const tool = map[e.key.toLowerCase()];
             if (tool && !e.ctrlKey && !e.metaKey && !e.altKey) this.setTool(tool);
         });
+
+        // CloudBoards toggles `wb-cloud-readonly` on <body>; mirror it onto the drawing tools so the
+        // buttons say why they do nothing (aria-disabled + tooltip) instead of silently ignoring clicks.
+        this._syncReadOnly();
+        if (typeof MutationObserver !== 'undefined') {
+            new MutationObserver(() => this._syncReadOnly())
+                .observe(document.body, { attributes: true, attributeFilter: ['class'] });
+        }
+    }
+
+    _syncReadOnly() {
+        const readOnly = this._isReadOnly();
+        document.querySelectorAll('#toolbar .toolbar-btn[data-tool]').forEach(btn => {
+            if (READ_ONLY_TOOLS.includes(btn.dataset.tool)) return;
+            if (btn.dataset.baseTooltip === undefined) btn.dataset.baseTooltip = btn.dataset.tooltip || '';
+            const tooltip = readOnly
+                ? `${btn.dataset.baseTooltip}（${READ_ONLY_NOTE}）`
+                : btn.dataset.baseTooltip;
+            if (btn.dataset.tooltip !== undefined) btn.dataset.tooltip = tooltip;
+            if (tooltip) btn.setAttribute('aria-label', tooltip);
+            if (readOnly) btn.setAttribute('aria-disabled', 'true');
+            else btn.removeAttribute('aria-disabled');
+        });
     }
 
     setTool(tool) {
-        if (this.app.cloudBoards?.isReadOnly && !['pan', 'select'].includes(tool)) return;
+        if (this._isReadOnly() && !READ_ONLY_TOOLS.includes(tool)) {
+            const now = Date.now();
+            if (now - this._lastReadOnlyHint > 2500) {
+                this._lastReadOnlyHint = now;
+                this.app._toast?.(`${READ_ONLY_NOTE}。`);
+            }
+            return;
+        }
         this.currentTool = tool;
 
         // Update button states

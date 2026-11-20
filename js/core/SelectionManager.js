@@ -21,14 +21,15 @@ export class SelectionManager {
     }
 
     clear() {
-        this._rememberSelectedColor();
+        // Pure: the colour of a selection is synced to app.currentColor when the
+        // selection is made (select / toggleSelect / addToSelection / selectAll /
+        // finishRubberBand), never as a side effect of deselecting.
         this.selectedElements = [];
         this.rubberBand = null;
         this.app.renderer.markDirty();
     }
 
     select(el) {
-        this._rememberSelectedColor();
         if (!el) {
             this.selectedElements = [];
             this.app.renderer.markDirty();
@@ -43,12 +44,12 @@ export class SelectionManager {
             return;
         }
         this.selectedElements = [el];
+        this._rememberSelectedColor();
         this.app.renderer.markDirty();
     }
 
     toggleSelect(el) {
         if (!el) return;
-        this._rememberSelectedColor();
         const idx = this.selectedElements.indexOf(el);
         if (el.locked) {
             if (idx >= 0) {
@@ -85,7 +86,6 @@ export class SelectionManager {
     }
 
     selectAll() {
-        this._rememberSelectedColor();
         this.selectedElements = this.app.elements.filter(e => !e.hidden && !e.locked);
         this._rememberSelectedColor();
         this.app.renderer.markDirty();
@@ -107,57 +107,60 @@ export class SelectionManager {
         this.app.renderer.markDirty();
     }
 
-    /** Finish rubber-band: select all elements intersecting the rect */
+    /** Finish rubber-band: select all elements whose real shape intersects the rect */
     finishRubberBand(additive = false) {
         if (!this.rubberBand) return;
-        this._rememberSelectedColor();
         const rb = this.rubberBand;
-        this.selectedElements = additive
-            ? this.selectedElements.filter(el => !el.locked && this.app.elements.includes(el))
-            : [];
-        for (const el of this.app.elements) {
-            if (el.hidden || el.locked) continue;
-            const b = el.getRotatedBounds ? el.getRotatedBounds() : el.getBounds();
-            if (HitTest.rectsIntersect(rb, b)) {
-                if (!this.selectedElements.includes(el)) {
-                    this.selectedElements.push(el);
-                }
+        const selected = [];
+        const seen = new Set();
+        if (additive) {
+            const present = new Set(this.app.elements);
+            for (const el of this.selectedElements) {
+                if (!el.locked && present.has(el) && !seen.has(el)) { seen.add(el); selected.push(el); }
             }
         }
+        for (const el of this.app.elements) {
+            if (el.hidden || el.locked || seen.has(el)) continue;
+            if (SelectionManager._intersectsRubberBand(el, rb)) { seen.add(el); selected.push(el); }
+        }
+        this.selectedElements = selected;
         this.rubberBand = null;
         this._rememberSelectedColor();
         this.app.renderer.markDirty();
     }
 
-    /** Get bounding box of all selected elements */
-    getGroupBounds() {
-        if (this.selectedElements.length === 0) return null;
-        let minX = Infinity, minY = Infinity, maxX = -Infinity, maxY = -Infinity;
-        for (const el of this.selectedElements) {
-            const b = el.getRotatedBounds ? el.getRotatedBounds() : el.getBounds();
-            minX = Math.min(minX, b.x);
-            minY = Math.min(minY, b.y);
-            maxX = Math.max(maxX, b.x + b.w);
-            maxY = Math.max(maxY, b.y + b.h);
+    /**
+     * Cheap AABB reject first, then the real shape for elements thinner than their
+     * bbox: lines/arrows (segment), pens (polyline) and rotated elements (oriented box).
+     */
+    static _intersectsRubberBand(el, rb) {
+        const b = el.getRotatedBounds ? el.getRotatedBounds() : el.getBounds();
+        if (!HitTest.rectsIntersect(rb, b)) return false;
+        const isLine = el.shapeType === 'line' || el.shapeType === 'arrow';
+        const isPen = Array.isArray(el.points) && el.type === 'pen';
+        if (!isLine && !isPen && !el.rotation) return true;
+        const toWorld = point => (el.rotation && el.toWorldPoint ? el.toWorldPoint(point.x, point.y) : point);
+        // Inflate by half the stroke so a thick stroke grazing the rect still counts.
+        const half = isLine || isPen ? Math.max(0, Number(el.strokeWidth) || 0) / 2 : 0;
+        const rect = { x: rb.x - half, y: rb.y - half, w: rb.w + half * 2, h: rb.h + half * 2 };
+        if (isLine) {
+            const p1 = el.getEndpointWorld?.(0) ?? toWorld({ x: el.x, y: el.y });
+            const p2 = el.getEndpointWorld?.(1) ?? toWorld({ x: el.x + el.width, y: el.y + el.height });
+            return HitTest.segmentIntersectsRect(p1.x, p1.y, p2.x, p2.y, rect);
         }
-        return { x: minX, y: minY, w: maxX - minX, h: maxY - minY };
-    }
-
-    /** Move all selected elements by delta */
-    moveSelected(dx, dy) {
-        for (const el of this.selectedElements) {
-            if (el.locked) continue;
-            el.x += dx;
-            el.y += dy;
-            // For graph/tree elements, update internal node positions
-            if (el.moveNodes) el.moveNodes(dx, dy);
+        if (isPen) {
+            if (el.points.length === 0) return true;
+            return HitTest.polylineIntersectsRect(el.rotation ? el.points.map(toWorld) : el.points, rect);
         }
-        this.app.renderer.markDirty();
+        const local = el.getBounds();
+        return HitTest.polygonIntersectsRect([
+            toWorld({ x: local.x, y: local.y }), toWorld({ x: local.x + local.w, y: local.y }),
+            toWorld({ x: local.x + local.w, y: local.y + local.h }), toWorld({ x: local.x, y: local.y + local.h })
+        ], rb);
     }
 
     /** Delete all selected elements */
     deleteSelected() {
-        this._rememberSelectedColor();
         const removed = [];
         for (const el of this.selectedElements) {
             if (el.locked) continue;

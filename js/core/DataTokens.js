@@ -59,23 +59,20 @@ export function formatDataToken(value) {
 
 /** Read CP whitespace input or tabular clipboard text, retaining empty cells. */
 export function parsePastedMatrixRows(text) {
-    const input = String(text).replace(/\r\n?/g, '\n').replace(/\n+$/, '');
-    if (!input.includes('\t')) return input.split('\n').map(row => splitDataTokens(row));
-    const rows = [], row = [];
+    const input = String(text ?? '').replace(/\r\n?/g, '\n');
+    if (!input) return [[]];
+    const records = [], row = [];
+    let tabular = false;
     let field = '', quoted = false, escaped = false;
     const flush = () => {
-        let value = field;
-        if (field.startsWith('"') && field.endsWith('"')) {
-            try { value = JSON.parse(field); }
-            catch { value = field.slice(1, -1).replace(/""/g, '"'); }
-        }
-        row.push(value === '\u3000' ? '' : value);
+        row.push(field);
         field = ''; escaped = false;
     };
     for (const char of input) {
         if (!quoted && (char === '\t' || char === '\n')) {
             flush();
-            if (char === '\n') { rows.push(row.splice(0)); }
+            if (char === '\t') tabular = true;
+            else records.push(row.splice(0));
             continue;
         }
         if (char === '"' && !escaped && (quoted || field === '' ||
@@ -83,6 +80,29 @@ export function parsePastedMatrixRows(text) {
         field += char;
         escaped = char === '\\' && !escaped;
     }
-    flush(); rows.push(row);
-    return rows;
+    // A final record separator terminates the last row. Additional separators
+    // represent real empty rows and must survive spreadsheet paste.
+    if (field || row.length || !input.endsWith('\n') || quoted) {
+        flush();
+        records.push(row);
+    }
+    const decode = value => {
+        if (value.startsWith('"') && value.endsWith('"')) {
+            try {
+                const parsed = JSON.parse(value);
+                if (typeof parsed === 'string') return parsed;
+            } catch { /* Native TSV uses doubled quotes and literal newlines. */ }
+            if (/^"(?:[^"]|"")*"$/u.test(value)) return value.slice(1, -1).replace(/""/g, '"');
+        }
+        return value === '\u3000' ? '' : value;
+    };
+    if (tabular) return records.map(record => record.map(decode));
+    // CP whitespace input commonly ends in extra blank lines. Only TSV has
+    // explicit empty fields, so retain the existing CP trailing-line behavior.
+    while (records.length > 1 && records.at(-1)[0] === '') records.pop();
+    return records.map(([value]) => {
+        const decoded = decode(value);
+        if (decoded !== value || value === '""') return [decoded];
+        return splitDataTokens(value);
+    });
 }

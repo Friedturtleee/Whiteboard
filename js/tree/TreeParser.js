@@ -59,7 +59,14 @@ export class TreeParser {
         // The explicit rooted parser remains available for older saved input.
         if (tokenCounts[0] === 1 && NON_NEGATIVE_INTEGER_TOKEN.test(lines[0]) &&
             (lines.length === 1 || tokenCounts.slice(1).some(count => count >= 2))) {
-            return TreeParser.parseContestFormat(lines, forceZeroBased);
+            const contest = TreeParser.parseContestFormat(lines, forceZeroBased);
+            // A lone number is ambiguous: "5" is not a valid N-node contest
+            // header (it needs N-1 edges), and "0" is not a positive N. The
+            // user most likely wants a single value, so point at that mode.
+            if (contest.error && lines.length === 1) {
+                contest.error += '\n若要建立單一數值節點或 BST，請切換為「數值列表」模式。';
+            }
+            return contest;
         }
 
         // Single line with multiple values → value list for auto-build
@@ -72,7 +79,19 @@ export class TreeParser {
         if (tokenCounts.every(c => c === 1)) {
             const allInts = lines.every(l => SIGNED_INTEGER_TOKEN.test(l));
             if (allInts) {
-                return TreeParser.parseParentFormat(lines);
+                // Auto mode only accepts a *plausible* parent array: exactly
+                // one root marker (-1, 0 or a self-parent), every other entry
+                // a valid 1..n index, and no cycles (all enforced by
+                // parseParentFormat). Anything else is never silently
+                // reinterpreted; the error says how to build a value tree.
+                const parentResult = TreeParser.parseParentFormat(lines);
+                if (parentResult.error) {
+                    parentResult.error += '\n自動模式會把每行一個整數視為父節點陣列；' +
+                        '若這是要建樹的數值（如 BST），請切換為「數值列表」模式。';
+                } else {
+                    parentResult.ambiguousParentArray = true;
+                }
+                return parentResult;
             }
             // Multi-line value list
             const values = lines.map(l => l.trim());

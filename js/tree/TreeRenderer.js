@@ -1,7 +1,8 @@
 /**
  * TreeRenderer — draws tree nodes and edges on a canvas context.
  */
-import { fitCanvasTextFontSize } from '../core/CanvasTextFit.js';
+import { fitCanvasTextFontSize, drawCanvasCellText, getNodeTextBounds } from '../core/CanvasTextFit.js';
+import { getLocalViewport, intersectsViewport } from '../canvas/Viewport.js';
 
 export class TreeRenderer {
     /**
@@ -19,19 +20,20 @@ export class TreeRenderer {
         const oy = opts.offsetY || 0;
         const opacity = opts.opacity ?? 1;
         const hasWeights = opts.hasWeights || false;
+        const viewport = getLocalViewport(ctx, 4);
 
         ctx.globalAlpha = opacity;
 
         // Draw edges first (behind nodes)
-        TreeRenderer._drawEdges(ctx, root, r, color, ox, oy, hasWeights);
+        TreeRenderer._drawEdges(ctx, root, r, color, ox, oy, hasWeights, new Set(), viewport);
 
         // Draw nodes
-        TreeRenderer._drawNodes(ctx, root, r, color, treeType, ox, oy);
+        TreeRenderer._drawNodes(ctx, root, r, color, treeType, ox, oy, new Set(), viewport, opts.editingNode);
 
         ctx.globalAlpha = 1;
     }
 
-    static _drawEdges(ctx, node, r, color, ox, oy, hasWeights, visited = new Set()) {
+    static _drawEdges(ctx, node, r, color, ox, oy, hasWeights, visited = new Set(), viewport = null) {
         const stack = node ? [{ node, childIndex: 0, entered: false }] : [];
         while (stack.length) {
             const frame = stack[stack.length - 1];
@@ -54,6 +56,16 @@ export class TreeRenderer {
 
             const x1 = current.x + ox, y1 = current.y + oy + r;
             const x2 = child.x + ox, y2 = child.y + oy - r;
+            const halfLabel = hasWeights
+                ? Math.min(320, String(child.meta?.edgeWeight ?? '?').length * 6.7) / 2 + 3 : 0;
+            const middleX = (x1 + x2) / 2, middleY = (y1 + y2) / 2;
+            const visible = intersectsViewport(viewport, Math.min(x1, x2, middleX - halfLabel),
+                Math.min(y1, y2, middleY - 12), Math.max(x1, x2, middleX + halfLabel),
+                Math.max(y1, y2, middleY + 12));
+            if (!visible) {
+                stack.push({ node: child, childIndex: 0, entered: false });
+                continue;
+            }
 
             ctx.strokeStyle = color;
             ctx.lineWidth = 1.5;
@@ -92,7 +104,7 @@ export class TreeRenderer {
         }
     }
 
-    static _drawNodes(ctx, node, r, color, treeType, ox, oy, visited = new Set()) {
+    static _drawNodes(ctx, node, r, color, treeType, ox, oy, visited = new Set(), viewport = null, editingNode = null) {
         const stack = node ? [node] : [];
         while (stack.length) {
             const current = stack.pop();
@@ -100,6 +112,14 @@ export class TreeRenderer {
             visited.add(current);
             const nx = current.x + ox;
             const ny = current.y + oy;
+            if (!intersectsViewport(viewport, nx - r - 4, ny - r - 14,
+                nx + r + (treeType === 'euler' ? 80 : 4), ny + r + 4)) {
+                const children = current.children || [];
+                for (let index = children.length - 1; index >= 0; index--) {
+                    if (children[index]) stack.push(children[index]);
+                }
+                continue;
+            }
 
             // Node fill based on tree type
             let fillColor = '#2d2d2d';
@@ -145,9 +165,11 @@ export class TreeRenderer {
             ctx.textAlign = 'center';
             ctx.textBaseline = 'middle';
             const label = String(current.value);
-            const fontSize = fitCanvasTextFontSize(ctx, label, 13, r * 2 - 6, r * 1.5);
-            ctx.font = `${fontSize}px Consolas, monospace`;
-            ctx.fillText(label, nx, ny);
+            if (current !== editingNode) {
+                const box = getNodeTextBounds(label, r);
+                drawCanvasCellText(ctx, label, 13, box.width, box.height, nx, ny);
+            }
+            ctx.textBaseline = 'middle';
 
             // AVL balance factor
             if (treeType === 'avl' && current.meta && current.meta.bf !== undefined) {

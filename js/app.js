@@ -8,7 +8,7 @@ import { Camera } from './canvas/Camera.js';
 import { Grid } from './canvas/Grid.js';
 import { Renderer } from './canvas/Renderer.js';
 import { HitTest } from './canvas/HitTest.js';
-import { layoutCanvasCellText } from './core/CanvasTextFit.js';
+import { layoutCanvasCellText, clearCanvasTextCaches, getNodeTextBounds } from './core/CanvasTextFit.js';
 
 // ── Core ────────────────────────────────────────────────
 import { SelectionManager } from './core/SelectionManager.js';
@@ -16,7 +16,9 @@ import { LayerManager } from './core/LayerManager.js';
 import { Transform } from './core/Transform.js';
 import { History } from './core/History.js';
 import { Serializer } from './core/Serializer.js';
-import { formatDataToken, splitDataTokens, parsePastedMatrixRows } from './core/DataTokens.js';
+import { formatDataToken, splitDataTokens } from './core/DataTokens.js';
+import { MATRIX_CLIPBOARD_TYPE, encodeMatrixClipboard, planMatrixPaste } from './core/MatrixClipboard.js';
+import { AutosaveStore } from './core/AutosaveStore.js';
 
 // ── Elements ────────────────────────────────────────────
 import { ShapeElement } from './elements/ShapeElement.js';
@@ -38,6 +40,31 @@ import { TextInputDialog } from './ui/TextInputDialog.js';
 import { initInterface } from './ui/Interface.js';
 import { bindModal } from './ui/Modal.js';
 import { CloudBoards } from './network/CloudBoards.js';
+
+// ── Tunables ────────────────────────────────────────────
+const AUTOSAVE_DELAY_MS = 1200;            // debounce before writing the local snapshot
+const CAMERA_CLOUD_SYNC_DELAY_MS = 1500;   // trailing cloud notification for camera-only changes
+const CREATE_DRAG_THRESHOLD_PX = 8;        // pointer travel that turns a click into a sized drag
+const RUBBER_BAND_CLICK_THRESHOLD_PX = 4;  // below this a rubber band is just a click
+const DEFAULT_ZOOM = 1.5;                  // camera zoom displayed as "100%"
+const PASTE_OFFSET = 20;                   // world-unit offset for paste / duplicate
+const TOAST_DURATION_MS = 2000;
+const TOAST_ERROR_MIN_DURATION_MS = 6000;
+const DOUBLE_CLICK_CLEANUP_MS = 600;       // creations this recent belong to the double click
+const WHEEL_ZOOM_K = 0.01;                 // exp(-delta * k) zoom factor (ctrl+wheel / pinch)
+const WHEEL_ZOOM_MAX_DELTA_PX = 25;        // clamp one wheel event so a mouse notch is ~22%
+const WHEEL_LINE_PX = 16;
+const WHEEL_PAGE_PX = 200;
+
+// Element type name -> constructor (used by paste and duplicate).
+const ELEMENT_TYPE_MAP = {
+    rectangle: ShapeElement, circle: ShapeElement, ellipse: ShapeElement,
+    line: ShapeElement, arrow: ShapeElement,
+    text: TextElement, matrix: MatrixElement, stack: StackElement,
+    queue: QueueElement, mermaid: MermaidElement,
+    pen: PenElement, tree: TreeElement, graph: GraphElement,
+    markdown: MarkdownElement
+};
 
 const isEmptyDataStructureInput = value => {
     const text = String(value ?? '');
@@ -83,6 +110,21 @@ class App {
         this._isPenDrawing = false;    // freehand pen drawing
         this._penElement   = null;     // pen element currently being drawn
         this._penLastPoint = null;     // last recorded world point
+        this._snapPreview = null;      // connection-port snap while dragging a line endpoint
+        this._creatingTool = null;     // tool of the shape currently being drag-created
+        this._tempRightClickTool = null; // tool to restore after a right-button pan / select
+        this._spaceHeld = false;       // Space held down = temporary pan tool
+        this._prevTool = null;         // tool to restore when Space is released
+        this._releaseSettingsModal = null;
+        this._clipboard = null;        // copied element data for Ctrl+V
+        this._ctxTarget = null;        // element under the open context menu
+        this._pointerDownScreen = null; // { sx, sy } of the active pointer's pointerdown
+        this._pointers = new Map();    // active touch pointers: id -> { sx, sy }
+        this._pinch = null;            // two-finger pinch/pan gesture state
+        this._ignoreLostCapture = new Set(); // pointer ids whose capture we released ourselves
+        this._uiRefreshFrame = 0;      // pending rAF handle for throttled UI refresh
+        this._recentCreations = [];    // { command, time } of tool-created elements (double-click cleanup)
+        this._cameraCloudTimer = null;
 
         // ── Canvas Setup ────────────────────────────────
         this.canvas = document.getElementById('main-canvas');
@@ -128,10 +170,20 @@ class App {
         this._bindMatrixClipboard();
         
         // Ensure web fonts are fully loaded before rendering
-        if (document.fonts && document.fonts.ready) {
-            document.fonts.ready.then(() => {
+        if (document.fonts?.ready) {
+            const refreshFonts = () => {
+                clearCanvasTextCaches();
+                const resized = [];
+                for (const el of this.elements) if (el.type === 'text') {
+                    el.autoSize(this.ctx);
+                    resized.push(el.id);
+                }
+                if (resized.length) this._updateConnectedLines(resized);
+                if (this._textEditing) this._updateTextEditingOverlay();
                 this.renderer.markDirty();
-            });
+            };
+            document.fonts.ready.then(refreshFonts);
+            document.fonts.addEventListener('loadingdone', refreshFonts);
         }
         this._bindTopBar();
         this._bindContextMenu();
@@ -146,6 +198,8 @@ class App {
         // ── Autosave ─────────────────────────────────────
         this._autosaveTimer = null;
         this._skipAutosave = false;
+        this._autosaveFailed = false;
+        this.autosaveStore = new AutosaveStore();
         this.autosaveKey = 'cp_whiteboard_autosave_whiteboard';
         this._tryLoadAutosave();
         this.cloudBoards = new CloudBoards(this);
@@ -219,7 +273,23 @@ class App {
     // ═════════════════════════════════════════════════════
     // Helper – toast notification
     // ═════════════════════════════════════════════════════
-    _toast(msg, duration = 2000) {
+    /**
+     * Show a toast. Compatible call shapes:
+     *   _toast(msg)  _toast(msg, durationMs)  _toast(msg, 'error')  _toast(msg, 'error', durationMs)
+     * Errors use role="alert", stay at least TOAST_ERROR_MIN_DURATION_MS and get a close button.
+     * durationMs = Infinity keeps the toast until it is dismissed. Returns the toast element.
+     */
+    _toast(msg, durationOrType = TOAST_DURATION_MS, typeOrDuration) {
+        let type = 'info';
+        let duration = TOAST_DURATION_MS;
+        for (const arg of [durationOrType, typeOrDuration]) {
+            if (typeof arg === 'string') type = arg;
+            else if (typeof arg === 'number' && !Number.isNaN(arg)) duration = arg;
+        }
+        const isError = type === 'error';
+        if (isError) duration = Math.max(duration, TOAST_ERROR_MIN_DURATION_MS);
+        const persistent = !Number.isFinite(duration);
+
         let region = document.getElementById('toast-region');
         if (!region) {
             region = document.createElement('div');
@@ -229,12 +299,31 @@ class App {
             document.body.appendChild(region);
         }
         const t = document.createElement('div');
-        t.className = 'toast';
-        t.textContent = msg;
-        t.style.setProperty('--toast-duration', `${duration}ms`);
+        t.className = isError ? 'toast toast-error' : 'toast';
+        if (isError) t.setAttribute('role', 'alert');
+        t.style.pointerEvents = 'auto';   // the region itself ignores the pointer
+        t.style.cursor = 'pointer';
+        const text = document.createElement('span');
+        text.textContent = msg;
+        t.appendChild(text);
+        if (isError) {
+            t.style.borderColor = '#e57373';
+            const close = document.createElement('button');
+            close.type = 'button';
+            close.textContent = '×';
+            close.setAttribute('aria-label', '關閉通知');
+            close.style.cssText = 'margin-left:10px;background:none;border:0;color:inherit;cursor:pointer;font-size:14px;line-height:1;padding:0 2px;';
+            t.appendChild(close);
+        }
+        let timer = null;
+        const dismiss = () => { clearTimeout(timer); t.remove(); };
+        t.addEventListener('click', dismiss);
+        if (persistent) t.style.animation = 'toastSlideIn 0.2s ease';
+        else t.style.setProperty('--toast-duration', `${duration}ms`);
         region.appendChild(t);
         while (region.children.length > 3) region.firstElementChild.remove();
-        setTimeout(() => t.remove(), duration + 300);
+        if (!persistent) timer = setTimeout(dismiss, duration + 300);
+        return t;
     }
 
     // ═════════════════════════════════════════════════════
@@ -243,7 +332,7 @@ class App {
     _updateZoomDisplay() {
         const el = document.getElementById('zoom-display');
         // 150% 實際縮放展示為 100%
-        const percent = this.camera.zoom / 1.5 * 100;
+        const percent = this.camera.zoom / DEFAULT_ZOOM * 100;
         if (el) el.textContent = (percent < 1 ? percent.toPrecision(2) : Math.round(percent)) + '%';
     }
 
@@ -255,6 +344,15 @@ class App {
         if (!bounds.length) return false;
         const minX = Math.min(...bounds.map(b => b.x)), minY = Math.min(...bounds.map(b => b.y));
         const maxX = Math.max(...bounds.map(b => b.x + b.w)), maxY = Math.max(...bounds.map(b => b.y + b.h));
+        const viewport = this._getCanvasWorkArea();
+        const changed = this.camera.fitBounds({ x: minX, y: minY, w: maxX - minX, h: maxY - minY }, viewport);
+        if (changed) {
+            this._updateZoomDisplay(); this.renderer.markDirty(); this._autosave({ camera: true });
+        }
+        return changed;
+    }
+
+    _getCanvasWorkArea() {
         const canvas = this.canvas.getBoundingClientRect();
         const toolbar = document.getElementById('toolbar').getBoundingClientRect();
         const panels = document.getElementById('right-panels').getBoundingClientRect();
@@ -264,13 +362,7 @@ class App {
         const top = Math.max(24, topbar.bottom - canvas.top + 20);
         const right = Math.min(canvas.width - 24, panels.left - canvas.left - 20);
         const bottom = Math.min(canvas.height - 24, zoombar.top - canvas.top - 20);
-        const changed = this.camera.fitBounds({ x: minX, y: minY, w: maxX - minX, h: maxY - minY }, {
-            x: left, y: top, width: Math.max(24, right - left), height: Math.max(24, bottom - top)
-        });
-        if (changed) {
-            this._updateZoomDisplay(); this.renderer.markDirty(); this._autosave();
-        }
-        return changed;
+        return { x: left, y: top, width: Math.max(24, right - left), height: Math.max(24, bottom - top) };
     }
 
     // ═════════════════════════════════════════════════════
@@ -289,7 +381,7 @@ class App {
             this.camera.zoomAt(1, cx, cy);
             this._updateZoomDisplay();
             this.renderer.markDirty();
-            this._autosave();
+            this._autosave({ camera: true });
         });
         $('btn-zoom-out')?.addEventListener('click', () => {
             const cx = this.canvas.clientWidth / 2;
@@ -297,14 +389,14 @@ class App {
             this.camera.zoomAt(-1, cx, cy);
             this._updateZoomDisplay();
             this.renderer.markDirty();
-            this._autosave();
+            this._autosave({ camera: true });
         });
         $('zoom-display')?.addEventListener('click', () => {
             this._finishInlineEditing();
-            this.camera.zoomTo(1.5, this.canvas.clientWidth / 2, this.canvas.clientHeight / 2);
+            this.camera.zoomTo(DEFAULT_ZOOM, this.canvas.clientWidth / 2, this.canvas.clientHeight / 2);
             this._updateZoomDisplay();
             this.renderer.markDirty();
-            this._autosave();
+            this._autosave({ camera: true });
         });
 
         $('btn-export-json')?.addEventListener('click', () => Serializer.exportJSON(this));
@@ -332,22 +424,31 @@ class App {
                 e.target.value = '';
                 return;
             }
+            // Import replaces the whole board (and clears undo history).
+            if (this.elements.length > 0 &&
+                !confirm('匯入 JSON 會取代目前白板的所有內容，且無法復原。要繼續嗎？')) {
+                e.target.value = '';
+                return;
+            }
             try {
                 this._skipAutosave = true;  // prevent immediate re-save during import
+                // loadJSONData validates off-canvas first, so a failure keeps the current board.
                 await Serializer.importJSON(this, file);
             } catch (err) {
                 this._skipAutosave = false;
-                this._toast('匯入失敗: ' + err.message);
+                this._toast('匯入失敗: ' + err.message, 'error');
                 e.target.value = '';
                 return;
             }
             this._skipAutosave = false;
-            try { localStorage.removeItem(this.autosaveKey); } catch (err) {
-                console.warn('[Import autosave cleanup]', err);
-            }
+            // Importing is an explicit user action: it may replace a locked (corrupt) autosave.
+            this.autosaveStore.unlock(this.autosaveKey);
             this._refreshUI();
+            // Overwrite the key in place (no removeItem first) so a failed write
+            // leaves the previous autosave intact.
             const saved = this._flushAutosave();
-            this._toast(saved ? '已匯入' : '已匯入，但自動儲存失敗，請立即匯出 JSON。');
+            if (saved) this._toast('已匯入');
+            else this._toast('已匯入，但無法寫入自動儲存（先前的自動存檔仍保留）。請立即匯出 JSON 備份。', 'error');
             e.target.value = '';
         });
     }
@@ -356,11 +457,41 @@ class App {
     // Refresh UI panels after state change
     // ═════════════════════════════════════════════════════
     _refreshUI() {
+        if (this._uiRefreshFrame) {
+            (globalThis.cancelAnimationFrame || clearTimeout)(this._uiRefreshFrame);
+            this._uiRefreshFrame = 0;
+        }
+        this._updatePanels();
+        this._autosave();
+    }
+
+    /** Refresh panels / zoom label / canvas without scheduling a save. */
+    _updatePanels() {
         this.propertyPanel.update();
         this.layerPanel.update();
         this._updateZoomDisplay();
+        this._updateHistoryButtons();
         this.renderer.markDirty();
-        this._autosave();
+    }
+
+    /** rAF-throttled panel refresh for pointermove (drag / resize / rotate). Never saves. */
+    _scheduleUIRefresh() {
+        if (this._uiRefreshFrame) return;
+        const raf = globalThis.requestAnimationFrame || (fn => setTimeout(fn, 16));
+        this._uiRefreshFrame = raf(() => {
+            this._uiRefreshFrame = 0;
+            this._updatePanels();
+        });
+    }
+
+    _updateHistoryButtons() {
+        // Cloud boards drive these buttons from the shared undo manager.
+        if (this.cloudBoards?.isCloudBoard || !this.history) return;
+        const readOnly = Boolean(this.cloudBoards?.isReadOnly);
+        const undo = document.getElementById('btn-undo');
+        const redo = document.getElementById('btn-redo');
+        if (undo) undo.disabled = readOnly || this.history.undoStack.length === 0;
+        if (redo) redo.disabled = readOnly || this.history.redoStack.length === 0;
     }
 
     // ═════════════════════════════════════════════════════
@@ -383,8 +514,15 @@ class App {
         this.canvas.addEventListener('pointerdown', e => this._onPointerDown(e));
         this.canvas.addEventListener('pointermove', e => this._onPointerMove(e));
         this.canvas.addEventListener('pointerup',   e => this._onPointerUp(e));
-        this.canvas.addEventListener('pointercancel', e => this._cancelPointerInteraction(e.pointerId));
-        this.canvas.addEventListener('lostpointercapture', e => this._cancelPointerInteraction(e.pointerId));
+        this.canvas.addEventListener('pointercancel', e => {
+            this._endTouchPointer(e.pointerId);
+            this._cancelPointerInteraction(e.pointerId);
+        });
+        this.canvas.addEventListener('lostpointercapture', e => {
+            // Capture we released ourselves on pointerup/cancel is not a lost drag.
+            if (this._ignoreLostCapture.delete(e.pointerId)) return;
+            this._cancelPointerInteraction(e.pointerId);
+        });
         this.canvas.addEventListener('dblclick',     e => this._onDoubleClick(e));
 
         // Custom context menu (replaces browser default)
@@ -393,11 +531,22 @@ class App {
 
     // ────────── Pointer Down ────────────────────────────
     _onPointerDown(e) {
+        // Two touch pointers = pinch zoom + pan (allowed on read-only boards too).
+        if (e.pointerType === 'touch') {
+            const { sx, sy } = this._screenPos(e);
+            this._pointers.set(e.pointerId, { sx, sy });
+            if (this._pointers.size >= 2) {
+                this._beginPinch();
+                return;
+            }
+        }
+        if (this._pinch) return;
         if (this.cloudBoards?.isReadOnly && this.toolbar.currentTool !== 'pan' && e.button !== 1) return;
         if (this._activePointerId !== null) return;
         this._activePointerId = e.pointerId;
-        this.canvas.setPointerCapture(e.pointerId);
+        try { this.canvas.setPointerCapture(e.pointerId); } catch { /* pointer already gone */ }
         const { sx, sy } = this._screenPos(e);
+        this._pointerDownScreen = { sx, sy };
         const { x: wx, y: wy } = this._worldPos(e);
         const tool = this.toolbar.currentTool;
 
@@ -494,11 +643,19 @@ class App {
 
     // ────────── Pointer Move ────────────────────────────
     _onPointerMove(e) {
+        if (e.pointerType === 'touch' && this._pointers.has(e.pointerId)) {
+            this._pointers.set(e.pointerId, this._screenPos(e));
+            if (this._pinch) {
+                this._updatePinch();
+                return;
+            }
+        }
+        if (this._pinch) return;
         if (this._activePointerId !== null && e.pointerId !== this._activePointerId) return;
         const { sx, sy } = this._screenPos(e);
         const { x: wx, y: wy } = this._worldPos(e);
 
-        // ── Panning ────────────────────────────────
+        // ── Panning (saved once on pointerup, not per move) ──
         if (this._isPanning) {
             const dx = sx - this._lastPanScreen.sx;
             const dy = sy - this._lastPanScreen.sy;
@@ -506,7 +663,6 @@ class App {
             this._lastPanScreen = { sx, sy };
             this._updateZoomDisplay();
             this.renderer.markDirty();
-            this._autosave();
             return;
         }
 
@@ -541,7 +697,8 @@ class App {
                 this._snapPreview = this._findSnapPort(wx, wy, this.transform.targetElement);
                 this.renderer.markDirty();
             }
-            this._refreshUI();
+            // Panels refresh at most once per frame; the save happens on pointerup.
+            this._scheduleUIRefresh();
             return;
         }
 
@@ -565,6 +722,11 @@ class App {
 
     // ────────── Pointer Up ──────────────────────────────
     _onPointerUp(e) {
+        if (e.pointerType === 'touch') {
+            const wasPinching = Boolean(this._pinch);
+            this._endTouchPointer(e.pointerId);
+            if (wasPinching) return;
+        }
         if (this._activePointerId !== null && e.pointerId !== this._activePointerId) return;
         try {
             this._finishPointerUp(e);
@@ -580,9 +742,7 @@ class App {
             this._matrixCellSelection = null;
             this.canvas.style.cursor = '';
         }
-        if (e.pointerId !== undefined && e.pointerId !== null) {
-            try { this.canvas.releasePointerCapture(e.pointerId); } catch(err) {}
-        }
+        this._releaseCapture(e.pointerId);
 
         // ── Revert temporary right-click tool toggle ──
         if (e.button === 2 && this._tempRightClickTool) {
@@ -592,9 +752,10 @@ class App {
                 this._isPanning = false;
                 this._lastPanScreen = null;
                 this.canvas.style.cursor = '';
+                this._autosave({ camera: true });
             }
             if (this.selectionManager.rubberBand) {
-                this.selectionManager.finishRubberBand(e.shiftKey);
+                this._finishRubberBand(e);
                 this._refreshUI();
                 this.canvas.style.cursor = '';
             }
@@ -606,6 +767,7 @@ class App {
             this._isPanning = false;
             this._lastPanScreen = null;
             this.canvas.style.cursor = '';
+            this._autosave({ camera: true });
             return;
         }
 
@@ -616,7 +778,7 @@ class App {
             if (el.points.length >= 2) {
                 if (el.optimize) el.optimize(2 / this.camera.zoom);
                 this.layerManager._reindex();
-                this.history.pushAdd(this, el);
+                this._pushCreation(el);
                 this.selectionManager.select(el);
             } else {
                 // Too few points — discard ghost element
@@ -758,7 +920,7 @@ class App {
 
         // ── Finish rubber-band selection ───────────
         if (this.selectionManager.rubberBand) {
-            this.selectionManager.finishRubberBand(e.shiftKey);
+            this._finishRubberBand(e);
             this._refreshUI();
             return;
         }
@@ -782,9 +944,7 @@ class App {
         if (!hasActiveInteraction) {
             const activePointerId = this._activePointerId;
             this._activePointerId = null;
-            if (activePointerId !== null) {
-                try { this.canvas.releasePointerCapture(activePointerId); } catch {}
-            }
+            this._releaseCapture(activePointerId);
             return;
         }
 
@@ -820,11 +980,96 @@ class App {
         this._snapPreview = null;
         const activePointerId = this._activePointerId;
         this._activePointerId = null;
-        if (activePointerId !== null) {
-            try { this.canvas.releasePointerCapture(activePointerId); } catch {}
-        }
+        this._releaseCapture(activePointerId);
         this.layerManager._reindex();
         this._refreshUI();
+    }
+
+    /** Release pointer capture, remembering it was us so lostpointercapture is not a cancel. */
+    _releaseCapture(pointerId) {
+        if (pointerId === undefined || pointerId === null) return;
+        try {
+            const held = this.canvas.hasPointerCapture(pointerId);
+            this.canvas.releasePointerCapture(pointerId);
+            if (held) this._ignoreLostCapture.add(pointerId);
+        } catch { /* pointer already gone */ }
+    }
+
+    /** A rubber band shorter than the click threshold is a click: clear selection only. */
+    _finishRubberBand(e) {
+        const sel = this.selectionManager;
+        const start = this._pointerDownScreen;
+        const { sx, sy } = this._screenPos(e);
+        const moved = start ? Math.hypot(sx - start.sx, sy - start.sy) : Infinity;
+        if (moved < RUBBER_BAND_CLICK_THRESHOLD_PX) {
+            sel.rubberBand = null;
+            if (!e.shiftKey) sel.clear();
+            this.renderer.markDirty();
+        } else {
+            sel.finishRubberBand(e.shiftKey);
+        }
+    }
+
+    // ═════════════════════════════════════════════════════
+    // Touch: two-finger pinch zoom + pan
+    // ═════════════════════════════════════════════════════
+    _pinchMetrics() {
+        const ids = this._pinch.ids;
+        const a = this._pointers.get(ids[0]);
+        const b = this._pointers.get(ids[1]);
+        if (!a || !b) return null;
+        return {
+            mx: (a.sx + b.sx) / 2,
+            my: (a.sy + b.sy) / 2,
+            dist: Math.max(1, Math.hypot(a.sx - b.sx, a.sy - b.sy))
+        };
+    }
+
+    _beginPinch() {
+        if (this._pinch) return;
+        // Drop whatever the first finger had started (drag, pen stroke, creation…).
+        this._cancelPointerInteraction();
+        this._finishTextEditing();
+        const ids = [...this._pointers.keys()].slice(0, 2);
+        this._pinch = { ids, mx: 0, my: 0, dist: 1 };
+        const m = this._pinchMetrics();
+        if (m) Object.assign(this._pinch, m);
+    }
+
+    _updatePinch() {
+        const m = this._pinchMetrics();
+        if (!m) return;
+        const p = this._pinch;
+        this.camera.pan(m.mx - p.mx, m.my - p.my);
+        this._zoomByFactor(m.dist / p.dist, m.mx, m.my);
+        Object.assign(p, m);
+        this._updateZoomDisplay();
+        this.renderer.markDirty();
+    }
+
+    _endTouchPointer(pointerId) {
+        if (!this._pointers.delete(pointerId)) return;
+        if (this._pinch && (this._pinch.ids.includes(pointerId) || this._pointers.size < 2)) {
+            this._pinch = null;
+            this._autosave({ camera: true });
+        }
+    }
+
+    /** Multiply the zoom by `factor` keeping the screen point (sx, sy) fixed. */
+    _zoomByFactor(factor, sx, sy) {
+        if (!Number.isFinite(factor) || factor <= 0) return;
+        if (typeof this.camera.zoomByFactor === 'function') this.camera.zoomByFactor(factor, sx, sy);
+        else this.camera.zoomTo(this.camera.zoom * factor, sx, sy);
+    }
+
+    /** Add the freshly pushed "Add" history record to the double-click cleanup list. */
+    _pushCreation(el, options) {
+        this.history.pushAdd(this, el, options);
+        const stack = this.history.undoStack;
+        const now = Date.now();
+        this._recentCreations = this._recentCreations
+            .filter(record => now - record.time < DOUBLE_CLICK_CLEANUP_MS)
+            .concat({ command: stack[stack.length - 1], time: now });
     }
 
     _onDoubleClick(e) {
@@ -832,18 +1077,21 @@ class App {
         if (this.toolbar && this.toolbar.currentTool !== 'select') {
             this.toolbar.setTool('select');
             
-            // Cleanup accidental creations caused by the first click of this double-click
+            // Undo only the creations made by the clicks of this double-click.
             const now = Date.now();
-            let popped = 0;
-            while (this.history.undoStack.length > 0 && popped < 2) {
-                const cmd = this.history.undoStack[this.history.undoStack.length - 1];
-                if (cmd.description && cmd.description.startsWith('Add ') && (now - cmd.timestamp < 600)) {
-                    this.history.undo();
-                    this.history.redoStack.pop(); // Remove it completely
-                    popped++;
-                } else {
-                    break;
-                }
+            const recent = new Set(this._recentCreations
+                .filter(record => now - record.time < DOUBLE_CLICK_CLEANUP_MS)
+                .map(record => record.command));
+            this._recentCreations = [];
+            const { undoStack, redoStack } = this.history;
+            while (undoStack.length > 0) {
+                const cmd = undoStack[undoStack.length - 1];
+                if (!recent.has(cmd)) break;
+                const before = undoStack.length;
+                this.history.undo();
+                if (undoStack.length === before) break;   // undo was redirected (cloud) or failed
+                if (redoStack[redoStack.length - 1] === cmd) redoStack.pop();   // drop it completely
+                recent.delete(cmd);
             }
 
             // Close dialogs if they were opened by the first click
@@ -991,7 +1239,8 @@ class App {
                         if (!hit.selectedCells.has(key)) hit.selectedCells.clear();
                         hit.selectedCells.add(key);
                     }
-                    hit._lastCellKey = key;
+                    if (!e.shiftKey || !hit._lastCellKey) hit._lastCellKey = key;
+                    hit._activeCellKey = key;
                     this._matrixCellSelection = {
                         element: hit, row: anchor[0], col: anchor[1], endKey: key,
                         baseCells: e.ctrlKey || e.metaKey || e.shiftKey ? initialCells : new Set()
@@ -1224,7 +1473,7 @@ class App {
         const isDrag = Math.hypot(
             screenEnd.x - this._createStart.sx,
             screenEnd.y - this._createStart.sy
-        ) > 8;
+        ) > CREATE_DRAG_THRESHOLD_PX;
 
         if (!isDrag) {
             // Point click: use default sizes
@@ -1255,11 +1504,12 @@ class App {
 
         this.layerManager._reindex();
         const opensDataStructureDialog = ['matrix', 'stack', 'queue', 'tree', 'graph'].includes(tool);
-        this.history.pushAdd(this, el, { discardable: opensDataStructureDialog });
+        this._pushCreation(el, { discardable: opensDataStructureDialog });
         this.selectionManager.select(el);
         this._isCreating = false;
         this._creatingElement = null;
         this._createStart = null;
+        this._creatingTool = null;
 
         // For data structures: open dialog after creation
         if (['matrix', 'stack', 'queue', 'tree', 'graph'].includes(tool)) {
@@ -1311,6 +1561,7 @@ class App {
         let dirty = false;
         for (const el of this.elements) {
             if (el.selectedCells && el.selectedCells.size > 0) { el.selectedCells.clear(); dirty = true; }
+            if (el.selectedCells) el._lastCellKey = el._activeCellKey = null;
             if (el.selectedIndices && el.selectedIndices.size > 0) { el.selectedIndices.clear(); dirty = true; }
         }
         if (dirty) this.renderer.markDirty();
@@ -1346,7 +1597,9 @@ class App {
             }
         }
         el._lastCellKey = `${drag.row},${drag.col}`;
-        this._refreshUI();
+        el._activeCellKey = key;
+        this.propertyPanel.update({ selectionOnly: true });
+        this.renderer.markDirty();
     }
 
     _applyInheritedColor(element) {
@@ -1455,10 +1708,16 @@ class App {
         return null;
     }
 
-    _matrixClipboardTarget() {
+    _selectedMatrixWithCells() {
         const selected = this.selectionManager.selectedElements;
         const el = selected.length === 1 ? selected[0] : null;
         if (el?.type !== 'matrix' || el.locked || el.hidden || !el.selectedCells?.size) return null;
+        return el;
+    }
+
+    _matrixClipboardTarget() {
+        const el = this._selectedMatrixWithCells();
+        if (!el) return null;
         const cells = [...el.selectedCells].map(key => key.split(',').map(Number))
             .filter(([row, col]) => Number.isInteger(row) && Number.isInteger(col) &&
                 row >= 0 && col >= 0 && row < el.rows && col < el.cols)
@@ -1475,12 +1734,9 @@ class App {
         for (const type of ['copy', 'cut']) document.addEventListener(type, event => {
             const selected = target(event);
             if (!selected || !event.clipboardData || (type === 'cut' && this.cloudBoards?.isReadOnly)) return;
-            const rows = new Map();
-            for (const [row, col] of selected.cells) {
-                if (!rows.has(row)) rows.set(row, []);
-                rows.get(row).push(formatDataToken(selected.el.data[row][col]));
-            }
-            event.clipboardData.setData('text/plain', [...rows.values()].map(row => row.join('\t')).join('\n'));
+            const data = encodeMatrixClipboard(selected.el, selected.cells);
+            event.clipboardData.setData('text/plain', data.text);
+            event.clipboardData.setData(MATRIX_CLIPBOARD_TYPE, data.structured);
             this._clipboard = null;
             event.preventDefault();
             if (type === 'cut') this._deleteSelectedMatrixCells(selected.el);
@@ -1494,28 +1750,73 @@ class App {
             if (text.length > MAX_DATA_STRUCTURE_INPUT_LENGTH) {
                 this._toast('貼上資料不可超過 1 MB。'); return;
             }
-            let { cells } = selected;
             const { el } = selected;
-            const rows = parsePastedMatrixRows(text);
-            let values = rows.flat();
-            if (cells.length === 1 && values.length > 1) {
-                const [startRow, startCol] = cells[0];
-                if (rows.some(row => row.length !== rows[0].length) ||
-                    startRow + rows.length > el.rows || startCol + rows[0].length > el.cols) {
-                    this._toast('貼上範圍超出矩陣，或每列資料數量不同。'); return;
-                }
-                cells = rows.flatMap((row, r) => row.map((_, c) => [startRow + r, startCol + c]));
-                values = rows.flat();
-            }
-            if (values.length !== 1 && values.length !== cells.length) {
-                this._toast(`請貼上 1 個值，或剛好 ${cells.length} 個值。`); return;
-            }
+            const plan = planMatrixPaste(el, selected.cells, text, event.clipboardData.getData(MATRIX_CLIPBOARD_TYPE));
+            if (plan.error) { this._toast(plan.error); return; }
+            const { cells, values } = plan;
             if (!values.length) return;
             const error = this._applyMatrixCellValues(el, cells, values);
             if (error) { this._toast(error); return; }
             el.selectedCells = new Set(cells.map(([r, c]) => `${r},${c}`));
+            el._lastCellKey = el._activeCellKey = `${cells[0][0]},${cells[0][1]}`;
             this._refreshUI();
         });
+    }
+
+    _navigateMatrixCells(el, event) {
+        const deltas = { ArrowLeft: [0, -1], ArrowRight: [0, 1], ArrowUp: [-1, 0], ArrowDown: [1, 0] };
+        if (!deltas[event.key] && !['Home', 'End', 'Tab'].includes(event.key)) return false;
+        const focusKey = [el._activeCellKey, el._lastCellKey].find(key => el.selectedCells.has(key)) || el.selectedCells.values().next().value;
+        let [row, col] = focusKey.split(',').map(Number);
+        if (!Number.isInteger(row) || !Number.isInteger(col) || row < 0 || col < 0 || row >= el.rows || col >= el.cols) return false;
+        const previousKey = `${row},${col}`;
+        const jump = event.ctrlKey || event.metaKey;
+        if (jump && event.key === 'Tab') return false;
+        if (deltas[event.key]) {
+            const [dr, dc] = deltas[event.key];
+            row = jump && dr ? (dr < 0 ? 0 : el.rows - 1) : Math.max(0, Math.min(el.rows - 1, row + dr));
+            col = jump && dc ? (dc < 0 ? 0 : el.cols - 1) : Math.max(0, Math.min(el.cols - 1, col + dc));
+        } else if (event.key === 'Tab') {
+            const index = row * el.cols + col + (event.shiftKey ? -1 : 1);
+            if (index < 0 || index >= el.rows * el.cols) return false;
+            row = Math.floor(index / el.cols); col = index % el.cols;
+        } else {
+            col = event.key === 'Home' ? 0 : el.cols - 1;
+            if (jump) row = event.key === 'Home' ? 0 : el.rows - 1;
+        }
+        event.preventDefault();
+        const key = `${row},${col}`;
+        if (event.shiftKey && event.key !== 'Tab') {
+            const anchorKey = el._lastCellKey && el.selectedCells.has(el._lastCellKey) ? el._lastCellKey : previousKey;
+            const [anchorRow, anchorCol] = anchorKey.split(',').map(Number);
+            el._lastCellKey = anchorKey;
+            el.selectedCells.clear();
+            for (let r = Math.min(anchorRow, row); r <= Math.max(anchorRow, row); r++) {
+                for (let c = Math.min(anchorCol, col); c <= Math.max(anchorCol, col); c++) el.selectedCells.add(`${r},${c}`);
+            }
+        } else {
+            el.selectedCells = new Set([key]); el._lastCellKey = key;
+        }
+        el._activeCellKey = key;
+        const panned = this._revealMatrixCell(el, row, col);
+        this.propertyPanel.update({ selectionOnly: true });
+        this.renderer.markDirty();
+        if (panned) this._autosave();
+        return true;
+    }
+
+    _revealMatrixCell(el, row, col) {
+        const x = el.x + 10 + col * el.cellSize, y = el.y + 10 + row * el.cellSize;
+        const points = [[x, y], [x + el.cellSize, y], [x, y + el.cellSize], [x + el.cellSize, y + el.cellSize]]
+            .map(([px, py]) => el.toWorldPoint(px, py)).map(p => this.camera.worldToScreen(p.x, p.y));
+        const left = Math.min(...points.map(p => p.x)), right = Math.max(...points.map(p => p.x));
+        const top = Math.min(...points.map(p => p.y)), bottom = Math.max(...points.map(p => p.y));
+        const area = this._getCanvasWorkArea();
+        const shift = (min, max, start, size) => max - min > size ? start + size / 2 - (min + max) / 2
+            : min < start ? start - min : max > start + size ? start + size - max : 0;
+        const dx = shift(left, right, area.x, area.width), dy = shift(top, bottom, area.y, area.height);
+        if (dx || dy) this.camera.pan(dx, dy);
+        return Boolean(dx || dy);
     }
 
     _deleteSelectedItems(el) {
@@ -1607,7 +1908,7 @@ class App {
         el.autoSize(this.ctx);
         this.elements.push(el);
         this.layerManager._reindex();
-        this.history.pushAdd(this, el, { discardable: true });
+        this._pushCreation(el, { discardable: true });
         this.selectionManager.select(el);
         this._startTextEditing(el);
         this._refreshUI();
@@ -1630,28 +1931,45 @@ class App {
         const zoom = this.camera.zoom;
         const rawLeft = canvasRect.left + screenTL.x;
         const rawTop = canvasRect.top + screenTL.y;
-        const cropX = el.rotation ? 0 : Math.max(0, 16 - rawLeft);
-        const cropY = el.rotation ? 0 : Math.max(0, 16 - rawTop);
-        const left = rawLeft + cropX, top = rawTop + cropY;
         const baseWidth = el._baseWidth || el.width;
         const baseHeight = el._baseHeight || el.height;
+        const sx = scaleX * zoom, sy = scaleY * zoom;
+        const cos = Math.cos(el.rotation || 0), sin = Math.sin(el.rotation || 0);
+        const a = cos * sx, b = sin * sx, c = -sin * sy, d = cos * sy;
+        const cx = el.width * zoom / 2, cy = el.height * zoom / 2;
+        const originX = rawLeft + cx - cos * cx + sin * cy;
+        const originY = rawTop + cy - sin * cx - cos * cy;
+        // Find the visible text coordinates even when the first line is offscreen
+        // and the element is rotated. Moving and scrolling by the same local
+        // offset keeps native glyphs aligned with the canvas.
+        let minX = Infinity, minY = Infinity, maxX = -Infinity, maxY = -Infinity;
+        for (const x of [16, Math.max(16, window.innerWidth - 24)]) {
+            for (const y of [16, Math.max(16, window.innerHeight - 24)]) {
+                const dx = x - originX, dy = y - originY;
+                const localX = (cos * dx + sin * dy) / sx;
+                const localY = (-sin * dx + cos * dy) / sy;
+                minX = Math.min(minX, localX); maxX = Math.max(maxX, localX);
+                minY = Math.min(minY, localY); maxY = Math.max(maxY, localY);
+            }
+        }
         // Keep native text metrics in the element's unscaled coordinate system.
         // The same transform as the canvas also preserves nonuniform resizing.
         const editorHeight = Math.min(baseHeight + 2, Math.max(el.fontSize * 1.3,
-            (window.innerHeight - Math.max(16, top) - 24) / (scaleY * zoom)));
+            maxY - Math.max(0, minY)));
         const editorWidth = Math.min(baseWidth + 2, Math.max(el.fontSize * 2,
-            (window.innerWidth - Math.max(16, left) - 24) / (scaleX * zoom)));
+            maxX - Math.max(0, minX)));
+        const cropX = Math.min(Math.max(0, minX), Math.max(0, baseWidth - editorWidth));
+        const cropY = Math.min(Math.max(0, minY), Math.max(0, baseHeight - editorHeight));
 
-        overlay.style.left = left + 'px';
-        overlay.style.top = top + 'px';
+        overlay.style.left = (originX + a * cropX + c * cropY) + 'px';
+        overlay.style.top = (originY + b * cropX + d * cropY) + 'px';
         overlay.style.width = editorWidth + 'px';
         overlay.style.height = editorHeight + 'px';
         overlay.style.fontSize = el.fontSize + 'px';
         overlay.style.lineHeight = '1.3';
         overlay.style.transformOrigin = '0 0';
-        const cx = el.width * zoom / 2, cy = el.height * zoom / 2;
-        overlay.style.transform = `translate(${cx}px, ${cy}px) rotate(${el.rotation || 0}rad) translate(${-cx}px, ${-cy}px) scale(${scaleX * zoom}, ${scaleY * zoom})`;
-        const nextCrop = { x: cropX / (scaleX * zoom), y: cropY / (scaleY * zoom) };
+        overlay.style.transform = `matrix(${a}, ${b}, ${c}, ${d}, 0, 0)`;
+        const nextCrop = { x: cropX, y: cropY };
         const previousCrop = this._textEditorViewportOffset || { x: 0, y: 0 };
         overlay.scrollLeft += nextCrop.x - previousCrop.x;
         overlay.scrollTop += nextCrop.y - previousCrop.y;
@@ -1690,6 +2008,7 @@ class App {
         overlay.maxLength = MAX_DATA_STRUCTURE_INPUT_LENGTH;
         this._updateTextEditingOverlay();
         overlay.setAttribute('aria-label', '編輯文字');
+        overlay.title = 'Enter 換行 · Ctrl / ⌘ + Enter 完成 · Esc 取消';
         overlay.focus({ preventScroll: true });
         overlay.select();
         overlay.scrollLeft = this._textEditorViewportOffset.x;
@@ -1706,6 +2025,7 @@ class App {
                 }
                 this._textEditing.text = overlay.value;
                 this._textEditing.autoSize(this.ctx);
+                this._updateConnectedLines([this._textEditing.id]);
                 
                 this._updateTextEditingOverlay();
                 
@@ -1717,6 +2037,13 @@ class App {
         overlay.onblur = () => this._finishTextEditing();
         overlay.onkeydown = event => {
             if (event.isComposing) return;
+            if ((event.ctrlKey || event.metaKey) && event.key === 'Enter') {
+                event.preventDefault();
+                event.stopPropagation();
+                this._finishTextEditing();
+                this.canvas.focus({ preventScroll: true });
+                return;
+            }
             if (event.key !== 'Escape') return;
             event.preventDefault();
             event.stopPropagation();
@@ -1738,10 +2065,15 @@ class App {
         overlay.removeEventListener('input', this._textInputHandler);
 
         const el = this._textEditing;
-        const newText = overlay.value;
+        const newText = overlay.value.slice(0, MAX_DATA_STRUCTURE_INPUT_LENGTH);
         const oldText = this._textEditOld;
         const discardingNewBlankText = el.type === 'text' && !oldText.trim() && !newText.trim();
         const deletesExistingText = el.type === 'text' && !newText.trim() && oldText !== newText;
+
+        if (!cancel && el.text !== newText) {
+            el.text = newText;
+            el.autoSize(this.ctx);
+        }
 
         if (cancel) {
             el.text = oldText;
@@ -1750,6 +2082,7 @@ class App {
             const applyText = value => {
                 el.text = value;
                 el.autoSize(this.ctx);
+                this._updateConnectedLines([el.id]);
             };
             if (deletesExistingText) {
                 const oldIndex = this.elements.indexOf(el);
@@ -1790,6 +2123,9 @@ class App {
             if (!oldText.trim()) this.history.discardAdd?.(el);
         }
 
+        this._updateConnectedLines([el.id]);
+
+        this.propertyPanel?.update();
         this.renderer.markDirty();
         this._autosave();
     }
@@ -1797,27 +2133,6 @@ class App {
     // ═════════════════════════════════════════════════════
     // Data Structure Creation & Dialog
     // ═════════════════════════════════════════════════════
-    _createDataStructure(type, wx, wy) {
-        let el;
-        if (type === 'matrix') {
-            el = new MatrixElement(wx, wy);
-        } else if (type === 'stack') {
-            el = new StackElement(wx, wy);
-        } else {
-            el = new QueueElement(wx, wy);
-        }
-        this._applyInheritedColor(el);
-        el.strokeWidth = this.settings.defaultStrokeWidth || 2;
-        this.elements.push(el);
-        this.layerManager._reindex();
-        this.history.pushAdd(this, el, { discardable: true });
-        this.selectionManager.select(el);
-
-        // Open the input dialog immediately
-        this._showDataStructureDialog(el, true);
-        this._refreshUI();
-    }
-
     _showDataStructureDialog(el, isNew = false) {
         const typeLabel = { matrix: '矩陣', stack: '堆疊', queue: '佇列' }[el.type] || el.type;
         const placeholder = el.type === 'matrix'
@@ -1904,7 +2219,7 @@ class App {
         el.strokeWidth = this.settings.defaultStrokeWidth || 2;
         this.elements.push(el);
         this.layerManager._reindex();
-        this.history.pushAdd(this, el, { discardable: true });
+        this._pushCreation(el, { discardable: true });
         this.selectionManager.select(el);
         this._showTreeDialog(el, true);
         this._refreshUI();
@@ -2015,7 +2330,7 @@ class App {
         el.strokeWidth = this.settings.defaultStrokeWidth || 2;
         this.elements.push(el);
         this.layerManager._reindex();
-        this.history.pushAdd(this, el, { discardable: true });
+        this._pushCreation(el, { discardable: true });
         this.selectionManager.select(el);
         this._showGraphDialog(el, true);
         this._refreshUI();
@@ -2111,16 +2426,20 @@ class App {
     // ═════════════════════════════════════════════════════
     _fitCellEditor(overlay, element, width, height, baseFontSize) {
         overlay.setAttribute('aria-label', '編輯儲存格內容');
+        overlay.title = 'Enter 完成 · Shift + Enter 換行 · Esc 取消';
         const fit = () => {
             this.ctx.save();
             this.ctx.font = `${baseFontSize}px Consolas, monospace`;
-            const layout = layoutCanvasCellText(this.ctx, overlay.value, baseFontSize, width, height);
+            const layout = layoutCanvasCellText(this.ctx, overlay.value, baseFontSize,
+                typeof width === 'function' ? width() : width, typeof height === 'function' ? height() : height);
             this.ctx.restore();
             const zoom = this.camera.zoom;
             overlay.style.fontSize = `${layout.fontSize * zoom}px`;
             overlay.style.lineHeight = `${layout.lineHeight * zoom}px`;
             const editorHeight = Number.parseFloat(overlay.style.height);
-            overlay.style.paddingTop = `${Math.max(0, (editorHeight - 3 - layout.height * zoom) / 2)}px`;
+            const borders = (Number.parseFloat(overlay.style.borderTopWidth) || 0) +
+                (Number.parseFloat(overlay.style.borderBottomWidth) || 0);
+            overlay.style.paddingTop = `${Math.max(0, (editorHeight - borders - layout.height * zoom) / 2)}px`;
             overlay.style.paddingBottom = '0';
             overlay.scrollLeft = overlay.scrollTop = 0;
         };
@@ -2130,10 +2449,18 @@ class App {
         overlay.style.opacity = element.opacity;
         overlay.oninput = fit;
         fit();
+        return fit;
     }
 
     _editMatrixCell(matrixEl, row, col) {
+        if (!matrixEl || matrixEl.locked || this.cloudBoards?.isReadOnly ||
+            !Number.isInteger(row) || !Number.isInteger(col) || row < 0 || col < 0 || row >= matrixEl.rows || col >= matrixEl.cols) return;
         if (this._inlineEdit) this._inlineEdit.finish();
+        matrixEl.selectedCells = new Set([`${row},${col}`]);
+        matrixEl._lastCellKey = matrixEl._activeCellKey = `${row},${col}`;
+        if (this._revealMatrixCell(matrixEl, row, col)) this._autosave();
+        this.propertyPanel.update({ selectionOnly: true });
+        this.renderer.markDirty();
         const pad = 10;
         const cellCenter = matrixEl.toWorldPoint(
             matrixEl.x + pad + (col + 0.5) * matrixEl.cellSize,
@@ -2246,7 +2573,7 @@ class App {
         overlay.onblur = () => finishEdit(false);
         overlay.onkeydown = (e) => {
             if (e.isComposing) return;
-            if (e.key === 'Enter') { e.preventDefault(); overlay.blur(); }
+            if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); overlay.blur(); }
             if (e.key === 'Escape') { e.preventDefault(); finishEdit(true); }
             // Tab to next cell
             if (e.key === 'Tab') {
@@ -2385,7 +2712,7 @@ class App {
         overlay.onblur = finishEdit;
         overlay.onkeydown = event => {
             if (event.isComposing) return;
-            if (event.key === 'Enter') {
+            if (event.key === 'Enter' && !event.shiftKey) {
                 event.preventDefault();
                 overlay.blur();
             } else if (event.key === 'Escape') {
@@ -2425,14 +2752,15 @@ class App {
         if (!overlay) return;
 
         treeEl.isEditingNode = true;
+        treeEl._editingNodeReference = treeNode;
         overlay.style.cssText = '';
-        overlay.className = 'transparent-selection';
+        overlay.className = '';
         
         overlay.style.display = 'block';
         overlay.style.left = (canvasRect.left + nodeScreenPos.x - r) + 'px';
-        overlay.style.top = (canvasRect.top + nodeScreenPos.y - fontSize * 1.3 / 2) + 'px';
+        overlay.style.top = (canvasRect.top + nodeScreenPos.y - r) + 'px';
         overlay.style.width = (r * 2) + 'px';
-        overlay.style.height = (fontSize * 1.3) + 'px';
+        overlay.style.height = (r * 2) + 'px';
         overlay.style.boxSizing = 'border-box';
         overlay.style.padding = '0';
         overlay.style.fontFamily = 'Consolas, monospace';
@@ -2448,11 +2776,15 @@ class App {
         overlay.style.transform = treeEl.rotation ? `rotate(${treeEl.rotation}rad)` : 'none';
         overlay.maxLength = MAX_DATA_STRUCTURE_INPUT_LENGTH;
         overlay.value = String(treeNode.value);
-        overlay.focus();
+        const fitEditor = this._fitCellEditor(overlay, treeEl,
+            () => getNodeTextBounds(overlay.value, treeEl.nodeRadius).width,
+            () => getNodeTextBounds(overlay.value, treeEl.nodeRadius).height, 13);
+        overlay.focus({ preventScroll: true });
         overlay.select();
         this.renderer.markDirty();
 
         const oldValue = treeNode.value;
+        const oldOverrides = { ...treeEl._nodeValueOverrides };
         let cancelled = false;
         let finished = false;
         const applyNodeValue = value => {
@@ -2464,6 +2796,7 @@ class App {
                 overlay.value = overlay.value.slice(0, MAX_DATA_STRUCTURE_INPUT_LENGTH);
             }
             applyNodeValue(overlay.value);
+            fitEditor();
             this.renderer.markDirty();
         };
 
@@ -2471,9 +2804,12 @@ class App {
             if (finished) return;
             finished = true;
             if (this._inlineEdit?.overlay === overlay) this._inlineEdit = null;
-            const newValue = cancelled || !overlay.value.trim() ? oldValue : overlay.value;
+            const newValue = cancelled || !overlay.value.trim() || overlay.value === String(oldValue) ? oldValue : overlay.value;
             applyNodeValue(newValue);
+            if (oldValue === newValue) treeEl._nodeValueOverrides = { ...oldOverrides };
+            const newOverrides = { ...treeEl._nodeValueOverrides };
             treeEl.isEditingNode = false;
+            treeEl._editingNodeReference = null;
             overlay.style.display = 'none';
             overlay.onblur = null;
             overlay.oninput = null;
@@ -2482,8 +2818,12 @@ class App {
             if (oldValue !== newValue) {
                 this.history.push({
                     description: 'Edit Tree Node',
-                    undo: () => { applyNodeValue(oldValue); this.renderer.markDirty(); },
-                    redo: () => { applyNodeValue(newValue); this.renderer.markDirty(); }
+                    undo: () => {
+                        applyNodeValue(oldValue); treeEl._nodeValueOverrides = { ...oldOverrides }; this.renderer.markDirty();
+                    },
+                    redo: () => {
+                        applyNodeValue(newValue); treeEl._nodeValueOverrides = { ...newOverrides }; this.renderer.markDirty();
+                    }
                 });
                 this._autosave();
             }
@@ -2505,7 +2845,7 @@ class App {
         overlay.onblur = finishEdit;
         overlay.onkeydown = (e) => {
             if (e.isComposing) return;
-            if (e.key === 'Enter') { e.preventDefault(); overlay.blur(); }
+            if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); overlay.blur(); }
             if (e.key === 'Escape') {
                 e.preventDefault();
                 cancelled = true;
@@ -2888,7 +3228,7 @@ class App {
             if (isNew) {
                 this.elements.push(el);
                 this.layerManager._reindex();
-                this.history.pushAdd(this, el);
+                this._pushCreation(el);
             } else if (oldText !== text) {
                 this.history.push({
                     description: 'Edit Markdown',
@@ -2919,9 +3259,10 @@ class App {
         confirmBtn.addEventListener('click', confirm);
         cancelBtn.addEventListener('click', cancel);
 
-        // Background clicks cancel so unfinished edits are never saved silently.
+        // A backdrop click only cancels an untouched editor; edited text is never discarded silently.
+        const initialMarkdown = textarea.value;
         overlay.addEventListener('click', (e) => {
-            if (e.target === overlay) cancel();
+            if (e.target === overlay && textarea.value === initialMarkdown) cancel();
         });
         releaseModal = bindModal(dialog, {
             onCancel: cancel, onConfirm: confirm, initialFocus: textarea
@@ -2972,23 +3313,25 @@ class App {
         this.canvas.addEventListener('wheel', e => {
             e.preventDefault();
             if (e.deltaX === 0 && e.deltaY === 0) return;
+            // Inline cell editors are absolutely positioned and do not follow the camera,
+            // so close them (this is a no-op when nothing is being edited).
             this._finishInlineEditing();
             const { sx, sy } = this._screenPos(e);
+            const unit = e.deltaMode === 1 ? WHEEL_LINE_PX : e.deltaMode === 2 ? WHEEL_PAGE_PX : 1;
+            const dx = e.deltaX * unit, dy = e.deltaY * unit;
 
             if (e.ctrlKey) {
-                // Pinch gesture (ctrlKey=true on trackpad pinch) or Ctrl+scroll → ZOOM
-                this.camera.zoomAt(-e.deltaY, sx, sy);
+                // Pinch gesture (ctrlKey=true on trackpad pinch) or Ctrl+scroll → exponential ZOOM
+                const delta = Math.max(-WHEEL_ZOOM_MAX_DELTA_PX, Math.min(WHEEL_ZOOM_MAX_DELTA_PX, dy));
+                this._zoomByFactor(Math.exp(-delta * WHEEL_ZOOM_K), sx, sy);
                 this._updateZoomDisplay();
             } else {
                 // Regular scroll → PAN (反轉方向：向下滚 = 畫布向上移)
-                let dx = e.deltaX, dy = e.deltaY;
-                if (e.deltaMode === 1) { dx *= 16; dy *= 16; }   // lines → pixels
-                if (e.deltaMode === 2) { dx *= 200; dy *= 200; } // pages → pixels
-                this.camera.pan(-dx, -dy);  // 反轉
+                this.camera.pan(-dx, -dy);
             }
 
             this.renderer.markDirty();
-            this._autosave();
+            this._autosave({ camera: true });
             
             if (this._textEditing) {
                 this._updateTextEditingOverlay();
@@ -3019,13 +3362,18 @@ class App {
             }
 
 
-            if (e.key === 'Enter') {
-                const matrix = this.selectionManager.selectedElements.find(el =>
-                    el.type === 'matrix' && !el.locked && el.selectedCells?.size > 1
-                );
+            const boardKey = e.target === this.canvas || e.target === document || e.target === document.body || e.target === document.documentElement;
+            const matrix = boardKey ? this._selectedMatrixWithCells() : null;
+            if (matrix && !this._matrixCellSelection && !e.altKey && this._navigateMatrixCells(matrix, e)) return;
+            if (boardKey && !ctrl && !e.altKey && (e.key === 'Enter' || e.key === 'F2')) {
                 if (matrix) {
                     e.preventDefault();
-                    this._editSelectedMatrixCells(matrix);
+                    this._cancelPointerInteraction();
+                    if (matrix.selectedCells.size > 1) this._editSelectedMatrixCells(matrix);
+                    else {
+                        const [row, col] = [...matrix.selectedCells][0].split(',').map(Number);
+                        this._editMatrixCell(matrix, row, col);
+                    }
                     return;
                 }
             }
@@ -3095,7 +3443,7 @@ class App {
 
             // ── Ctrl+C  Copy ──────────────────────
             if (ctrl && isCopy) {
-                if (this._matrixClipboardTarget()) return;
+                if (this._selectedMatrixWithCells()) return;
                 e.preventDefault();
                 this._copyToClipboard();
                 return;
@@ -3103,7 +3451,7 @@ class App {
 
             // ── Ctrl+X  Cut ───────────────────────
             if (ctrl && isCut) {
-                if (this._matrixClipboardTarget()) return;
+                if (this._selectedMatrixWithCells()) return;
                 e.preventDefault();
                 this._copyToClipboard();
                 const toRemove = this.selectionManager.selectedElements.filter(el => !el.locked);
@@ -3117,7 +3465,7 @@ class App {
 
             // ── Ctrl+V  Paste ─────────────────────
             if (ctrl && isPaste) {
-                if (this._matrixClipboardTarget()) return;
+                if (this._selectedMatrixWithCells()) return;
                 e.preventDefault();
                 this._pasteFromClipboard();
                 return;
@@ -3145,7 +3493,7 @@ class App {
                 this.camera.zoomAt(1, rect.width / 2, rect.height / 2);
                 this._updateZoomDisplay();
                 this.renderer.markDirty();
-                this._autosave();
+                this._autosave({ camera: true });
                 return;
             }
             if (ctrl && e.key === '-') {
@@ -3154,7 +3502,7 @@ class App {
                 this.camera.zoomAt(-1, rect.width / 2, rect.height / 2);
                 this._updateZoomDisplay();
                 this.renderer.markDirty();
-                this._autosave();
+                this._autosave({ camera: true });
                 return;
             }
 
@@ -3171,6 +3519,8 @@ class App {
                     if (idx >= 0) this.elements.splice(idx, 1);
                     this._isCreating = false;
                     this._creatingElement = null;
+                    this._createStart = null;
+                    this._creatingTool = null;
                 }
                 this.transform.cancel();
                 if (this.toolbar) this.toolbar.setTool('select');
@@ -3180,6 +3530,8 @@ class App {
 
             // ── Space  Toggle pan mode (hold) ──
             if (e.key === ' ' && !e.repeat) {
+                // Space must keep activating a focused button / link / field.
+                if (e.target.closest?.('button, [role="button"], a, input, select, textarea, [contenteditable]')) return;
                 e.preventDefault();
                 this._spaceHeld = true;
                 this._prevTool = this.toolbar.currentTool;
@@ -3225,39 +3577,36 @@ class App {
      */
     _updateConnectedLines(movedIds) {
         const idSet = new Set(movedIds);
+        const portCache = new Map();
+        let targets = null;
+        const getPort = connection => {
+            if (!portCache.has(connection.elementId)) {
+                targets ||= new Map(this.elements.map(element => [element.id, element]));
+                const target = targets.get(connection.elementId);
+                portCache.set(connection.elementId,
+                    new Map((target?.getConnectionPorts?.() || []).map(port => [port.id, port])));
+            }
+            return portCache.get(connection.elementId).get(connection.portId);
+        };
         for (const el of this.elements) {
             if (el.shapeType !== 'line' && el.shapeType !== 'arrow') continue;
-            const { p1, p2 } = el.connections;
-            if (p1 && idSet.has(p1.elementId)) {
-                const target = this.elements.find(e => e.id === p1.elementId);
-                if (target) {
-                    const port = target.getConnectionPorts().find(p => p.id === p1.portId);
-                    if (port) {
-                        if (typeof el.setEndpointWorld === 'function') {
-                            el.setEndpointWorld(0, port);
-                        } else {
-                            const ep = { p2x: el.x + el.width, p2y: el.y + el.height };
-                            el.x = port.x; el.y = port.y;
-                            el.width  = ep.p2x - port.x;
-                            el.height = ep.p2y - port.y;
-                        }
-                    }
+            let updated = false;
+            for (const [index, endpoint] of ['p1', 'p2'].entries()) {
+                const connection = el.connections?.[endpoint];
+                if (!connection || !idSet.has(connection.elementId)) continue;
+                const port = getPort(connection);
+                if (!port) continue;
+                if (typeof el.setEndpointWorld === 'function') el.setEndpointWorld(index, port);
+                else if (index === 0) {
+                    const endX = el.x + el.width, endY = el.y + el.height;
+                    el.x = port.x; el.y = port.y;
+                    el.width = endX - port.x; el.height = endY - port.y;
+                } else {
+                    el.width = port.x - el.x; el.height = port.y - el.y;
                 }
+                updated = true;
             }
-            if (p2 && idSet.has(p2.elementId)) {
-                const target = this.elements.find(e => e.id === p2.elementId);
-                if (target) {
-                    const port = target.getConnectionPorts().find(p => p.id === p2.portId);
-                    if (port) {
-                        if (typeof el.setEndpointWorld === 'function') {
-                            el.setEndpointWorld(1, port);
-                        } else {
-                            el.width  = port.x - el.x;
-                            el.height = port.y - el.y;
-                        }
-                    }
-                }
-            }
+            if (updated) portCache.delete(el.id);
         }
         this.renderer.markDirty();
     }
@@ -3266,15 +3615,7 @@ class App {
     // Focus Camera on Element
     // ═════════════════════════════════════════════════════
     _focusOnElement(el) {
-        const b = el.getBounds ? el.getBounds() : { x: el.x, y: el.y, w: el.width || 100, h: el.height || 100 };
-        const cx = b.x + b.w / 2;
-        const cy = b.y + b.h / 2;
-        const sw = this.canvas.clientWidth;
-        const sh = this.canvas.clientHeight;
-        this.camera.x = cx - sw / 2 / this.camera.zoom;
-        this.camera.y = cy - sh / 2 / this.camera.zoom;
-        this.renderer.markDirty();
-        this._autosave();
+        this._fitView([el]);
     }
 
     // ═════════════════════════════════════════════════════
@@ -3286,7 +3627,7 @@ class App {
         const { x: wx, y: wy } = this._worldPos(e);
         const hit = HitTest.hitTestAll(this.elements, wx, wy, this.camera);
 
-        if (hit) {
+        if (hit && !this.selectionManager.isSelected(hit)) {
             this.selectionManager.select(hit);
             this._refreshUI();
         }
@@ -3467,38 +3808,45 @@ class App {
         }
     }
 
+    /** Offset serialized element data in place (pen strokes keep their geometry in `points`). */
+    _shiftSerializedData(data, dx, dy) {
+        if (Array.isArray(data.points)) {
+            data.points = data.points.map(point => ({ ...point, x: point.x + dx, y: point.y + dy }));
+        }
+        data.x += dx;
+        data.y += dy;
+    }
+
+    /** Build a new element (fresh id) from serialized data, moved by (dx, dy). */
+    _createOffsetCopy(source, dx, dy) {
+        const data = JSON.parse(JSON.stringify(source));
+        const Cls = ELEMENT_TYPE_MAP[data.type];
+        if (!Cls) return null;
+        delete data.id;                     // a new id is generated
+        const isPen = data.type === 'pen';  // bounds are recalculated from points on deserialize
+        if (!isPen) { data.x += dx; data.y += dy; }
+        const element = Cls.fromData ? Cls.fromData(data) : new Cls();
+        element.deserialize(data);
+        if (isPen) {
+            if (typeof element.translate === 'function') element.translate(dx, dy);
+            else this._shiftSerializedData(element, dx, dy);   // same shape: points[] + x/y
+        }
+        return element;
+    }
+
     _pasteFromClipboard() {
         if (!this._clipboard || !this._clipboard.length) return;
         const newEls = [];
         const idMap = new Map();
         for (const data of this._clipboard) {
-            const newData = JSON.parse(JSON.stringify(data));
-            const sourceId = newData.id;
-            // Remove id to get new one
-            delete newData.id;
-            // Offset slightly
-            newData.x += 20;
-            newData.y += 20;
-            let newEl;
-            const TYPE_MAP = {
-                rectangle: ShapeElement, circle: ShapeElement, ellipse: ShapeElement,
-                line: ShapeElement, arrow: ShapeElement,
-                text: TextElement, matrix: MatrixElement, stack: StackElement,
-                queue: QueueElement, mermaid: MermaidElement,
-                pen: PenElement, tree: TreeElement, graph: GraphElement,
-                markdown: MarkdownElement
-            };
-            const Cls = TYPE_MAP[newData.type];
-            if (!Cls) continue;
-            newEl = Cls.fromData ? Cls.fromData(newData) : new Cls();
-            newEl.deserialize(newData);
-            if (sourceId) idMap.set(sourceId, newEl.id);
+            const newEl = this._createOffsetCopy(data, PASTE_OFFSET, PASTE_OFFSET);
+            if (!newEl) continue;
+            if (data.id) idMap.set(data.id, newEl.id);
             this.elements.push(newEl);
             newEls.push(newEl);
-            
+
             // Also update the clipboard data so next paste offsets again!
-            data.x += 20;
-            data.y += 20;
+            this._shiftSerializedData(data, PASTE_OFFSET, PASTE_OFFSET);
         }
         if (newEls.length) {
             this._remapDuplicatedConnections(newEls, idMap);
@@ -3519,29 +3867,10 @@ class App {
         const newEls = [];
         const idMap = new Map();
         for (const el of sel) {
-            const data = JSON.parse(JSON.stringify(el.serialize()));
-            const sourceId = data.id;
-            // Remove id to get new one
-            delete data.id;
-            // Offset
-            data.x += 20;
-            data.y += 20;
-            let newEl;
-            const TYPE_MAP = {
-                rectangle: ShapeElement, circle: ShapeElement, ellipse: ShapeElement,
-                line: ShapeElement, arrow: ShapeElement,
-                text: TextElement, matrix: MatrixElement, stack: StackElement,
-                queue: QueueElement, mermaid: MermaidElement,
-                pen: PenElement,
-                tree: TreeElement, graph: GraphElement,
-                markdown: MarkdownElement
-            };
-            const Cls = TYPE_MAP[data.type];
-            if (!Cls) continue;
-            newEl = Cls.fromData ? Cls.fromData(data) : new Cls();
-            newEl.deserialize(data);
-            if (sourceId) idMap.set(sourceId, newEl.id);
-            // Remove the tmp from nothing
+            const data = el.serialize();
+            const newEl = this._createOffsetCopy(data, PASTE_OFFSET, PASTE_OFFSET);
+            if (!newEl) continue;
+            if (data.id) idMap.set(data.id, newEl.id);
             this.elements.push(newEl);
             newEls.push(newEl);
         }
@@ -3773,79 +4102,172 @@ class App {
     }
 
     // ═════════════════════════════════════════════════════
-    // localStorage Autosave
+    // localStorage Autosave (see core/AutosaveStore.js)
     // ═════════════════════════════════════════════════════
-    _autosave() {
+    _buildSnapshot() {
+        return {
+            version: 1,
+            elements: this.elements.map(el => el.serialize()),
+            camera: { x: this.camera.x, y: this.camera.y, zoom: this.camera.zoom }
+        };
+    }
+
+    /**
+     * Schedule a debounced local save (and a cloud-sync notification).
+     * { camera: true } marks a view-only change (pan / zoom): it is still saved
+     * locally but only notifies the cloud via a long trailing debounce.
+     */
+    _autosave({ camera = false } = {}) {
+        this._updateHistoryButtons();
         if (this._skipAutosave) return;
-        this.cloudBoards?.onLocalChange();
+        if (camera) {
+            clearTimeout(this._cameraCloudTimer);
+            this._cameraCloudTimer = setTimeout(() => {
+                this._cameraCloudTimer = null;
+                this.cloudBoards?.onLocalChange();
+            }, CAMERA_CLOUD_SYNC_DELAY_MS);
+        } else {
+            this.cloudBoards?.onLocalChange();
+        }
         if (this._autosaveTimer) clearTimeout(this._autosaveTimer);
         const autosaveKey = this.autosaveKey;
         this._autosaveTimer = setTimeout(() => {
             this._autosaveTimer = null;
-            try {
-                // Read-only shared views are never restored from local storage;
-                // avoid leaving a guest's private board copy on a shared device.
-                if (this.cloudBoards?.isCloudBoard && this.cloudBoards.isReadOnly) return;
-                // A delayed save must never write one board's snapshot under a
-                // different board's key after the user switches boards.
-                if (this.autosaveKey !== autosaveKey) return;
-                const data = {
-                    version: 1,
-                    elements: this.elements.map(el => el.serialize()),
-                    camera: { x: this.camera.x, y: this.camera.y, zoom: this.camera.zoom }
-                };
-                localStorage.setItem(autosaveKey, JSON.stringify(data));
-            } catch (e) {
-                console.warn('[Autosave]', e);
-            }
-        }, 1200);
+            // Read-only shared views are never restored from local storage;
+            // avoid leaving a guest's private board copy on a shared device.
+            if (this.cloudBoards?.isCloudBoard && this.cloudBoards.isReadOnly) return;
+            // A delayed save must never write one board's snapshot under a
+            // different board's key after the user switches boards.
+            if (this.autosaveKey !== autosaveKey) return;
+            this._writeAutosave(autosaveKey);
+        }, AUTOSAVE_DELAY_MS);
     }
 
+    /** Serialize and store the board under `key`; updates the "unsaved" indicator. */
+    _writeAutosave(key) {
+        let result;
+        try {
+            result = this.autosaveStore.save(key, this._buildSnapshot());
+        } catch (error) {
+            result = { ok: false, reason: 'error', error };
+        }
+        if (result.ok) {
+            this._autosaveFailed = false;
+            this._setAutosaveStatus(null);
+            return true;
+        }
+        if (result.reason === 'locked') {
+            this._setAutosaveStatus('locked');
+        } else {
+            console.warn('[Autosave]', result.reason, result.error);
+            const firstFailure = !this._autosaveFailed;
+            this._autosaveFailed = true;
+            this._setAutosaveStatus('failed');
+            if (firstFailure) {
+                this._toast(result.reason === 'quota'
+                    ? '自動儲存失敗：瀏覽器儲存空間不足，目前內容尚未儲存。請立即匯出 JSON 備份。'
+                    : '自動儲存失敗，目前內容尚未儲存。請立即匯出 JSON 備份。', 'error', 12000);
+            }
+        }
+        return false;
+    }
+
+    /** Immediate save (pagehide, import). Returns true when the snapshot was stored. */
     _flushAutosave() {
         if (this._autosaveTimer) clearTimeout(this._autosaveTimer);
         this._autosaveTimer = null;
         if (this._skipAutosave || (this.cloudBoards?.isCloudBoard && this.cloudBoards.isReadOnly)) return false;
-        try {
-            const data = {
-                version: 1,
-                elements: this.elements.map(el => el.serialize()),
-                camera: { x: this.camera.x, y: this.camera.y, zoom: this.camera.zoom }
-            };
-            localStorage.setItem(this.autosaveKey, JSON.stringify(data));
-            return true;
-        } catch (error) {
-            console.warn('[Autosave]', error);
-            return false;
+        return this._writeAutosave(this.autosaveKey);
+    }
+
+    _getAutosaveStatusEl() {
+        let el = document.getElementById('autosave-status');
+        if (el) return el;
+        el = document.createElement('button');
+        el.type = 'button';
+        el.id = 'autosave-status';
+        el.hidden = true;
+        el.setAttribute('role', 'status');
+        el.setAttribute('aria-live', 'polite');
+        el.style.cssText = 'position:fixed;right:16px;bottom:16px;z-index:11000;display:none;' +
+            'padding:6px 12px;border-radius:4px;border:1px solid #e57373;background:#3a2222;' +
+            'color:#ffb4b4;font-size:12px;cursor:pointer;';
+        el.addEventListener('click', () => this._onAutosaveStatusClick());
+        document.body.appendChild(el);
+        return el;
+    }
+
+    /** state: null (hide) | 'failed' | 'locked' */
+    _setAutosaveStatus(state) {
+        if (!state && !document.getElementById('autosave-status')) return;
+        const el = this._getAutosaveStatusEl();
+        el.dataset.state = state || '';
+        el.hidden = !state;
+        el.style.display = state ? '' : 'none';
+        if (state === 'locked') {
+            el.textContent = '未儲存（自動儲存已暫停）';
+            el.title = '自動存檔損毀，已暫停寫入以保護原始資料。點擊可選擇是否覆寫。';
+        } else if (state === 'failed') {
+            el.textContent = '未儲存';
+            el.title = '自動儲存失敗（可能是儲存空間不足）。點擊可匯出 JSON。';
         }
+    }
+
+    _onAutosaveStatusClick() {
+        const state = this._getAutosaveStatusEl().dataset.state;
+        if (state === 'locked') {
+            if (confirm('要用目前白板內容覆寫損毀的自動存檔嗎？（損毀的原始資料已另外備份）')) {
+                this._resumeAutosave(this.autosaveKey);
+            }
+        } else if (state === 'failed') {
+            Serializer.exportJSON(this);
+        }
+    }
+
+    /** Explicit user action: allow writing over the (backed-up) corrupt autosave again. */
+    _resumeAutosave(key) {
+        this.autosaveStore.unlock(key);
+        this._setAutosaveStatus(null);
+        if (key === this.autosaveKey) this._autosave();
     }
 
     _tryLoadAutosave() {
-        try {
-            const raw = localStorage.getItem(this.autosaveKey);
-            if (!raw) return;
-            const data = JSON.parse(raw);
-            if (!Array.isArray(data?.elements)) return;
-            // Silently restore — no prompt (avoids repeated reload confusion)
-            this._restoreFromData(data);
-        } catch (e) {
-            console.error('[Autosave load ERROR]', e.stack || e);
-            alert('解析自動存檔 JSON 時發生錯誤: ' + e.message);
+        const key = this.autosaveKey;
+        const result = this.autosaveStore.load(key, data => this._restoreFromData(data));
+        if (result.status === 'ok') {
+            const previousSkipAutosave = this._skipAutosave;
+            this._skipAutosave = true;   // restoring must not immediately re-save
+            try { this._refreshUI(); } finally { this._skipAutosave = previousSkipAutosave; }
+        } else if (result.status === 'corrupt') {
+            console.error('[Autosave load ERROR]', result.error?.stack || result.error);
+            this._handleCorruptAutosave(key, result);
         }
     }
 
+    /** Validate and apply autosave data; throws (leaving the board untouched) when invalid. */
     _restoreFromData(data) {
         const previousSkipAutosave = this._skipAutosave;
         this._skipAutosave = true;
         try {
             Serializer.loadJSONData(this, data);
-            this._refreshUI();
-            // (silent restore — no toast)
-        } catch (e) {
-            console.error('[Autosave restore ERROR]', e.stack || e);
-            alert('載入自動存檔時發生錯誤: ' + e.message);
         } finally {
             this._skipAutosave = previousSkipAutosave;
         }
+    }
+
+    _handleCorruptAutosave(key, { backupKey, error }) {
+        this._setAutosaveStatus('locked');
+        this._toast((backupKey
+            ? '自動存檔已損毀，原始資料已備份。'
+            : '自動存檔已損毀，且無法建立備份（原資料仍保留在瀏覽器中）。') +
+            '為避免覆蓋，自動儲存已暫停。' + (error?.message ? `（${error.message}）` : ''), 'error', 15000);
+        // Deferred so the page can paint before the blocking prompt appears.
+        setTimeout(() => {
+            if (!this.autosaveStore.isLocked(key)) return;
+            if (confirm('存檔損毀，已備份。是否從空白白板開始？\n\n「確定」：從空白開始並恢復自動儲存。\n「取消」：維持暫停，原始資料不會被覆寫。')) {
+                this._resumeAutosave(key);
+            }
+        }, 0);
     }
 }
 

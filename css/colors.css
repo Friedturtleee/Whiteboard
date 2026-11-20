@@ -1,5 +1,8 @@
 /* ===== 16 Muted Base Colors ===== */
+/* The same 16 swatches live in js/ui/ColorPicker.js (PALETTE_COLORS); keep both in sync. */
 :root {
+    color-scheme: dark;
+
     --color-1:  hsl(0,   40%, 50%);   /* 紅 */
     --color-2:  hsl(25,  40%, 50%);   /* 橙 */
     --color-3:  hsl(45,  40%, 50%);   /* 黃 */
@@ -17,20 +20,65 @@
     --color-15: hsl(0,   0%,  75%);   /* 淺灰 */
     --color-16: hsl(0,   0%,  95%);   /* 白 */
 
-    /* Theme */
+    /* ── Surfaces ── */
     --bg-primary:   #1e1e1e;
     --bg-secondary: #252526;
     --bg-tertiary:  #2d2d2d;
     --bg-hover:     #3a3a3a;
     --bg-active:    #4a4a4a;
-    --border-color: #404040;
-    --text-primary: #e0e0e0;
-    --text-secondary: #a0a0a0;
-    --text-muted:   #707070;
-    --accent:       hsl(210, 35%, 50%);
-    --accent-hover: hsl(210, 40%, 58%);
+    --bg-surface:   var(--bg-tertiary);   /* inputs, secondary buttons */
+    --bg-panel:     var(--bg-secondary);  /* floating panels and dialogs */
+    --bg-inset:     #111111;              /* tooltips, markdown dialog */
+    --bg-overlay:   rgba(0, 0, 0, 0.55);
+
+    /* ── Borders ──
+       --border-color: decorative dividers.
+       --control-border: boundary of an input/slider/select (>= 3:1 on the panel surfaces). */
+    --border-color:  #404040;
+    --border:        var(--border-color);
+    --border-subtle: #303030;
+    --border-strong: #5a5a5a;
+    --control-border: #7a7a7a;
+
+    /* ── Text (all >= 4.5:1 on --bg-primary, --bg-secondary and --bg-tertiary) ── */
+    --text-primary:   #e0e0e0;
+    --text-secondary: #b3b3b3;
+    --text-muted:     #959595;
+    --text-on-accent: #ffffff;
+
+    /* ── Accent (white text >= 4.5:1 on --accent, --accent-hover and --accent-strong) ── */
+    --accent:        hsl(210, 40%, 45%);
+    --accent-hover:  hsl(210, 42%, 39%);
+    --accent-strong: hsl(210, 45%, 34%);
+    --accent-light:  hsl(210, 55%, 66%);   /* accent-coloured text/icons on dark surfaces */
+    --focus-ring:    hsl(210, 70%, 66%);
+    --accent-soft:   rgba(86, 156, 214, 0.15);
+
+    /* ── Status colours ── */
+    --danger:        #ee7b84;
+    --danger-hover:  #f4959c;
+    --danger-soft:   rgba(238, 123, 132, 0.12);
+    --danger-line:   rgba(238, 123, 132, 0.45);
+    --success:       #4cc38a;
+    --warning:       #e5c07b;
+
+    /* ── Tooltip / toast ── */
+    --tooltip-bg:    var(--bg-inset);
+    --tooltip-fg:    #e8e8e8;
+    --tooltip-border: var(--border-color);
+    --toast-bg:      #333333;
+
+    /* ── Canvas ── */
     --grid-color:   rgba(200, 200, 200, 0.08);
     --grid-color-major: rgba(200, 200, 200, 0.15);
     --selection-color: rgba(80, 140, 200, 0.25);
     --selection-border: rgba(80, 140, 200, 0.7);
+
+    /* ── Sizing hooks (raised under @media (pointer: coarse) in toolbar.css) ── */
+    --tool-btn-size: 34px;
+    --top-btn-size: 28px;
+    --zoom-btn-size: 26px;
+    --range-thumb: 14px;
+    --range-track: 4px;
+    --bottom-ui-offset: 64px;   /* distance from the bottom edge to the top of the zoom bar + gap */
 }

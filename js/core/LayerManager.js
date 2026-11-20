@@ -6,6 +6,8 @@ export class LayerManager {
         this.app = app;
     }
 
+    reindex() { this._reindex(); }
+
     _reindex() {
         this.app.elements.forEach((el, i) => { el.zIndex = i; });
         this.app.renderer.markDirty();

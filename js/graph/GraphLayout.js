@@ -7,6 +7,10 @@
  * boundaries or leaving nodes on top of each other.
  */
 const topologyCache = new WeakMap();
+// Node-vs-edge clearance checks cost O(nodes * edges). Above this budget the
+// check is intentionally skipped (reported as "no conflict"): dense graphs
+// would otherwise stall layout and previews, and at that density nodes
+// inevitably sit near edges anyway.
 const MAX_NODE_EDGE_CHECKS = 1_000_000;
 
 function forEachNodeEdgeConflict(nodes, firstIndexes, secondIndexes, nodeRadius, onConflict = null) {

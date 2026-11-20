@@ -1,6 +1,11 @@
+import { ColorPicker, PALETTE_COLORS } from './ColorPicker.js';
+
 /**
  * PropertyPanel — right-side panel for editing element properties.
  */
+const EMPTY_CELL = '\u3000';
+const isBlankCell = value => value == null || String(value).trim() === '' || value === EMPTY_CELL;
+const fmt = n => n.toLocaleString('en-US');
 const editableSelection = selectionManager => selectionManager.selectedElements.filter(el => !el.locked);
 
 export class PropertyPanel {
@@ -8,26 +13,41 @@ export class PropertyPanel {
         this.app = app;
         this._panel = document.getElementById('property-panel');
         this._colorGrid = document.getElementById('color-grid');
+        this._hint = document.getElementById('prop-range-hint');
+        this._invalidFields = new Map();   // input -> message while its value is out of range
         this._bindInputs();
         this._buildColorGrid();
         this._bindSelectionActions();
     }
 
-    /** 14 muted colors + custom picker */
-    static COLORS = [
-        '#b34d4d', '#b3734d', '#b39b4d', '#8a9e4d',
-        '#4d8a4d', '#4d8a7a', '#4d8a9e', '#4d6eb3',
-        '#4d4db3', '#6b4db3', '#8a4db3', '#b34d8a',
-        '#b0b0b0', '#e8e8e8'
-    ];
+    /** Shared preset palette (see ColorPicker.js) + the custom "+" swatch. */
+    static COLORS = PALETTE_COLORS;
+
+    /** Show / clear the valid-range helper text for a numeric field. */
+    _markInvalid(input, invalid, message = '') {
+        input.setAttribute('aria-invalid', String(invalid));
+        if (invalid) this._invalidFields.set(input, message);
+        else this._invalidFields.delete(input);
+        if (!this._hint) return;
+        const last = [...this._invalidFields.values()].at(-1);
+        this._hint.textContent = last || '';
+        this._hint.hidden = !last;
+    }
+
+    /** Show or hide a property row (rows use the `hidden` attribute, not inline styles). */
+    _showRow(id, visible) {
+        const row = document.getElementById(id);
+        if (row) row.hidden = !visible;
+    }
 
     _buildColorGrid() {
         if (!this._colorGrid) return;
         this._colorGrid.innerHTML = '';
-        for (const color of PropertyPanel.COLORS) {
+        for (const color of PALETTE_COLORS) {
             const swatch = document.createElement('button');
             swatch.type = 'button';
             swatch.setAttribute('aria-label', `顏色 ${color}`);
+            swatch.setAttribute('aria-pressed', 'false');
             swatch.className = 'color-swatch';
             swatch.style.background = color;
             swatch.dataset.color = color;
@@ -55,34 +75,33 @@ export class PropertyPanel {
         const customBtn = document.createElement('button');
         customBtn.type = 'button';
         customBtn.setAttribute('aria-label', '自訂顏色');
+        customBtn.setAttribute('aria-pressed', 'false');
         customBtn.className = 'color-swatch color-swatch-custom';
         customBtn.textContent = '+';
         customBtn.title = '自訂顏色';
         customBtn.dataset.color = '#ffffff';
         customBtn.addEventListener('click', (e) => {
             e.stopPropagation();
-            // Import dynamically to avoid circular deps
-            import('./ColorPicker.js').then(({ ColorPicker }) => {
-                ColorPicker._openCustomPopup(customBtn, (c) => {
-                    this.app.currentColor = c;
-                    customBtn.style.background = c;
-                    customBtn.dataset.color = c;
-                    this._updateColorSelection(c);
-                    const sel = this.app.selectionManager;
-                    const oldVals = editableSelection(sel)
-                        .filter(e => e.color !== c)
-                        .map(e => ({ el: e, old: e.color }));
-                    sel.setProperty('color', c);
-                    
-                    if (oldVals.length > 0) {
-                        this.app.history.push({
-                            description: 'Change custom color',
-                            undo: () => { oldVals.forEach(v => v.el.color = v.old); this.app.renderer.markDirty(); },
-                            redo: () => { oldVals.forEach(v => v.el.color = c); this.app.renderer.markDirty(); }
-                        });
-                    }
-                    this.app.renderer.markDirty();
-                });
+            ColorPicker._openCustomPopup(customBtn, (c) => {
+                this.app.currentColor = c;
+                customBtn.style.background = c;
+                customBtn.style.color = ColorPicker._contrastColor(c);
+                customBtn.dataset.color = c;
+                this._updateColorSelection(c);
+                const sel = this.app.selectionManager;
+                const oldVals = editableSelection(sel)
+                    .filter(e => e.color !== c)
+                    .map(e => ({ el: e, old: e.color }));
+                sel.setProperty('color', c);
+
+                if (oldVals.length > 0) {
+                    this.app.history.push({
+                        description: 'Change custom color',
+                        undo: () => { oldVals.forEach(v => v.el.color = v.old); this.app.renderer.markDirty(); },
+                        redo: () => { oldVals.forEach(v => v.el.color = c); this.app.renderer.markDirty(); }
+                    });
+                }
+                this.app.renderer.markDirty();
             });
         });
         this._colorGrid.appendChild(customBtn);
@@ -120,6 +139,12 @@ export class PropertyPanel {
         document.getElementById('clear-selected-cells')?.addEventListener('click', () => {
             const el = getElement();
             if (el?.type !== 'matrix') return;
+            // Clearing is undoable, but wiping filled cells by a stray tap deserves a confirmation.
+            const filled = [...(el.selectedCells || [])].filter(key => {
+                const [row, col] = String(key).split(',').map(Number);
+                return !isBlankCell(el.data?.[row]?.[col]);
+            }).length;
+            if (filled > 0 && !confirm(`清空 ${filled} 個有內容的儲存格？（可用 Ctrl+Z 復原）`)) return;
             this.app._deleteSelectedMatrixCells(el);
             this.app._refreshUI();
         });
@@ -141,10 +166,29 @@ export class PropertyPanel {
     }
 
     _bindInputs() {
+        const FIELD_LABELS = {
+            'prop-x': 'X', 'prop-y': 'Y', 'prop-w': '寬度', 'prop-h': '高度', 'prop-rot': '旋轉角度'
+        };
         const bind = (id, prop, transform = v => v) => {
             const el = document.getElementById(id);
             if (!el) return;
             let oldVals = null;
+            const fieldLabel = FIELD_LABELS[id] || '數值';
+            /** Human-readable valid range, shown as the field tooltip and as helper text when invalid. */
+            const rangeMessage = () => {
+                if (prop === 'x' || prop === 'y') return `${fieldLabel} 需介於 ${fmt(-100_000_000)} ～ ${fmt(100_000_000)}（含物件${prop === 'x' ? '寬' : '高'}度）`;
+                if (prop === 'width' || prop === 'height') {
+                    const signed = editableSelection(this.app.selectionManager)
+                        .every(item => item.type === 'line' || item.type === 'arrow');
+                    return signed
+                        ? `${fieldLabel} 絕對值不可超過 ${fmt(10_000_000)}`
+                        : `${fieldLabel} 需介於 1 ～ ${fmt(10_000_000)}`;
+                }
+                if (prop === 'rotation') return `${fieldLabel} 需介於 -360 ～ 360 度`;
+                if (prop === 'strokeWidth') return `${fieldLabel} 需介於 0 ～ ${fmt(10_000)}`;
+                return `${fieldLabel} 超出允許範圍`;
+            };
+            if (FIELD_LABELS[id]) el.title = rangeMessage();
             const geometryProp = ['x', 'y', 'width', 'height', 'rotation'].includes(prop);
             const isValidValue = value => {
                 if (!Number.isFinite(value)) return false;
@@ -206,7 +250,7 @@ export class PropertyPanel {
                 }
                 if (geometryProp) this.app._updateConnectedLines(entries.map(item => item.el.id));
                 oldVals = null;
-                el.removeAttribute('aria-invalid');
+                this._markInvalid(el, false);
                 this.app.renderer.markDirty();
                 this.update();
             };
@@ -216,8 +260,9 @@ export class PropertyPanel {
             el.addEventListener('input', () => {
                 startEdit();
                 const val = transform(el.value);
-                const valid = el.value.trim() !== '' && isValidValue(val);
-                el.setAttribute('aria-invalid', String(!valid));
+                const empty = el.value.trim() === '';
+                const valid = !empty && isValidValue(val);
+                this._markInvalid(el, !valid, empty ? `${fieldLabel} 不可留空。${rangeMessage()}` : rangeMessage());
                 if (!valid) return;
                 const selected = oldVals
                     ? oldVals.map(item => item.el).filter(item => !item.locked)
@@ -321,11 +366,11 @@ export class PropertyPanel {
                     });
                 }
                 oldVals = null;
-                el.removeAttribute('aria-invalid');
+                this._markInvalid(el, false);
             });
             // A focus with no value change does not emit change on blur.
             // Release that snapshot before the next object is selected.
-            el.addEventListener('blur', () => { oldVals = null; });
+            el.addEventListener('blur', () => { oldVals = null; this._markInvalid(el, false); });
             el.addEventListener('keydown', event => {
                 if (event.isComposing) return;
                 if (event.key === 'Enter') { event.preventDefault(); el.blur(); }
@@ -574,6 +619,7 @@ export class PropertyPanel {
                     newState = !selected[0][propName];
                 }
                 btn.classList.toggle('active', newState);
+                btn.setAttribute('aria-pressed', String(newState));
                 const changes = [];
                 for (const el of selected) {
                     if (el[propName] === undefined || el[propName] === newState) continue;
@@ -612,10 +658,15 @@ export class PropertyPanel {
         bindTextStyle('prop-underline', 'isUnderline');
     }
 
-    update() {
+    update({ selectionOnly = false } = {}) {
         const sel = this.app.selectionManager;
         const selected = editableSelection(sel);
         this._updateSelectionActions(selected);
+        if (selectionOnly) return;
+        // Field values are rewritten below, so any stale "out of range" state no longer applies.
+        for (const input of this._invalidFields.keys()) input.setAttribute('aria-invalid', 'false');
+        this._invalidFields.clear();
+        if (this._hint) this._hint.hidden = true;
         if (selected.length === 0) {
             this._panel.classList.remove('visible');
             return;
@@ -650,12 +701,8 @@ export class PropertyPanel {
         const drawStyleRow = document.getElementById('draw-style-row');
         const drawStyleSelect = document.getElementById('prop-draw-style');
         if (drawStyleRow && drawStyleSelect) {
-            if (el.drawStyle !== undefined) {
-                drawStyleRow.style.display = '';
-                drawStyleSelect.value = el.drawStyle;
-            } else {
-                drawStyleRow.style.display = 'none';
-            }
+            drawStyleRow.hidden = el.drawStyle === undefined;
+            if (el.drawStyle !== undefined) drawStyleSelect.value = el.drawStyle;
         }
 
         // Cell size row: show only for matrix elements
@@ -663,12 +710,10 @@ export class PropertyPanel {
         const cellSizeInput = document.getElementById('prop-cell-size');
         const cellSizeValSpan = document.getElementById('prop-cell-size-val');
         if (cellSizeRow) {
+            cellSizeRow.hidden = el.cellSize === undefined;
             if (el.cellSize !== undefined) {
-                cellSizeRow.style.display = '';
                 if (cellSizeInput) cellSizeInput.value = el.cellSize;
                 if (cellSizeValSpan) cellSizeValSpan.textContent = el.cellSize;
-            } else {
-                cellSizeRow.style.display = 'none';
             }
         }
 
@@ -677,12 +722,10 @@ export class PropertyPanel {
         const fontSizeInput = document.getElementById('prop-font-size');
         const fontSizeValSpan = document.getElementById('prop-font-size-val');
         if (fontSizeRow) {
+            fontSizeRow.hidden = el.fontSize === undefined;
             if (el.fontSize !== undefined) {
-                fontSizeRow.style.display = '';
                 if (fontSizeInput) fontSizeInput.value = el.fontSize;
                 if (fontSizeValSpan) fontSizeValSpan.textContent = el.fontSize;
-            } else {
-                fontSizeRow.style.display = 'none';
             }
         }
 
@@ -691,7 +734,7 @@ export class PropertyPanel {
         // Stroke width row: hide for text elements
         const strokeWidthRow = document.getElementById('stroke-width-row');
         if (strokeWidthRow) {
-            strokeWidthRow.style.display = el.type === 'text' ? 'none' : '';
+            strokeWidthRow.hidden = el.type === 'text';
         }
 
         // Font family & text styles: show only for text elements
@@ -700,9 +743,9 @@ export class PropertyPanel {
         const textStylesRow = document.getElementById('text-styles-row');
         
         if (fontFamilyRow && textStylesRow) {
+            fontFamilyRow.hidden = el.type !== 'text';
+            textStylesRow.hidden = el.type !== 'text';
             if (el.type === 'text') {
-                fontFamilyRow.style.display = '';
-                textStylesRow.style.display = '';
                 if (fontSelect) {
                     const opts = Array.from(fontSelect.options).map(o => o.value);
                     fontSelect.value = opts.includes(el.fontFamily) ? el.fontFamily : opts[0];
@@ -710,14 +753,13 @@ export class PropertyPanel {
                 // Update button states
                 const setBtn = (id, prop) => {
                     const btn = document.getElementById(id);
-                    if (btn) btn.classList.toggle('active', !!el[prop]);
+                    if (!btn) return;
+                    btn.classList.toggle('active', !!el[prop]);
+                    btn.setAttribute('aria-pressed', String(!!el[prop]));
                 };
                 setBtn('prop-bold', 'isBold');
                 setBtn('prop-italic', 'isItalic');
                 setBtn('prop-underline', 'isUnderline');
-            } else {
-                fontFamilyRow.style.display = 'none';
-                textStylesRow.style.display = 'none';
             }
         }
     }

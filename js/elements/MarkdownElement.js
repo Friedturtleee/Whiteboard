@@ -84,7 +84,11 @@ export class MarkdownElement extends Element {
         let html;
         if (typeof marked !== 'undefined') {
             const renderer = new marked.Renderer();
-            renderer.html = token => escapeHTML(token.text ?? '');
+            // Pinned marked@12 calls html(string); marked >= 13 passes a token
+            // object ({ text, raw }). Accept both and always escape the result.
+            renderer.html = token => escapeHTML(typeof token === 'string'
+                ? token
+                : (token?.text ?? token?.raw ?? ''));
             renderer.link = function (token, titleArg, textArg) {
                 const { href, title, text, tokens } = typeof token === 'string'
                     ? { href: token, title: titleArg, text: textArg }
@@ -301,7 +305,9 @@ export class MarkdownElement extends Element {
                     if (window.appInstance) window.appInstance.renderer.markDirty();
                 }).catch(() => {
                     if (container.parentNode) container.parentNode.removeChild(container);
-                    if (revision === this._renderRevision) this._rendering = false;
+                    if (revision === this._renderRevision) {
+                        this._showRenderLimitNotice('Markdown 渲染失敗，請檢查內容後重試。');
+                    }
                 });
             } else {
                 // Fallback: SVG foreignObject (basic, may miss styles)
@@ -310,7 +316,7 @@ export class MarkdownElement extends Element {
         });
     }
 
-    _showRenderLimitNotice() {
+    _showRenderLimitNotice(message = 'Markdown is too large to render. Shorten it to show the canvas preview.') {
         const width = Math.min(Math.max(this._renderWidth || 600, 240), 1200);
         const height = 48;
         const scale = 2;
@@ -323,7 +329,7 @@ export class MarkdownElement extends Element {
             ctx.fillStyle = '#e0e0e0';
             ctx.font = '14px sans-serif';
             ctx.textBaseline = 'middle';
-            ctx.fillText('Markdown is too large to render. Shorten it to show the canvas preview.', 8, height / 2, width - 16);
+            ctx.fillText(message, 8, height / 2, width - 16);
         }
         const oldScale = this._naturalW > 0 ? this.width / this._naturalW : 1;
         this.img = canvas;
@@ -426,7 +432,7 @@ export class MarkdownElement extends Element {
         if (container.parentNode) document.body.removeChild(container);
 
         const css = `* { margin:0; padding:0; box-sizing:border-box; }
-            body { font-family:sans-serif; font-size:15px; line-height:1.5; color:#e0e0e0; }
+            .md-root { font-family:sans-serif; font-size:15px; line-height:1.5; color:#e0e0e0; }
             pre { margin:0.35em 0; overflow-x:auto; }
             code { font-family:monospace; font-size:0.88em; color:#f2a2c0; }
             pre code { color:#cdd6f4; }
@@ -441,9 +447,27 @@ export class MarkdownElement extends Element {
             a { color:#82aaff; } strong { color:#f0c987; } em { color:#8bd5ca; }
             p { margin:0 0 0.35em; } h1 { font-size:1.8em; margin:0 0 0.35em; color:#8ecbff; }`;
 
+        // foreignObject content must be well-formed XHTML; marked emits HTML
+        // (<br>, <hr>, <img> unclosed), so round-trip it through the HTML
+        // parser and XMLSerializer. If that is impossible, show an error
+        // placeholder instead of a blank element.
+        let xhtml;
+        try {
+            const doc = new DOMParser().parseFromString(
+                '<!DOCTYPE html><html><body>' + html + '</body></html>', 'text/html');
+            const serializer = new XMLSerializer();
+            xhtml = Array.from(doc.body.childNodes)
+                .map(node => serializer.serializeToString(node)).join('');
+        } catch {
+            if (revision === this._renderRevision) {
+                this._showRenderLimitNotice('Markdown 渲染失敗（無法產生預覽）。');
+            }
+            return;
+        }
+
         const svg = `<svg xmlns="http://www.w3.org/2000/svg" width="${w}" height="${h}">
             <foreignObject width="100%" height="100%">
-                <div xmlns="http://www.w3.org/1999/xhtml"><style>${css}</style><body>${html}</body></div>
+                <div xmlns="http://www.w3.org/1999/xhtml" class="md-root"><style>${css}</style>${xhtml}</div>
             </foreignObject></svg>`;
 
         const blob = new Blob([svg], { type: 'image/svg+xml;charset=utf-8' });
@@ -467,8 +491,10 @@ export class MarkdownElement extends Element {
             if (window.appInstance) window.appInstance.renderer.markDirty();
         };
         img.onerror = () => {
-            if (revision === this._renderRevision) this._rendering = false;
             URL.revokeObjectURL(url);
+            if (revision === this._renderRevision) {
+                this._showRenderLimitNotice('Markdown 渲染失敗（預覽圖載入錯誤）。');
+            }
         };
         img.src = url;
     }

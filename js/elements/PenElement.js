@@ -33,6 +33,23 @@ export class PenElement extends Element {
         return true;
     }
 
+    /**
+     * Move the whole stroke by (dx, dy). The stroke's position IS its points
+     * (x/y are derived bounds that _recalcBounds() rewrites from them), so
+     * assigning `el.x += 20` after a clone/deserialize is lost. Callers that
+     * offset a pasted/duplicated pen must call `pen.translate(dx, dy)` instead.
+     */
+    translate(dx, dy) {
+        if (!Number.isFinite(dx) || !Number.isFinite(dy)) return false;
+        for (const point of this.points) {
+            point.x += dx;
+            point.y += dy;
+        }
+        this.x += dx;
+        this.y += dy;
+        return true;
+    }
+
     _recalcBounds() {
         if (this.points.length === 0) return;
         let minX = Infinity, minY = Infinity, maxX = -Infinity, maxY = -Infinity;

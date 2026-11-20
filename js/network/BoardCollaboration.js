@@ -3,6 +3,8 @@ import * as encoding from 'https://esm.sh/lib0@0.2.117/encoding?bundle';
 import * as decoding from 'https://esm.sh/lib0@0.2.117/decoding?bundle';
 import { Serializer } from '../core/Serializer.js';
 import { validateWhiteboardElement } from '../core/WhiteboardElementValidation.js';
+import { validateTreeElementSource } from '../core/TreeSourceValidation.js';
+import { MIN_CAMERA_ZOOM, MAX_CAMERA_ZOOM } from '../canvas/Camera.js';
 
 const MAX_ELEMENTS = 10000;
 const MAX_BOARD_BYTES = 25 * 1024 * 1024;
@@ -13,6 +15,16 @@ const ARRAY_VALUE_PREFIX = '\u0000cpwb-array-v1:';
 const SYNC_STEP1 = 0;
 const SYNC_STEP2 = 1;
 const SYNC_UPDATE = 2;
+const MAX_UNDO_STACK_ITEMS = 200;
+const UNDO_CAPTURE_TIMEOUT_MS = 500;
+const MAX_PROTOCOL_FAILURES = 3;
+const REJECTED_CLOSE_REASON = /update was rejected/i;
+
+function isValidCamera(value) {
+    return Boolean(value) && [value.x, value.y, value.zoom].every(Number.isFinite) &&
+        Math.abs(value.x) <= 100_000_000 && Math.abs(value.y) <= 100_000_000 &&
+        value.zoom >= MIN_CAMERA_ZOOM && value.zoom <= MAX_CAMERA_ZOOM;
+}
 
 function toShared(value) {
     if (typeof value === 'string') {
@@ -39,7 +51,9 @@ function toPlain(value) {
     if (Array.isArray(value)) return value.map(toPlain);
     if (value && typeof value === 'object') return Object.fromEntries(Object.entries(value).map(([key, child]) => [key, toPlain(child)]));
     if (typeof value === 'string' && value.startsWith(ARRAY_VALUE_PREFIX)) {
-        const parsed = JSON.parse(value.slice(ARRAY_VALUE_PREFIX.length));
+        let parsed;
+        try { parsed = JSON.parse(value.slice(ARRAY_VALUE_PREFIX.length)); }
+        catch { throw new Error('Invalid shared array value.'); }
         if (!Array.isArray(parsed)) throw new Error('Invalid shared array value.');
         return parsed;
     }
@@ -136,13 +150,22 @@ export class BoardCollaboration {
         this.localOrigin = { type: 'local' };
         this.initialOrigin = { type: 'initial' };
         this.undoManager = new Y.UndoManager(this.elementsMap, {
-            trackedOrigins: new Set([this.localOrigin])
+            trackedOrigins: new Set([this.localOrigin]),
+            captureTimeout: UNDO_CAPTURE_TIMEOUT_MS
+        });
+        // Y.UndoManager has no size cap of its own; drop the oldest entries so a
+        // long editing session cannot grow the undo history without bound.
+        this.undoManager.on('stack-item-added', () => {
+            const stack = this.undoManager.undoStack;
+            if (stack.length > MAX_UNDO_STACK_ITEMS) stack.splice(0, stack.length - MAX_UNDO_STACK_ITEMS);
         });
         this.socket = null;
         this.synced = false;
         this.cameraApplied = false;
         this.isApplyingRemote = false;
         this.pendingAcks = 0;
+        this.protocolFailures = 0;
+        this.closeReason = null;
         this.flushWaiters = new Set();
         this.status = 'connecting';
         this._onElementsChanged = this._onElementsChanged.bind(this);
@@ -154,6 +177,7 @@ export class BoardCollaboration {
             encoding.writeVarUint(encoder, 0);
             encoding.writeVarUint(encoder, SYNC_UPDATE);
             encoding.writeVarUint8Array(encoder, update);
+            // The server acks every client message that changes its document.
             this.pendingAcks++;
             try { this.socket.send(encoding.toUint8Array(encoder)); } catch {
                 this.pendingAcks = Math.max(0, this.pendingAcks - 1);
@@ -196,11 +220,27 @@ export class BoardCollaboration {
         });
         socket.addEventListener('close', event => {
             if (this.socket !== socket) return;
-            this.status = event.code === 4001 ? 'revoked' : 'disconnected';
+            // 4001 means either the server rejected our update or our access
+            // changed; closeReason lets the UI tell them apart.
+            if (event.code === 4001) {
+                this.closeReason = REJECTED_CLOSE_REASON.test(String(event.reason || '')) ? 'rejected' : 'revoked';
+                this.status = 'revoked';
+            } else {
+                this.closeReason = event.code === 1003 ? 'protocol' : null;
+                this.status = 'disconnected';
+            }
+            if (event.code === 1003) this.protocolFailures++;
             this.pendingAcks = 0;
             this._settleFlushWaiters(false);
             this.app.cloudBoards?.renderStatus();
-            if (!this._intentionalClose && event.code !== 4001 && event.code !== 1000) this.app.cloudBoards?.reconnect(this);
+            // Repeated invalid-data closes (1003) would otherwise reconnect forever.
+            const protocolRetriesExhausted = event.code === 1003 && this.protocolFailures >= MAX_PROTOCOL_FAILURES;
+            if (protocolRetriesExhausted) {
+                this.status = 'error';
+                this.app.cloudBoards?.renderStatus('同步資料持續無效，已停止自動重連；請先匯出白板 JSON。');
+            } else if (!this._intentionalClose && event.code !== 4001 && event.code !== 1000) {
+                this.app.cloudBoards?.reconnect(this);
+            }
         });
     }
 
@@ -211,6 +251,7 @@ export class BoardCollaboration {
         this.ticket = ticket;
         this.synced = false;
         this.pendingAcks = 0;
+        this.closeReason = null;
         this._settleFlushWaiters(false);
         this.status = 'connecting';
         this._connect();
@@ -234,6 +275,10 @@ export class BoardCollaboration {
                             encoding.writeVarUint(response, SYNC_STEP2);
                             encoding.writeVarUint8Array(response, missing);
                             if (this.role !== 'viewer' && missing.byteLength > 2) {
+                                // The server acks a SYNC_STEP2 only when it changes
+                                // the document; an empty one (<= 2 bytes) is a no-op
+                                // and never acked, so count only non-empty ones.
+                                this.pendingAcks++;
                                 this.status = 'saving';
                                 this.app.cloudBoards?.renderStatus();
                             }
@@ -281,13 +326,11 @@ export class BoardCollaboration {
     _markSynced() {
         if (this.synced) return;
         this.synced = true;
+        this.protocolFailures = 0;
         this.status = 'saved';
         if (this.elementsMap.size === 0 && this.seedData && Array.isArray(this.seedData.elements)) {
             const camera = this.seedData.camera;
-            const validCamera = camera && [camera.x, camera.y, camera.zoom].every(Number.isFinite) &&
-                Math.abs(camera.x) <= 100_000_000 && Math.abs(camera.y) <= 100_000_000 &&
-                camera.zoom >= 0.45 && camera.zoom <= 10;
-            if (validCamera && !this.metaMap.has('camera')) {
+            if (isValidCamera(camera) && !this.metaMap.has('camera')) {
                 this.doc.transact(() => this.metaMap.set('camera', toShared(this.seedData.camera)), this.initialOrigin);
             }
             if (this._applyLocalData(this.seedData.elements)) this.seedData = null;
@@ -299,9 +342,6 @@ export class BoardCollaboration {
     _applyCameraIfAvailable() {
         if (this.cameraApplied) return false;
         const sharedCamera = this.metaMap.get('camera');
-        const isValidCamera = value => value && [value.x, value.y, value.zoom].every(Number.isFinite) &&
-            Math.abs(value.x) <= 100_000_000 && Math.abs(value.y) <= 100_000_000 &&
-            value.zoom >= 0.45 && value.zoom <= 10;
         let camera = this.preferredCamera;
         this.preferredCamera = null;
         if (!isValidCamera(camera)) {
@@ -373,6 +413,7 @@ export class BoardCollaboration {
                 }
                 ids.add(data.id);
                 validateWhiteboardElement(data);
+                if (data.type === 'tree') validateTreeElementSource(data);
                 const size = new TextEncoder().encode(JSON.stringify(data)).byteLength;
                 if (size > MAX_ELEMENT_BYTES) throw new Error('單一元素超過雲端限制，請匯出 JSON。');
                 bytes += size;
@@ -426,7 +467,10 @@ export class BoardCollaboration {
         const changedIds = new Set();
         const remoteChangedIds = new Set();
         for (const event of events) {
-            if (event.transaction?.origin === this) continue;
+            // Local edits already originate from the app state; re-applying them
+            // would only re-deserialize the elements the user is editing.
+            // Undo/redo (origin: the UndoManager) and remote/initial changes still apply.
+            if (event.transaction?.origin === this.localOrigin) continue;
             const targetIds = event.path?.length
                 ? [String(event.path[0])]
                 : [...(event.changes?.keys?.keys?.() || [])].map(String);
@@ -456,15 +500,22 @@ export class BoardCollaboration {
                 }
                 continue;
             }
-            const data = toPlain(shared);
-            const scratch = {
-                elements: [], camera: { x: 0, y: 0, zoom: 1 },
-                history: { clear() {} }, selectionManager: { clear() {} }, renderer: { markDirty() {} }
-            };
-            Serializer.loadJSONData(scratch, { elements: [data] }, {
-                preserveExternalConnections: true
-            });
-            const incoming = scratch.elements[0];
+            // One malformed shared element must not abort the whole update.
+            let incoming;
+            try {
+                const data = toPlain(shared);
+                const scratch = {
+                    elements: [], camera: { x: 0, y: 0, zoom: 1 },
+                    history: { clear() {} }, selectionManager: { clear() {} }, renderer: { markDirty() {} }
+                };
+                Serializer.loadJSONData(scratch, { elements: [data] }, {
+                    preserveExternalConnections: true
+                });
+                incoming = scratch.elements[0];
+            } catch (error) {
+                console.warn(`Skipping invalid shared whiteboard element "${id}".`, error);
+                continue;
+            }
             if (!incoming) continue;
             if (currentIndex >= 0 && this.app.elements[currentIndex].type === incoming.type) {
                 const current = this.app.elements[currentIndex];

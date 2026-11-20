@@ -1,7 +1,16 @@
 /**
  * GraphRenderer — draws graph nodes and edges on canvas.
  */
-import { fitCanvasTextFontSize } from '../core/CanvasTextFit.js';
+import { drawCanvasCellText, getNodeTextBounds } from '../core/CanvasTextFit.js';
+import { getLocalViewport, intersectsViewport } from '../canvas/Viewport.js';
+
+/**
+ * Maximum number of visibly separate lanes drawn for edges that share the same
+ * node pair (and direction). Further parallel edges are merged into the last
+ * lane, which is drawn once with a "xN" count label. This bounds both the
+ * drawing cost and the size of the graph's rendered bounds.
+ */
+export const MAX_PARALLEL_EDGE_LANES = 16;
 
 const edgeMetadataCache = new WeakMap();
 const edgeLabelWidthCaches = new WeakMap();
@@ -71,14 +80,25 @@ function getEdgeMetadata(nodes, edges, directed) {
     const edgeOffsets = new Float64Array(edges.length);
     const edgeLaneIndices = new Uint32Array(edges.length);
     const edgeSpacings = new Float64Array(edges.length);
+    // 1 = merged into a lane's representative edge (not drawn / not hit-tested)
+    const edgeHidden = new Uint8Array(edges.length);
+    // >1 only on the representative edge of a merged last lane
+    const edgeMergedCounts = new Uint32Array(edges.length);
     const laneIndices = new Map();
     for (let index = 0; index < edges.length; index++) {
         const key = groupKeys[index];
-        const laneIndex = laneIndices.get(key) || 0;
+        const rawLane = laneIndices.get(key) || 0;
+        const totalCount = laneCounts.get(key);
+        const visibleLanes = Math.min(totalCount, MAX_PARALLEL_EDGE_LANES);
+        const laneIndex = Math.min(rawLane, MAX_PARALLEL_EDGE_LANES - 1);
         edgeLaneIndices[index] = laneIndex;
         edgeSpacings[index] = weightedGroups.has(key) ? 22 : 8;
-        edgeOffsets[index] = (laneIndex - (laneCounts.get(key) - 1) / 2) * edgeSpacings[index];
-        laneIndices.set(key, laneIndex + 1);
+        edgeOffsets[index] = (laneIndex - (visibleLanes - 1) / 2) * edgeSpacings[index];
+        if (rawLane >= MAX_PARALLEL_EDGE_LANES) edgeHidden[index] = 1;
+        else if (rawLane === MAX_PARALLEL_EDGE_LANES - 1 && totalCount > MAX_PARALLEL_EDGE_LANES) {
+            edgeMergedCounts[index] = totalCount - MAX_PARALLEL_EDGE_LANES + 1;
+        }
+        laneIndices.set(key, rawLane + 1);
     }
 
     let edgeSet = null;
@@ -107,6 +127,8 @@ function getEdgeMetadata(nodes, edges, directed) {
         edgeOffsets,
         edgeLaneIndices,
         edgeSpacings,
+        edgeHidden,
+        edgeMergedCounts,
         edgeOrientations,
         edgeHasReverse,
         sources: edges.map(edge => edge.u),
@@ -186,7 +208,7 @@ export class GraphRenderer {
         for (const node of nodes.values()) include(node.x, node.y, r);
         for (let index = 0; index < edges.length; index++) {
             const edge = edges[index], u = metadata.sourceNodes[index], v = metadata.targetNodes[index];
-            if (!u || !v) continue;
+            if (!u || !v || metadata.edgeHidden[index]) continue;
             let labelX, labelY;
             if (edge.u === edge.v) {
                 const loopR = r * 0.75 + metadata.edgeLaneIndices[index] * metadata.edgeSpacings[index];
@@ -207,8 +229,9 @@ export class GraphRenderer {
                 }
                 labelX = path.labelX; labelY = path.labelY;
             }
-            if (edge.w != null && edge.w !== '') {
-                include(labelX, labelY, String(edge.w).length * 3.1 + 5, 10);
+            const labelText = GraphRenderer._edgeLabelText(edge, metadata.edgeMergedCounts[index]);
+            if (labelText) {
+                include(labelX, labelY, labelText.length * 3.1 + 5, 10);
             }
         }
         return { minX, minY, maxX, maxY };
@@ -228,6 +251,7 @@ export class GraphRenderer {
         const oy = opts.offsetY || 0;
         const opacity = opts.opacity ?? 1;
         const directed = opts.directed || false;
+        const viewport = getLocalViewport(ctx, 12);
 
         // Endpoint groups only change when the edge array or its endpoints
         // change. Reuse lane offsets and resolved node references across
@@ -246,15 +270,13 @@ export class GraphRenderer {
             const e = edges[edgeIndex];
             const u = sourceNodes[edgeIndex];
             const v = targetNodes[edgeIndex];
-            if (!u || !v) continue;
+            if (!u || !v || edgeMetadata.edgeHidden[edgeIndex]) continue;
+            const mergedCount = edgeMetadata.edgeMergedCounts[edgeIndex];
+            const labelText = GraphRenderer._edgeLabelText(e, mergedCount);
 
             const edgeColor = e.selected ? 'hsl(210, 80%, 60%)' : color;
             const edgeAlpha = e.selected ? opacity * 0.9 : opacity * 0.5;
             const edgeWidth = e.selected ? 2.5 : 1.5;
-
-            ctx.strokeStyle = edgeColor;
-            ctx.lineWidth = edgeWidth;
-            ctx.globalAlpha = edgeAlpha;
 
             const isDirected = e.directed || directed;
 
@@ -262,6 +284,12 @@ export class GraphRenderer {
             if (e.u === e.v) {
                 const nx = u.x + ox, ny = u.y + oy;
                 const loopR = r * 0.75 + edgeLaneIndices[edgeIndex] * edgeSpacings[edgeIndex];
+                const halfLabel = labelText ? labelText.length * 5 + 5 : 0;
+                if (!intersectsViewport(viewport, nx - Math.max(loopR, halfLabel), ny - r - loopR * 2 - 22,
+                    nx + Math.max(loopR, halfLabel), ny - r)) continue;
+                ctx.strokeStyle = edgeColor;
+                ctx.lineWidth = edgeWidth;
+                ctx.globalAlpha = edgeAlpha;
                 // Draw the loop as a circle sitting on top of the node
                 ctx.beginPath();
                 ctx.arc(nx, ny - r - loopR, loopR, 0, Math.PI * 2);
@@ -279,12 +307,21 @@ export class GraphRenderer {
                     ctx.stroke();
                 }
                 GraphRenderer._drawEdgeLabel(ctx, e, nx, ny - r - loopR * 2 - 12,
-                    color, edgeAlpha, edgeLabelWidths);
+                    color, edgeAlpha, edgeLabelWidths, labelText);
                 ctx.globalAlpha = opacity;
                 continue;
             }
 
             const path = edgePath(u, v, r, pathOffset(edgeMetadata, edgeIndex, e, directed));
+            const halfLabel = labelText ? labelText.length * 5 + 5 : 0;
+            if (!intersectsViewport(viewport,
+                Math.min(path.sx, path.ex, path.cx ?? path.sx, path.labelX - halfLabel) + ox,
+                Math.min(path.sy, path.ey, path.cy ?? path.sy, path.labelY - 10) + oy,
+                Math.max(path.sx, path.ex, path.cx ?? path.sx, path.labelX + halfLabel) + ox,
+                Math.max(path.sy, path.ey, path.cy ?? path.sy, path.labelY + 10) + oy)) continue;
+            ctx.strokeStyle = edgeColor;
+            ctx.lineWidth = edgeWidth;
+            ctx.globalAlpha = edgeAlpha;
             ctx.beginPath();
             ctx.moveTo(path.sx + ox, path.sy + oy);
             if (path.cx === null) ctx.lineTo(path.ex + ox, path.ey + oy);
@@ -304,7 +341,7 @@ export class GraphRenderer {
 
             }
             GraphRenderer._drawEdgeLabel(ctx, e, path.labelX + ox, path.labelY + oy,
-                color, edgeAlpha, edgeLabelWidths);
+                color, edgeAlpha, edgeLabelWidths, labelText);
 
             ctx.globalAlpha = opacity;
         }
@@ -315,6 +352,10 @@ export class GraphRenderer {
         for (const [id, node] of nodes) {
             const nx = node.x + ox;
             const ny = node.y + oy;
+            const labelRadius = node.nodeWeight != null && node.nodeWeight !== ''
+                ? Math.max(r + 4, (String(node.nodeWeight).length + 2) * 5) : r + 4;
+            if (!intersectsViewport(viewport, nx - labelRadius, ny - r - 4,
+                nx + labelRadius, ny + r + 20)) continue;
 
             const isSelected = node.selected;
             ctx.beginPath();
@@ -332,9 +373,9 @@ export class GraphRenderer {
             ctx.textAlign = 'center';
             ctx.textBaseline = 'middle';
             const label = String(node.label || id);
-            const fontSize = fitCanvasTextFontSize(ctx, label, 13, r * 2 - 6, r * 1.5);
-            ctx.font = `${fontSize}px Consolas, monospace`;
-            ctx.fillText(label, nx, ny);
+            const box = getNodeTextBounds(label, r);
+            drawCanvasCellText(ctx, label, 13, box.width, box.height, nx, ny);
+            ctx.textBaseline = 'middle';
 
             // Node weight (shown below the circle)
             if (node.nodeWeight != null) {
@@ -350,9 +391,16 @@ export class GraphRenderer {
         ctx.globalAlpha = 1;
     }
 
-    static _drawEdgeLabel(ctx, edge, x, y, color, alpha, widthCache = null) {
-        if (edge.w == null || edge.w === '') return;
-        const label = String(edge.w);
+    /** Label text for an edge: its weight plus a "xN" suffix for a merged lane. */
+    static _edgeLabelText(edge, mergedCount = 0) {
+        const weight = edge.w != null && edge.w !== '' ? String(edge.w) : '';
+        if (!(mergedCount > 1)) return weight;
+        return weight ? `${weight} ×${mergedCount}` : `×${mergedCount}`;
+    }
+
+    static _drawEdgeLabel(ctx, edge, x, y, color, alpha, widthCache = null, labelText = null) {
+        const label = labelText ?? (edge.w == null || edge.w === '' ? '' : String(edge.w));
+        if (!label) return;
         ctx.save();
         ctx.globalAlpha = alpha;
         ctx.font = '10px Consolas, monospace';
@@ -421,7 +469,7 @@ export class GraphRenderer {
             const e = edges[edgeIndex];
             const u = sourceNodes[edgeIndex];
             const v = targetNodes[edgeIndex];
-            if (!u || !v) continue;
+            if (!u || !v || edgeMetadata.edgeHidden[edgeIndex]) continue;
 
             const laneIndex = edgeLaneIndices[edgeIndex];
 

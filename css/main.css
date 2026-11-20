@@ -5,6 +5,10 @@
     box-sizing: border-box;
 }
 
+[hidden] {
+    display: none !important;
+}
+
 html, body {
     width: 100%;
     height: 100%;
@@ -16,6 +20,14 @@ html, body {
     line-height: 1.4;
     user-select: none;
     -webkit-user-select: none;
+    -webkit-tap-highlight-color: transparent;
+    overscroll-behavior: none;
+}
+
+/* Text fields must stay selectable even though the board chrome is not (Safari needs the prefix). */
+input, textarea, select, [contenteditable="true"], .markdown-preview-content, .dialog-error {
+    -webkit-user-select: text;
+    user-select: text;
 }
 
 /* ===== Canvas ===== */
@@ -26,6 +38,11 @@ html, body {
     width: 100%;
     height: 100%;
     cursor: default;
+    /* The board handles every gesture itself (pan, pinch, draw); keep the browser out of it. */
+    touch-action: none;
+    -webkit-user-select: none;
+    user-select: none;
+    -webkit-touch-callout: none;
 }
 
 #main-canvas.panning {
@@ -40,22 +57,43 @@ html, body {
     cursor: crosshair;
 }
 
-/* ===== Text Edit Overlay ===== */
+/* ===== Inline Text Editor Overlay ===== */
+/* Position, size, font and colour are set from app.js while editing. */
 #text-edit-overlay {
     position: absolute;
     display: none;
     background: transparent;
-    border: 1px solid var(--accent);
-    color: var(--text-primary);
-    font-family: 'Segoe UI', sans-serif;
-    resize: none;
+    border: none;
     outline: none;
+    resize: none;
     overflow: hidden;
-    z-index: 1000;
-    padding: 2px 4px;
     white-space: pre-wrap;
     word-wrap: break-word;
+    font-family: 'Segoe UI', sans-serif;
+    padding: 0;
+    margin: 0;
+    line-height: 1.3;
+    z-index: 9999;
+    box-sizing: content-box;
+    pointer-events: auto;
+    color: transparent;
+    caret-color: var(--text-primary);
+    /* Keep the editor inside the canvas gesture area. */
+    touch-action: none;
 }
+
+#text-edit-overlay.transparent-selection::selection {
+    color: transparent;
+    background: rgba(100, 100, 100, 0.2);
+}
+
+#text-edit-overlay.text-element-editor {
+    white-space: pre;
+    overflow-wrap: normal;
+    scrollbar-width: none;
+    border-radius: 0;
+}
+#text-edit-overlay.text-element-editor::-webkit-scrollbar { display: none; }
 
 /* ===== Scrollbar ===== */
 ::-webkit-scrollbar {
@@ -66,7 +104,7 @@ html, body {
     background: var(--bg-secondary);
 }
 ::-webkit-scrollbar-thumb {
-    background: var(--border-color);
+    background: var(--border-strong);
     border-radius: 3px;
 }
 ::-webkit-scrollbar-thumb:hover {
@@ -94,33 +132,70 @@ button:active {
 select, input[type="number"], input[type="text"] {
     background: var(--bg-tertiary);
     color: var(--text-primary);
-    border: 1px solid var(--border-color);
+    border: 1px solid var(--control-border);
     padding: 3px 6px;
     border-radius: 3px;
     font-size: 14px;
     outline: none;
 }
 select:focus, input:focus {
-    border-color: var(--accent);
+    border-color: var(--focus-ring);
+}
+select:focus-visible, input[type="number"]:focus-visible, input[type="text"]:focus-visible,
+textarea:focus-visible {
+    border-color: var(--focus-ring);
+    box-shadow: 0 0 0 1px var(--focus-ring);
 }
 
+input[type="checkbox"] {
+    accent-color: var(--accent);
+}
+
+/* Range sliders: the input is the (tall) hit area, the track and thumb are drawn by pseudo-elements. */
 input[type="range"] {
     -webkit-appearance: none;
     appearance: none;
     width: 100%;
-    height: 4px;
-    background: var(--border-color);
+    height: max(var(--range-thumb), 20px);
+    background: transparent;
     border-radius: 2px;
     outline: none;
+    cursor: pointer;
+}
+input[type="range"]::-webkit-slider-runnable-track {
+    height: var(--range-track);
+    background: var(--control-border);
+    border-radius: 2px;
+}
+input[type="range"]::-moz-range-track {
+    height: var(--range-track);
+    background: var(--control-border);
+    border-radius: 2px;
 }
 input[type="range"]::-webkit-slider-thumb {
     -webkit-appearance: none;
     appearance: none;
-    width: 12px;
-    height: 12px;
+    width: var(--range-thumb);
+    height: var(--range-thumb);
+    margin-top: calc((var(--range-track) - var(--range-thumb)) / 2);
     border-radius: 50%;
+    border: 0;
     background: var(--text-primary);
     cursor: pointer;
+}
+input[type="range"]::-moz-range-thumb {
+    width: var(--range-thumb);
+    height: var(--range-thumb);
+    border-radius: 50%;
+    border: 0;
+    background: var(--text-primary);
+    cursor: pointer;
+}
+input[type="range"]:focus-visible::-webkit-slider-thumb {
+    box-shadow: 0 0 0 3px var(--focus-ring);
+}
+input[type="range"]:focus-visible::-moz-range-thumb {
+    box-shadow: 0 0 0 3px var(--focus-ring);
 }
 
 label {
@@ -133,11 +208,12 @@ label {
 /* ===== Tooltip ===== */
 .app-tooltip {
     position: fixed;
-    background: #111;
-    color: #ddd;
+    background: var(--tooltip-bg);
+    color: var(--tooltip-fg);
+    border: 1px solid var(--tooltip-border);
     padding: 3px 8px;
     border-radius: 3px;
-    font-size: 11px;
+    font-size: 12px;
     white-space: nowrap;
     pointer-events: none;
     z-index: 9999;
@@ -145,8 +221,8 @@ label {
 .app-tooltip[hidden] {
     display: none;
 }
-button:focus-visible, [role="button"]:focus-visible {
-    outline: 2px solid var(--accent);
+button:focus-visible, [role="button"]:focus-visible, summary:focus-visible {
+    outline: 2px solid var(--focus-ring);
     outline-offset: 2px;
 }
 
@@ -154,7 +230,7 @@ button:focus-visible, [role="button"]:focus-visible {
 #loading-screen {
     position: fixed;
     inset: 0;
-    background: #1e1e1e;
+    background: var(--bg-primary);
     display: flex;
     align-items: center;
     justify-content: center;
@@ -175,134 +251,33 @@ button:focus-visible, [role="button"]:focus-visible {
     font-family: 'Consolas', monospace;
     font-size: 36px;
     font-weight: 700;
-    color: hsl(210, 35%, 50%);
+    color: var(--accent-light);
     letter-spacing: 4px;
 }
 .loading-bar {
     width: 160px;
     height: 3px;
-    background: #333;
+    background: var(--bg-hover);
     border-radius: 2px;
     overflow: hidden;
 }
 .loading-fill {
     height: 100%;
     width: 0%;
-    background: hsl(210, 35%, 50%);
+    background: var(--accent-light);
     border-radius: 2px;
     transition: width 0.3s ease;
 }
 .loading-text {
     font-size: 12px;
-    color: #707070;
-    letter-spacing: 1px;
-}
-
-/* ===== Settings Modal ===== */
-#settings-modal {
-    display: none;
-    position: fixed;
-    inset: 0;
-    z-index: 5000;
-    background: rgba(0, 0, 0, 0.45);
-    align-items: flex-start;
-    justify-content: center;
-    padding-top: 56px;
-}
-#settings-modal.open {
-    display: flex;
-}
-#settings-panel {
-    background: var(--bg-secondary);
-    border: 1px solid var(--border-color);
-    border-radius: 8px;
-    width: 320px;
-    max-height: calc(100vh - 76px);
-    overflow-y: auto;
-    box-shadow: 0 8px 32px rgba(0, 0, 0, 0.55);
-    animation: settingsFadeIn 0.15s ease;
-}
-@keyframes settingsFadeIn {
-    from { opacity: 0; transform: translateY(-8px); }
-    to   { opacity: 1; transform: translateY(0); }
-}
-#settings-header {
-    display: flex;
-    align-items: center;
-    justify-content: space-between;
-    padding: 10px 14px;
-    border-bottom: 1px solid var(--border-color);
-    font-size: 13px;
-    font-weight: 500;
-    color: var(--text-primary);
-}
-#settings-close {
-    width: 24px;
-    height: 24px;
-    display: flex;
-    align-items: center;
-    justify-content: center;
-    background: transparent;
-    border: none;
-    border-radius: 4px;
-    color: var(--text-secondary);
-    cursor: pointer;
-    padding: 0;
-    font-size: 0;
-}
-#settings-close:hover { background: var(--bg-hover); color: var(--text-primary); }
-#settings-close .material-symbols-outlined { font-size: 18px; line-height: 1; }
-#settings-body {
-    padding: 8px 0 4px;
-}
-.settings-section {
-    padding: 4px 0 8px;
-    border-bottom: 1px solid var(--border-color);
-}
-.settings-section:last-child { border-bottom: none; }
-.settings-section-title {
-    font-size: 10px;
-    font-weight: 600;
-    text-transform: uppercase;
-    letter-spacing: 0.8px;
     color: var(--text-muted);
-    padding: 2px 14px 4px;
-}
-.settings-row {
-    display: flex;
-    align-items: center;
-    gap: 8px;
-    padding: 5px 14px;
-}
-.settings-row label {
-    flex: 1;
-    font-size: 12px;
-    color: var(--text-secondary);
-    text-transform: none;
-    letter-spacing: 0;
-    cursor: default;
-}
-.settings-row input[type="range"] {
-    flex: 1.6;
-    max-width: 110px;
-}
-.settings-row input[type="checkbox"] {
-    width: 16px;
-    height: 16px;
-    accent-color: var(--accent);
-    cursor: pointer;
-}
-.settings-val {
-    min-width: 24px;
-    text-align: right;
-    font-size: 11px;
-    color: var(--text-secondary);
+    letter-spacing: 1px;
 }
 
 /* ===== Toast Notification ===== */
 #toast-region {
     position: fixed;
-    bottom: 64px;
+    bottom: calc(var(--bottom-ui-offset) + 8px);
     left: 50%;
     transform: translateX(-50%);
     display: flex;
@@ -314,8 +289,8 @@ button:focus-visible, [role="button"]:focus-visible {
     pointer-events: none;
 }
 .toast {
-    background: #333;
-    color: #e0e0e0;
+    background: var(--toast-bg);
+    color: var(--text-primary);
     padding: 8px 14px;
     border: 1px solid var(--border-color);
     border-radius: 4px;
@@ -326,36 +301,16 @@ button:focus-visible, [role="button"]:focus-visible {
 @keyframes toastSlideIn { from { opacity:0; transform: translateY(6px); } to { opacity:1; transform: translateY(0); } }
 @keyframes toastOut { from { opacity:1; } to { opacity:0; } }
 
-
- /* Inline Text Editor Overlay */
-#text-edit-overlay {
-    position: absolute;
-    display: none;
-    background: transparent;
-    border: none;
-    outline: none;
-    resize: none;
-    overflow: hidden;
-    white-space: pre-wrap;
-    padding: 0;
-    margin: 0;
-    line-height: 1.3;
-    z-index: 9999;
-    box-sizing: content-box;
-    pointer-events: auto;
-    color: transparent;
-    caret-color: var(--text-primary);
+/* ===== Reduced motion ===== */
+@media (prefers-reduced-motion: reduce) {
+    *, *::before, *::after {
+        animation-duration: 0.001ms !important;
+        animation-delay: 0s !important;
+        animation-iteration-count: 1 !important;
+        transition-duration: 0.001ms !important;
+        transition-delay: 0s !important;
+        scroll-behavior: auto !important;
+    }
+    /* Toasts remove themselves through toastOut; keep that final state without motion. */
+    .toast { animation: toastOut 0.001ms var(--toast-duration, 2000ms) forwards !important; }
 }
-
-#text-edit-overlay.transparent-selection::selection {
-    color: transparent;
-    background: rgba(100, 100, 100, 0.2);
-}
-
-#text-edit-overlay.text-element-editor {
-    white-space: pre;
-    overflow-wrap: normal;
-    scrollbar-width: none;
-    border-radius: 0;
-}
-#text-edit-overlay.text-element-editor::-webkit-scrollbar { display: none; }

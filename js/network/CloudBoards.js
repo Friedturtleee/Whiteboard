@@ -106,6 +106,10 @@ export class CloudBoards {
                 };
                 if (!existing) document.head.appendChild(script);
             });
+            // TODO(security): these major-version ranges float and carry no SRI hash.
+            // Pin exact versions (e.g. @clerk/ui@x.y.z / @clerk/clerk-js@x.y.z) and add
+            // `integrity` once verified against the Clerk release in use; the exact
+            // versions could not be confirmed offline, so they are intentionally unchanged.
             await loadScript(`https://${domain}/npm/@clerk/ui@1/dist/ui.browser.js`);
             await loadScript(`https://${domain}/npm/@clerk/clerk-js@6/dist/clerk.browser.js`, {
                 'data-clerk-publishable-key': key
@@ -741,6 +745,7 @@ export class CloudBoards {
             // Preserve the latest snapshot under the old account's isolated key
             // if the server could not acknowledge it before the identity changed.
             try {
+                if (this.app.autosaveStore?.isLocked?.(this.app.autosaveKey)) throw new Error('autosave locked');
                 localStorage.setItem(this.app.autosaveKey, JSON.stringify(this._snapshot()));
                 draftCached = true;
             } catch {}
@@ -878,7 +883,9 @@ export class CloudBoards {
         }
         const labels = {
             connecting: '連線中…', connected: '同步中…', saving: '同步中…', saved: '雲端已同步',
-            error: '同步失敗', disconnected: '連線中斷', revoked: '存取權已變更'
+            error: '同步失敗', disconnected: '連線中斷',
+            // 4001 closes carry a closeReason: 'rejected' (server refused an update) or 'revoked' (access changed).
+            revoked: this.connection?.closeReason === 'rejected' ? '更新被伺服器拒絕' : '存取權已變更'
         };
         status.textContent = this.statusOverride || `${labels[this.connection?.status] || '雲端白板'} · ${this.activeBoard?.title || ''}${this.isReadOnly ? ' · 檢視者' : ''}`;
         status.dataset.state = this.connection?.status || 'connecting';

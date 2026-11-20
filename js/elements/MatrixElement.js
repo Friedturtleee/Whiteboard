@@ -4,9 +4,11 @@
 import { Element } from '../core/Element.js';
 import { formatDataToken, splitDataTokens } from '../core/DataTokens.js';
 import { drawCanvasCellText } from '../core/CanvasTextFit.js';
+import { getLocalViewport } from '../canvas/Viewport.js';
 
 const EMPTY_CELL = '\u3000';
 const isEmptyCell = value => value == null || value === '' || value === EMPTY_CELL;
+const NUMERIC_TOKEN = /^[+-]?(?:\d+\.?\d*|\.\d+)(?:[eE][+-]?\d+)?$/;
 const MAX_MATRIX_ROWS = 200;
 const MAX_MATRIX_COLS = 200;
 const MAX_MATRIX_CELLS = 10000;
@@ -58,6 +60,7 @@ export class MatrixElement extends Element {
         this.selectedCells = new Set(); // "r,c" keys for cell selection
         this._hoverEdge = null;         // 'right' | 'bottom' | null
         this._lastCellKey = null;       // for shift-range select
+        this._activeCellKey = null;     // keyboard cursor within a selected range
         this._initData();
     }
 
@@ -115,6 +118,12 @@ export class MatrixElement extends Element {
 
     // ── Row / Col insertion & deletion ──────────────────
 
+    _remapCellFocus(axis, at, action) {
+        for (const property of ['_lastCellKey', '_activeCellKey']) {
+            if (this[property]) this[property] = remapGridKeys(new Set([this[property]]), axis, at, action).values().next().value || null;
+        }
+    }
+
     insertRow(afterRow) {
         if (this.rows < 1 || this.cols < 1 ||
             this.rows >= MAX_MATRIX_ROWS || (this.rows + 1) * this.cols > MAX_MATRIX_CELLS) {
@@ -126,6 +135,7 @@ export class MatrixElement extends Element {
         this.data.splice(at, 0, newRow);
         this.rows++;
         this.selectedCells = remapGridKeys(this.selectedCells, 'row', at, 'insert');
+        this._remapCellFocus('row', at, 'insert');
         this.highlights = remapGridHighlights(this.highlights, 'row', at, 'insert');
         this._updateSize();
         this.updateTextFromData();
@@ -144,6 +154,7 @@ export class MatrixElement extends Element {
             else if (r > row) next.add(`${r - 1},${c}`);
         }
         this.selectedCells = next;
+        this._remapCellFocus('row', row, 'delete');
         this.highlights = remapGridHighlights(this.highlights, 'row', row, 'delete');
         this._updateSize();
         this.updateTextFromData();
@@ -159,6 +170,7 @@ export class MatrixElement extends Element {
         for (const row of this.data) row.splice(at, 0, '');
         this.cols++;
         this.selectedCells = remapGridKeys(this.selectedCells, 'col', at, 'insert');
+        this._remapCellFocus('col', at, 'insert');
         this.highlights = remapGridHighlights(this.highlights, 'col', at, 'insert');
         this._updateSize();
         this.updateTextFromData();
@@ -176,6 +188,7 @@ export class MatrixElement extends Element {
             else if (c > col) next.add(`${r},${c - 1}`);
         }
         this.selectedCells = next;
+        this._remapCellFocus('col', col, 'delete');
         this.highlights = remapGridHighlights(this.highlights, 'col', col, 'delete');
         this._updateSize();
         this.updateTextFromData();
@@ -199,7 +212,7 @@ export class MatrixElement extends Element {
             const data = Array.from({ length: rows }, () => new Array(cols).fill(''));
             this.inputText = rawText;
             this.selectedCells.clear();
-            this._lastCellKey = null;
+            this._lastCellKey = this._activeCellKey = null;
             this.highlights = {};
             this.rows = rows;
             this.cols = cols;
@@ -218,7 +231,7 @@ export class MatrixElement extends Element {
         if (lines.length === 0) {
             this.inputText = rawText;
             this.selectedCells.clear();
-            this._lastCellKey = null;
+            this._lastCellKey = this._activeCellKey = null;
             this.highlights = {};
             this.rows = 0;
             this.cols = 0;
@@ -233,14 +246,17 @@ export class MatrixElement extends Element {
         }
         let cols = 0;
         const data = [];
+        const tokenRows = lines.map(line => splitDataTokens(line));
+        // CP character grid (e.g. "#..#" / "abc" rows): split a row into
+        // characters only when EVERY row is a single, unquoted, non-numeric
+        // token and at least one is longer than one character. A single
+        // column of numbers ("-5", "3.14", "10") is therefore never split.
+        const isCharGrid = tokenRows.every((vals, index) =>
+            vals.length === 1 && !/^\s*"/.test(lines[index]) && !NUMERIC_TOKEN.test(vals[0])) &&
+            tokenRows.some(vals => Array.from(vals[0]).length > 1);
         for (let r = 0; r < lines.length; r++) {
-            let vals = splitDataTokens(lines[r]);
-            // CP char grid detection (e.g. #.#.)
-            const startsWithQuotedValue = /^\s*"/.test(lines[r]);
-            if (!startsWithQuotedValue && vals.length === 1 && vals[0].length > 1 &&
-                !/^\d+$/.test(vals[0])) {
-                vals = vals[0].split('');
-            }
+            let vals = tokenRows[r];
+            if (isCharGrid) vals = Array.from(vals[0]);
             if (vals.length > MAX_MATRIX_COLS) {
                 return '矩陣最多支援 200 欄。';
             }
@@ -256,7 +272,7 @@ export class MatrixElement extends Element {
         }
         this.inputText = rawText;
         this.selectedCells.clear();
-        this._lastCellKey = null;
+        this._lastCellKey = this._activeCellKey = null;
         this.highlights = {};
         this.rows = data.length;
         this.cols = cols;
@@ -297,8 +313,14 @@ export class MatrixElement extends Element {
             ? Math.PI / 2
             : 0;
 
-        for (let r = 0; r < rows; r++) {
-            for (let c = 0; c < cols; c++) {
+        const viewport = getLocalViewport(ctx, Math.max(4, cellSize / 4));
+        const firstRow = viewport ? Math.max(0, Math.floor((viewport.minY - y - pad) / cellSize)) : 0;
+        const lastRow = viewport ? Math.min(rows, Math.ceil((viewport.maxY - y - pad) / cellSize)) : rows;
+        const firstCol = viewport ? Math.max(0, Math.floor((viewport.minX - x - pad) / cellSize)) : 0;
+        const lastCol = viewport ? Math.min(cols, Math.ceil((viewport.maxX - x - pad) / cellSize)) : cols;
+        const color = this.getEffectiveColor(this.color);
+        for (let r = firstRow; r < lastRow; r++) {
+            for (let c = firstCol; c < lastCol; c++) {
                 const cx = x + pad + c * cellSize;
                 const cy = y + pad + r * cellSize;
                 const hkey = `${r},${c}`;
@@ -311,7 +333,7 @@ export class MatrixElement extends Element {
                 }
 
                 // Cell border
-                ctx.strokeStyle = this.getEffectiveColor(this.color);
+                ctx.strokeStyle = color;
                 ctx.lineWidth = 1;
                 ctx.globalAlpha = this.opacity * 0.4;
                 ctx.strokeRect(cx, cy, cellSize, cellSize);
@@ -320,7 +342,7 @@ export class MatrixElement extends Element {
                 // Value (do not render placeholders)
                 const val = this.data[r]?.[c] ?? '';
                 if (!isEmptyCell(val)) {
-                    ctx.fillStyle = this.getEffectiveColor(this.color);
+                    ctx.fillStyle = color;
                     ctx.save();
                     const text = String(val);
                     ctx.translate(cx + cellSize / 2, cy + cellSize / 2);
@@ -331,8 +353,8 @@ export class MatrixElement extends Element {
 
                 // Cell selection highlight
                 if (this.selectedCells.has(hkey)) {
-                    ctx.strokeStyle = '#56b3e6';
-                    ctx.lineWidth = 2.5;
+                    ctx.strokeStyle = this._activeCellKey === hkey ? '#a6ddff' : '#56b3e6';
+                    ctx.lineWidth = this._activeCellKey === hkey ? 3 : 2.5;
                     ctx.globalAlpha = this.opacity;
                     ctx.strokeRect(cx + 1.5, cy + 1.5, cellSize - 3, cellSize - 3);
                 }

@@ -1,5 +1,8 @@
+import { elementsInPaintOrder } from '../core/ElementOrder.js';
+
 /**
- * Renderer — drives the requestAnimationFrame loop with dirty-flag optimization.
+ * Renderer — draws on demand: a requestAnimationFrame is only scheduled while
+ * the board is dirty, so an idle whiteboard costs no frames at all.
  */
 export class Renderer {
     constructor(canvas, ctx, camera, grid, app) {
@@ -10,27 +13,120 @@ export class Renderer {
         this.app = app;
         this.needsRedraw = true;
         this._rafId = null;
+        this._running = false;
+        this._dprQuery = null;
+        this._dprListener = null;
         this._loop = this._loop.bind(this);
     }
 
     start() {
-        this._loop();
+        this._running = true;
+        this._watchDevicePixelRatio();
+        this._schedule();
     }
 
     stop() {
-        if (this._rafId) cancelAnimationFrame(this._rafId);
+        this._running = false;
+        if (this._rafId !== null && typeof cancelAnimationFrame === 'function') {
+            cancelAnimationFrame(this._rafId);
+        }
+        this._rafId = null;
+        this._unwatchDevicePixelRatio();
     }
 
     markDirty() {
         this.needsRedraw = true;
+        if (this._running && this._rafId === null) this._schedule();
+    }
+
+    _schedule() {
+        if (typeof requestAnimationFrame !== 'function') return;
+        this._rafId = requestAnimationFrame(this._loop);
     }
 
     _loop() {
-        if (this.needsRedraw) {
-            this.needsRedraw = false;
-            this._render();
-        }
-        this._rafId = requestAnimationFrame(this._loop);
+        this._rafId = null;
+        if (!this._running || !this.needsRedraw) return;
+        this.needsRedraw = false;
+        this._render();
+    }
+
+    // ── Device pixel ratio ───────────────────────────────────────────────
+
+    /**
+     * Resize the backing store to clientSize * devicePixelRatio. Only touches
+     * canvas.width/height when they actually differ, because assigning them
+     * clears the bitmap.
+     */
+    syncCanvasSize() {
+        const { canvas } = this;
+        const dpr = (typeof window !== 'undefined' && window.devicePixelRatio) || 1;
+        const w = canvas.clientWidth, h = canvas.clientHeight;
+        if (!(w > 0 && h > 0)) return false;
+        const pixelWidth = Math.floor(w * dpr), pixelHeight = Math.floor(h * dpr);
+        if (canvas.width === pixelWidth && canvas.height === pixelHeight) return false;
+        canvas.width = pixelWidth;
+        canvas.height = pixelHeight;
+        return true;
+    }
+
+    _watchDevicePixelRatio() {
+        this._unwatchDevicePixelRatio();
+        if (typeof window === 'undefined' || typeof window.matchMedia !== 'function') return;
+        // A resolution media query only matches one exact ratio, so re-arm it after every change.
+        const query = window.matchMedia(`(resolution: ${window.devicePixelRatio || 1}dppx)`);
+        const listener = () => {
+            this.syncCanvasSize();
+            this.markDirty();
+            if (this._running) this._watchDevicePixelRatio();
+        };
+        if (typeof query.addEventListener === 'function') query.addEventListener('change', listener);
+        else if (typeof query.addListener === 'function') query.addListener(listener);
+        this._dprQuery = query;
+        this._dprListener = listener;
+    }
+
+    _unwatchDevicePixelRatio() {
+        const query = this._dprQuery, listener = this._dprListener;
+        this._dprQuery = this._dprListener = null;
+        if (!query || !listener) return;
+        if (typeof query.removeEventListener === 'function') query.removeEventListener('change', listener);
+        else if (typeof query.removeListener === 'function') query.removeListener(listener);
+    }
+
+    // ── Culling ──────────────────────────────────────────────────────────
+
+    /** Visible world rectangle, or null when the camera state is unusable. */
+    _getVisibleWorldRect(canvasWidth, canvasHeight, dpr) {
+        const { camera } = this;
+        const zoom = camera.zoom;
+        if (!(zoom > 0)) return null;
+        const minX = camera.x, minY = camera.y;
+        const maxX = minX + canvasWidth / (dpr * zoom);
+        const maxY = minY + canvasHeight / (dpr * zoom);
+        return [minX, minY, maxX, maxY].every(Number.isFinite) ? { minX, minY, maxX, maxY } : null;
+    }
+
+    /**
+     * True only when the element's (rotated, padded) world bounds lie fully outside the
+     * view. Anything whose bounds cannot be computed is reported as visible.
+     */
+    _isOutsideView(el, view) {
+        if (!view) return false;
+        let b;
+        try {
+            b = typeof el.getRotatedBounds === 'function' ? el.getRotatedBounds()
+                : (typeof el.getBounds === 'function' ? el.getBounds() : null);
+        } catch { return false; }
+        if (!b || ![b.x, b.y, b.w, b.h].every(Number.isFinite)) return false;
+        const zoom = this.camera.zoom;
+        // Stroke, arrow heads, antialiasing, selection handles (~40 screen px) and a
+        // proportional allowance for content that spills slightly past its bounds.
+        const pad = (Math.max(0, Number(el.strokeWidth) || 0)) * 2 + 24 +
+            Math.max(Math.abs(b.w), Math.abs(b.h)) * 0.1 + 40 / zoom;
+        const minX = Math.min(b.x, b.x + b.w) - pad, maxX = Math.max(b.x, b.x + b.w) + pad;
+        const minY = Math.min(b.y, b.y + b.h) - pad, maxY = Math.max(b.y, b.y + b.h) + pad;
+        return maxX < view.minX || minX > view.maxX || maxY < view.minY || minY > view.maxY;
     }
 
     _render() {
@@ -44,7 +140,7 @@ export class Renderer {
         ctx.fillRect(0, 0, w, h);
 
         // Apply camera transform (scale for HiDPI already in canvas size)
-        const dpr = window.devicePixelRatio || 1;
+        const dpr = (typeof window !== 'undefined' && window.devicePixelRatio) || 1;
         ctx.setTransform(
             camera.zoom * dpr, 0, 0, camera.zoom * dpr,
             -camera.x * camera.zoom * dpr,
@@ -56,10 +152,12 @@ export class Renderer {
             grid.draw(ctx, camera, w / dpr, h / dpr);
         }
 
-        // Draw elements sorted by z-index
-        const elements = app.elements.slice().sort((a, b) => a.zIndex - b.zIndex);
+        // Draw elements sorted by z-index, skipping those fully outside the view
+        const view = this._getVisibleWorldRect(w, h, dpr);
+        const elements = elementsInPaintOrder(app.elements);
         for (const el of elements) {
             if (el.hidden) continue;
+            if (this._isOutsideView(el, view)) continue;
             ctx.save();
             try {
                 el.draw(ctx, camera);
@@ -84,12 +182,19 @@ export class Renderer {
     _drawSelectionOverlay(ctx, dpr) {
         const { app, camera } = this;
         const sel = app.selectionManager;
+        const selected = sel.selectedElements;
 
-        // Draw selection handles on selected elements
-        for (const el of sel.selectedElements) {
-            if (el.hidden || el.isEditing || el.isEditingNode || el.isEditingEdge) continue;
+        if (selected.length === 1) {
+            // Handles are only operable for a single selection (see HitTest / app.js).
+            const el = selected[0];
+            if (!el.hidden && !el.isEditing && !el.isEditingNode && !el.isEditingEdge) {
+                ctx.save();
+                this._drawElementHandles(ctx, el);
+                ctx.restore();
+            }
+        } else if (selected.length > 1) {
             ctx.save();
-            this._drawElementHandles(ctx, el);
+            this._drawGroupBounds(ctx, selected);
             ctx.restore();
         }
 
@@ -122,6 +227,25 @@ export class Renderer {
         }
     }
 
+    /** One dashed box around a multi-selection (no handles: they are not operable). */
+    _drawGroupBounds(ctx, elements) {
+        const { camera } = this;
+        let minX = Infinity, minY = Infinity, maxX = -Infinity, maxY = -Infinity;
+        for (const el of elements) {
+            if (el.hidden || el.isEditing || el.isEditingNode || el.isEditingEdge) continue;
+            const b = el.getRotatedBounds ? el.getRotatedBounds() : el.getBounds();
+            if (!b || ![b.x, b.y, b.w, b.h].every(Number.isFinite)) continue;
+            minX = Math.min(minX, b.x, b.x + b.w); maxX = Math.max(maxX, b.x, b.x + b.w);
+            minY = Math.min(minY, b.y, b.y + b.h); maxY = Math.max(maxY, b.y, b.y + b.h);
+        }
+        if (minX === Infinity) return;
+        ctx.strokeStyle = 'rgba(80,140,200,0.8)';
+        ctx.lineWidth = 1.5 / camera.zoom;
+        ctx.setLineDash([4 / camera.zoom, 3 / camera.zoom]);
+        ctx.strokeRect(minX, minY, maxX - minX, maxY - minY);
+        ctx.setLineDash([]);
+    }
+
     _drawElementHandles(ctx, el) {
         const bounds = el.getBounds();
         if (!bounds) return;
@@ -131,8 +255,11 @@ export class Renderer {
 
         // ── Line / Arrow: two circular endpoint handles only ──────────────
         if (el.shapeType === 'line' || el.shapeType === 'arrow') {
-            const x1 = el.x,            y1 = el.y;
-            const x2 = el.x + el.width, y2 = el.y + el.height;
+            // Same world-space endpoints HitTest.hitTestHandles uses (honours rotation).
+            const p1 = el.getEndpointWorld?.(0) ?? el.toWorldPoint(el.x, el.y);
+            const p2 = el.getEndpointWorld?.(1) ?? el.toWorldPoint(el.x + el.width, el.y + el.height);
+            const x1 = p1.x, y1 = p1.y;
+            const x2 = p2.x, y2 = p2.y;
             const r  = 5.5 / camera.zoom;
 
             // Dashed guide line
@@ -209,22 +336,37 @@ export class Renderer {
     }
 
     /**
-     * Show all valid connection ports on non-line elements while dragging
-     * a line endpoint. Highlights the closest snap target.
+     * While dragging a line endpoint: show every connection port of the element
+     * currently being snapped to, and highlight the port that will be used.
+     * Only the snapped candidate's ports are enumerated, never the whole board.
      */
     _drawConnectionPortHints(ctx) {
         const { camera, app } = this;
+        const sp = app._snapPreview;
+        if (!sp) return;
 
-        // Highlight the snapped port (if any)
-        if (app._snapPreview) {
-            const sp = app._snapPreview;
-            ctx.beginPath();
-            ctx.arc(sp.x, sp.y, 9 / camera.zoom, 0, Math.PI * 2);
-            ctx.fillStyle = 'rgba(80, 140, 200, 0.50)';
-            ctx.fill();
-            ctx.strokeStyle = 'rgba(80, 140, 200, 1.0)';
-            ctx.lineWidth = 2 / camera.zoom;
-            ctx.stroke();
+        const target = sp.elementId != null && Array.isArray(app.elements)
+            ? app.elements.find(element => element.id === sp.elementId) : null;
+        if (target && typeof target.getConnectionPorts === 'function') {
+            ctx.fillStyle = 'rgba(80, 140, 200, 0.25)';
+            ctx.strokeStyle = 'rgba(80, 140, 200, 0.8)';
+            ctx.lineWidth = 1.5 / camera.zoom;
+            for (const port of target.getConnectionPorts()) {
+                if (port.id === sp.portId) continue;
+                ctx.beginPath();
+                ctx.arc(port.x, port.y, 4.5 / camera.zoom, 0, Math.PI * 2);
+                ctx.fill();
+                ctx.stroke();
+            }
         }
+
+        // Highlight the snapped port
+        ctx.beginPath();
+        ctx.arc(sp.x, sp.y, 9 / camera.zoom, 0, Math.PI * 2);
+        ctx.fillStyle = 'rgba(80, 140, 200, 0.50)';
+        ctx.fill();
+        ctx.strokeStyle = 'rgba(80, 140, 200, 1.0)';
+        ctx.lineWidth = 2 / camera.zoom;
+        ctx.stroke();
     }
 }

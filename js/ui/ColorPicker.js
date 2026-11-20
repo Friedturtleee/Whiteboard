@@ -1,71 +1,23 @@
+import { bindModal } from './Modal.js';
+
 /**
- * ColorPicker — 15 preset colors + 1 custom color picker.
+ * The single preset palette shared by the property panel and the colour popup
+ * (mirrors the muted --color-* tokens in css/colors.css).
+ */
+export const PALETTE_COLORS = Object.freeze([
+    '#b34d4d', '#b3734d', '#b39b4d', '#8a9e4d',
+    '#4d8a4d', '#4d8a7a', '#4d8a9e', '#4d6eb3',
+    '#4d4db3', '#6b4db3', '#8a4db3', '#b34d8a',
+    '#8a6b4d', '#b0b0b0', '#e8e8e8'
+]);
+
+/**
+ * ColorPicker — shared palette + the custom colour popup used by the property panel's "+" swatch.
  */
 export class ColorPicker {
-    static COLORS = [
-        '#b34d4d', '#b3734d', '#b39b4d', '#8a9e4d',
-        '#4d8a4d', '#4d8a7a', '#4d8a9e', '#4d6eb3',
-        '#4d4db3', '#6b4db3', '#8a4db3', '#b34d8a',
-        '#8a6b4d', '#b0b0b0', '#e8e8e8'
-    ];
+    static COLORS = PALETTE_COLORS;
 
-    /**
-     * Create an inline color picker element and attach to a container.
-     * @param {HTMLElement} container
-     * @param {Function} onChange - called with (color) when a swatch is clicked
-     * @returns {HTMLElement} the grid element
-     */
-    static create(container, onChange) {
-        const grid = document.createElement('div');
-        grid.className = 'color-grid';
-
-        for (const color of ColorPicker.COLORS) {
-            const swatch = document.createElement('button');
-            swatch.type = 'button';
-            swatch.setAttribute('aria-label', `顏色 ${color}`);
-            swatch.setAttribute('aria-pressed', 'false');
-            swatch.className = 'color-swatch';
-            swatch.style.background = color;
-            swatch.dataset.color = color;
-            swatch.addEventListener('click', () => {
-                ColorPicker.setActive(grid, color);
-                if (onChange) onChange(color);
-            });
-            grid.appendChild(swatch);
-        }
-
-        // Custom color "+ " button that opens a dark popup
-        const customBtn = document.createElement('button');
-        customBtn.type = 'button';
-        customBtn.setAttribute('aria-label', '自訂顏色');
-        customBtn.className = 'color-swatch color-swatch-custom';
-        customBtn.title = '自訂顏色';
-        customBtn.textContent = '+';
-        customBtn.dataset.color = '#ffffff';
-        customBtn.addEventListener('click', (e) => {
-            e.stopPropagation();
-            ColorPicker._openCustomPopup(customBtn, (c) => {
-                customBtn.style.background = c;
-                customBtn.style.color = ColorPicker._contrastColor(c);
-                customBtn.dataset.color = c;
-                ColorPicker.setActive(grid, c);
-                if (onChange) onChange(c);
-            });
-        });
-        grid.appendChild(customBtn);
-
-        container.appendChild(grid);
-        return grid;
-    }
-
-    static setActive(grid, color) {
-        grid.querySelectorAll('.color-swatch').forEach(s => {
-            s.classList.toggle('selected', s.dataset.color === color);
-            s.setAttribute('aria-pressed', String(s.dataset.color === color));
-        });
-    }
-
-    /** Returns #000 or #fff depending on background brightness */
+    /** Returns a dark or light text colour that is readable on the given #rrggbb background. */
     static _contrastColor(hex) {
         const r = parseInt(hex.slice(1, 3), 16);
         const g = parseInt(hex.slice(3, 5), 16);
@@ -191,6 +143,7 @@ export class ColorPicker {
         popup.appendChild(applyBtn);
 
         document.body.appendChild(popup);
+        let releaseModal = null;
         const position = () => {
             const rect = anchor.getBoundingClientRect();
             const box = popup.getBoundingClientRect();
@@ -203,6 +156,8 @@ export class ColorPicker {
             document.removeEventListener('pointerdown', outside, true);
             document.removeEventListener('scroll', onScroll, true);
             window.removeEventListener('resize', position);
+            releaseModal?.();   // restores inert siblings and the previously focused control
+            releaseModal = null;
             popup.remove();
             if (ColorPicker._closeCustomPopup === close) ColorPicker._closeCustomPopup = null;
             if (restoreFocus && anchor.isConnected) anchor.focus({ preventScroll: true });
@@ -210,11 +165,7 @@ export class ColorPicker {
         const outside = e => { if (!popup.contains(e.target) && !anchor.contains(e.target)) close(false); };
         const onScroll = e => { if (!popup.contains(e.target)) close(false); };
         popup.addEventListener('keydown', e => {
-            if (e.key === 'Escape') { e.preventDefault(); e.stopPropagation(); close(); }
-            if (e.key === 'Enter' && e.target === hexInput) { e.preventDefault(); applyBtn.click(); }
-        });
-        popup.addEventListener('focusout', e => {
-            if (e.relatedTarget && !popup.contains(e.relatedTarget)) close(false);
+            if (e.key === 'Enter' && e.target === hexInput && !e.isComposing) { e.preventDefault(); applyBtn.click(); }
         });
         ColorPicker._closeCustomPopup = close;
         document.addEventListener('pointerdown', outside, true);
@@ -222,6 +173,8 @@ export class ColorPicker {
         window.addEventListener('resize', position);
         position();
         validateHex();
+        // bindModal gives the popup Esc-to-close, a Tab focus trap, aria-modal and focus restoration.
+        releaseModal = bindModal(popup, { onCancel: () => close(), initialFocus: hexInput });
         hexInput.focus({ preventScroll: true });
         hexInput.select();
     }

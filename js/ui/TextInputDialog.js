@@ -1,5 +1,16 @@
 import { bindModal } from './Modal.js';
 
+const DISCARD_PROMPT = '捨棄已輸入的內容？';
+
+/** Pull the "例：" sample out of a multi-line placeholder (inline `例：1 2 3` or a block up to the next blank line). */
+function extractExample(text) {
+    const match = /(?:^|\n)例：[ \t]*([^\n]*)\n?([\s\S]*)$/.exec(text || '');
+    if (!match) return '';
+    const inline = match[1].trim();
+    if (inline) return inline;
+    return match[2].split(/\n[ \t]*\n/)[0].replace(/\s+$/, '');
+}
+
 /**
  * TextInputDialog — modal dialog for tree/graph text input, matrix input, etc.
  */
@@ -54,7 +65,7 @@ export class TextInputDialog {
         if (opts.showGraphModeSelect) {
             graphModeSelect = document.createElement('select');
             graphModeSelect.setAttribute('aria-label', '圖的輸入格式');
-            graphModeSelect.style.marginBottom = '8px';
+            graphModeSelect.classList.add('dialog-select-tight');
             const graphModes = [
                 { value: 'edge-list', label: '邊列表 (N M, 再列 edges)' },
                 { value: 'adj-list',  label: '鄰接列表 (N, 再 N 行 M neighbors)' }
@@ -75,11 +86,11 @@ export class TextInputDialog {
         let zeroBasedWrap = null;
         if (opts.showDirectedCheckbox || opts.showZeroBasedCheckbox) {
             const cbRow = document.createElement('div');
-            cbRow.style.cssText = 'margin-bottom:8px;display:flex;align-items:center;gap:14px;';
+            cbRow.className = 'dialog-check-row';
 
             if (opts.showDirectedCheckbox) {
                 const wrap = document.createElement('div');
-                wrap.style.cssText = 'display:flex;align-items:center;gap:6px;';
+                wrap.className = 'dialog-check';
                 checkbox = document.createElement('input');
                 checkbox.type = 'checkbox';
                 checkbox.id = 'dialog-directed';
@@ -87,7 +98,6 @@ export class TextInputDialog {
                 const cbLabel = document.createElement('label');
                 cbLabel.htmlFor = 'dialog-directed';
                 cbLabel.textContent = '有向圖';
-                cbLabel.style.textTransform = 'none';
                 wrap.appendChild(checkbox);
                 wrap.appendChild(cbLabel);
                 cbRow.appendChild(wrap);
@@ -95,7 +105,7 @@ export class TextInputDialog {
 
             if (opts.showZeroBasedCheckbox) {
                 zeroBasedWrap = document.createElement('div');
-                zeroBasedWrap.style.cssText = 'display:flex;align-items:center;gap:6px;';
+                zeroBasedWrap.className = 'dialog-check';
                 zeroBasedCb = document.createElement('input');
                 zeroBasedCb.type = 'checkbox';
                 zeroBasedCb.id = 'dialog-zerobased';
@@ -103,7 +113,6 @@ export class TextInputDialog {
                 const cbLabel = document.createElement('label');
                 cbLabel.htmlFor = 'dialog-zerobased';
                 cbLabel.textContent = '0-based';
-                cbLabel.style.textTransform = 'none';
                 zeroBasedWrap.appendChild(zeroBasedCb);
                 zeroBasedWrap.appendChild(cbLabel);
                 cbRow.appendChild(zeroBasedWrap);
@@ -117,7 +126,7 @@ export class TextInputDialog {
         if (opts.showModeSelect) {
             modeSelect = document.createElement('select');
             modeSelect.setAttribute('aria-label', '樹的輸入格式');
-            modeSelect.style.marginBottom = '8px';
+            modeSelect.classList.add('dialog-select-tight');
             const modes = [
                 { value: 'auto',   label: '自動偵測（CP 樹：N，接 N-1 條無向邊）' },
                 { value: 'rooted', label: '有根邊列表（N，接 父 子）' },
@@ -135,59 +144,24 @@ export class TextInputDialog {
             dialog.appendChild(modeSelect);
         }
 
+        // The editor is a transparent textarea over a backdrop that highlights full-width spaces.
         const textareaContainer = document.createElement('div');
-        textareaContainer.style.position = 'relative';
-        textareaContainer.style.width = '100%';
-        textareaContainer.style.height = '160px'; // typical dialog textarea height
-        textareaContainer.style.marginBottom = '16px';
-        textareaContainer.style.border = '1px solid var(--border, #444)';
-        textareaContainer.style.borderRadius = '4px';
-        textareaContainer.style.background = 'var(--bg-panel, #1e1e1e)';
+        textareaContainer.className = 'dialog-editor';
 
         const textareaBackdrop = document.createElement('div');
-        textareaBackdrop.style.position = 'absolute';
-        textareaBackdrop.style.top = '0';
-        textareaBackdrop.style.left = '0';
-        textareaBackdrop.style.width = '100%';
-        textareaBackdrop.style.height = '100%';
-        textareaBackdrop.style.padding = '8px'; // match textarea padding
-        textareaBackdrop.style.fontFamily = 'monospace';
-        textareaBackdrop.style.fontSize = '14px';
-        textareaBackdrop.style.lineHeight = '1.5';
-        textareaBackdrop.style.boxSizing = 'border-box';
-        textareaBackdrop.style.whiteSpace = 'pre-wrap';
-        textareaBackdrop.style.wordWrap = 'break-word';
-        textareaBackdrop.style.color = 'var(--text-primary, #fff)';
-        textareaBackdrop.style.overflow = 'hidden';
-        textareaBackdrop.style.pointerEvents = 'none';
+        textareaBackdrop.className = 'dialog-editor-backdrop';
+        textareaBackdrop.setAttribute('aria-hidden', 'true');
 
         const textarea = document.createElement('textarea');
+        textarea.className = 'dialog-editor-input';
         textarea.setAttribute('aria-label', `${opts.title || '輸入資料'}內容`);
         textarea.maxLength = 1_000_000;
         textarea.spellcheck = false;
+        textarea.wrap = 'off';
         textarea.placeholder = opts.placeholder || '在此輸入...';
         textarea.value = opts.defaultText || '';
-        textarea.style.position = 'absolute';
-        textarea.style.top = '0';
-        textarea.style.left = '0';
-        textarea.style.width = '100%';
-        textarea.style.height = '100%';
-        textarea.style.margin = '0';
-        textarea.style.padding = '8px';
-        textarea.style.fontFamily = 'monospace';
-        textarea.style.fontSize = '14px';
-        textarea.style.lineHeight = '1.5';
-        textarea.style.boxSizing = 'border-box';
-        textarea.style.border = 'none';
-        textarea.style.background = 'transparent';
-        textarea.style.color = 'transparent';
-        textarea.style.caretColor = 'var(--text-primary, #fff)';
-        textarea.style.resize = 'none';
-        textarea.style.outline = 'none';
-        textarea.style.scrollbarGutter = 'stable';
-        textareaBackdrop.style.scrollbarGutter = 'stable';
-        textareaBackdrop.style.overflowY = 'scroll';
-        textareaBackdrop.setAttribute('aria-hidden', 'true');
+        const initialText = textarea.value;
+        const isDirty = () => textarea.value !== initialText;
 
         textareaContainer.appendChild(textareaBackdrop);
         textareaContainer.appendChild(textarea);
@@ -197,7 +171,10 @@ export class TextInputDialog {
             // Escape HTML
             let html = text.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
             // Highlight full-width space
-            html = html.replace(/　/g, '<span style="background-color: rgba(120, 180, 255, 0.3); border-radius: 2px;">　</span>');
+            let markedCells = 0;
+            html = html.replace(/　/g, () => markedCells++ < 10000
+                ? '<span class="full-space">　</span>'
+                : '　');
             // Deal with trailing newlines
             if (html.endsWith('\n')) html += ' ';
             textareaBackdrop.innerHTML = html;
@@ -213,7 +190,7 @@ export class TextInputDialog {
                     textarea.value = text.substring(0, start) + e.key + text.substring(start + 1);
                     textarea.selectionStart = textarea.selectionEnd = start + 1;
                     updateBackdrop();
-                    
+
                     // Fire the debounced input event so it previews immediately
                     const event = new Event('input', { bubbles: true });
                     textarea.dispatchEvent(event);
@@ -249,11 +226,41 @@ export class TextInputDialog {
             zeroBased: zeroBasedCb     ? zeroBasedCb.checked   : false,
             graphMode: graphModeSelect ? graphModeSelect.value : 'edge-list'
         });
+
+        // One-line summary above the editor + the full multi-line format help in a collapsible block.
         const formatHint = document.createElement('p');
         formatHint.className = 'dialog-format-hint';
+
+        const formatDetails = document.createElement('details');
+        formatDetails.className = 'dialog-format-details';
+        const formatSummary = document.createElement('summary');
+        formatSummary.textContent = '格式說明';
+        const formatBody = document.createElement('pre');
+        formatBody.className = 'dialog-format-body';
+        const exampleBtn = document.createElement('button');
+        exampleBtn.type = 'button';
+        exampleBtn.className = 'dialog-link-btn';
+        exampleBtn.textContent = '填入範例';
+        formatDetails.append(formatSummary, formatBody, exampleBtn);
+        let exampleText = '';
+        exampleBtn.addEventListener('click', () => {
+            if (!exampleText) return;
+            if (textarea.value.trim() && textarea.value !== exampleText && !confirm('以範例取代目前輸入的內容？')) return;
+            textarea.value = exampleText;
+            updateBackdrop();
+            textarea.dispatchEvent(new Event('input', { bubbles: true }));
+            textarea.focus();
+        });
+
         const updatePlaceholder = () => {
-            textarea.placeholder = opts.getPlaceholder?.(_getValues()) || opts.placeholder || '在此輸入…';
-            formatHint.textContent = textarea.placeholder.split('\n')[0];
+            const placeholder = opts.getPlaceholder?.(_getValues()) || opts.placeholder || '在此輸入…';
+            textarea.placeholder = placeholder;
+            const lines = placeholder.split('\n');
+            formatHint.textContent = lines[0];
+            formatDetails.hidden = lines.length < 2;
+            formatBody.textContent = placeholder;
+            exampleText = extractExample(placeholder);
+            exampleBtn.hidden = !exampleText;
             if (zeroBasedWrap && Array.isArray(opts.zeroBasedModes)) {
                 zeroBasedWrap.hidden = !opts.zeroBasedModes.includes(_getValues().mode);
             }
@@ -294,6 +301,7 @@ export class TextInputDialog {
         const actions = document.createElement('div');
         actions.className = 'modal-actions';
 
+        // fireCancel closes unconditionally (also used by cancel() when app.js replaces the dialog).
         const fireCancel = () => {
             if (this._overlay !== overlay) return;
             const onCancel = opts.onCancel;
@@ -301,6 +309,15 @@ export class TextInputDialog {
             onCancel?.();
         };
         this._cancelHandler = fireCancel;
+        // User-initiated dismissal (Esc / 取消): unsaved input needs an explicit okay to discard.
+        const requestCancel = () => {
+            if (this._overlay !== overlay) return;
+            if (isDirty() && !confirm(DISCARD_PROMPT)) {
+                textarea.focus();
+                return;
+            }
+            fireCancel();
+        };
         const fireConfirm = () => {
             if (this._overlay !== overlay) return;
             const values = _getValues();
@@ -315,18 +332,21 @@ export class TextInputDialog {
         };
 
         const cancelBtn = document.createElement('button');
+        cancelBtn.type = 'button';
         cancelBtn.textContent = '取消';
-        cancelBtn.addEventListener('click', fireCancel);
+        cancelBtn.addEventListener('click', requestCancel);
 
         const confirmBtn = document.createElement('button');
+        confirmBtn.type = 'button';
         confirmBtn.className = 'btn-primary';
         confirmBtn.textContent = '確認';
         confirmBtn.addEventListener('click', fireConfirm);
 
         actions.appendChild(cancelBtn);
         actions.appendChild(confirmBtn);
+        dialog.appendChild(formatHint);
+        dialog.appendChild(formatDetails);
         dialog.appendChild(textareaContainer);
-        dialog.insertBefore(formatHint, textareaContainer);
         dialog.appendChild(errorMessage);
         const hint = document.createElement('p');
         hint.className = 'dialog-keyboard-hint';
@@ -335,15 +355,22 @@ export class TextInputDialog {
         dialog.appendChild(actions);
         overlay.appendChild(dialog);
 
-        // A background click must not silently save unfinished input.
+        // A background click must neither save nor silently throw away unfinished input:
+        // with edits it is ignored (the dialog nudges); without edits it just cancels.
         overlay.addEventListener('click', (e) => {
-            if (e.target === overlay) fireCancel();
+            if (e.target !== overlay) return;
+            if (!isDirty()) { fireCancel(); return; }
+            dialog.classList.remove('dialog-nudge');
+            void dialog.offsetWidth;   // restart the animation
+            dialog.classList.add('dialog-nudge');
+            textarea.focus();
         });
+        dialog.addEventListener('animationend', () => dialog.classList.remove('dialog-nudge'));
 
         document.body.appendChild(overlay);
         this._overlay = overlay;
         this._releaseModal = bindModal(dialog, {
-            onCancel: fireCancel, onConfirm: fireConfirm, initialFocus: textarea
+            onCancel: requestCancel, onConfirm: fireConfirm, initialFocus: textarea
         });
     }
 

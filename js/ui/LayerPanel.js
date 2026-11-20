@@ -1,200 +1,343 @@
+import { elementsInFrontOrder } from '../core/ElementOrder.js';
+
 /**
  * LayerPanel — bottom-right panel for z-order management.
  * Supports multi-select (Ctrl+click) and range-select (Shift+click).
+ *
+ * update() is called after almost every edit, so it reconciles a keyed row cache instead of rebuilding
+ * the list: rows are created once per element, only changed fields touch the DOM, and rows are moved
+ * only when the stacking order changed. Scroll position and keyboard focus survive naturally.
  */
 export class LayerPanel {
     constructor(app) {
         this.app = app;
         this._list = document.getElementById('layer-list');
-        this._dragSrc = null;   // element being dragged
+        this._panel = document.getElementById('layer-panel');
+        this._upButton = document.getElementById('layer-up');
+        this._downButton = document.getElementById('layer-down');
+        this._rows = new Map();     // element id -> { el, item, parts, state }
+        this._dragSrc = null;       // element being dragged (HTML5 DnD or pointer drag)
+        this._pointerDrag = null;   // active touch/pen drag session
         this._lastClickedEl = null; // for shift-range select
 
-        document.getElementById('layer-up')?.addEventListener('click', () => {
-            const sel = this.app.selectionManager.selectedElements;
-            if (sel.length === 1) this.app.layerManager.moveUp(sel[0]);
-            this.update();
-        });
-        document.getElementById('layer-down')?.addEventListener('click', () => {
-            const sel = this.app.selectionManager.selectedElements;
-            if (sel.length === 1) this.app.layerManager.moveDown(sel[0]);
-            this.update();
-        });
+        this._upButton?.addEventListener('click', () => this._moveSelection('up'));
+        this._downButton?.addEventListener('click', () => this._moveSelection('down'));
     }
+
+    // ── Reordering ────────────────────────────────────────────────
+
+    /** Move every selected layer one step toward the front ("up") or back ("down"), keeping their relative order. */
+    _moveSelection(direction) {
+        const selected = new Set(this.app.selectionManager.selectedElements);
+        const elements = this.app.elements;
+        if (!selected.size || !elements.some(el => selected.has(el))) return;
+        const oldArr = elements.slice();
+        let moved = false;
+        if (direction === 'up') {
+            // Walk from the front so a selected block shifts as one unit and stops at the top.
+            for (let i = elements.length - 2; i >= 0; i--) {
+                if (selected.has(elements[i]) && !selected.has(elements[i + 1])) {
+                    [elements[i], elements[i + 1]] = [elements[i + 1], elements[i]];
+                    moved = true;
+                }
+            }
+        } else {
+            for (let i = 1; i < elements.length; i++) {
+                if (selected.has(elements[i]) && !selected.has(elements[i - 1])) {
+                    [elements[i], elements[i - 1]] = [elements[i - 1], elements[i]];
+                    moved = true;
+                }
+            }
+        }
+        if (moved) {
+            this.app.layerManager._reindex();
+            this.app.layerManager._pushHistory?.(oldArr);
+        }
+        this.update();
+    }
+
+    /** Drop `source` onto `target`'s slot in the front-to-back list. */
+    _reorder(source, target) {
+        if (!source || !target || source === target) return;
+        const elements = this.app.elements;
+        const srcIdx = elements.indexOf(source);
+        const dstIdx = elements.indexOf(target);
+        if (srcIdx < 0 || dstIdx < 0) return;
+
+        const oldArr = elements.slice();
+        elements.splice(srcIdx, 1);
+        const newDst = elements.indexOf(target);
+        // The panel shows the topmost layer first, so dropping ON an item places the dragged
+        // item above it (higher index) when it came from below.
+        elements.splice(newDst + (srcIdx > dstIdx ? 1 : 0), 0, source);
+        this.app.layerManager._reindex();
+        this.app.layerManager._pushHistory?.(oldArr);
+        this.update();
+    }
+
+    // ── Rendering ─────────────────────────────────────────────────
 
     update() {
         if (!this._list) return;
-        const scrollTop = this._list.scrollTop;
-        const focused = document.activeElement;
-        const focusedItem = focused?.closest?.('.layer-item');
-        const focusedId = this._list.contains(focusedItem) ? focusedItem.dataset.elId : null;
-        const focusedControl = ['layer-name', 'layer-visibility', 'layer-lock']
-            .find(className => focused?.classList?.contains(className));
-        this._list.innerHTML = '';
-
-        const panel = document.getElementById('layer-panel');
-        if (this.app.elements.length === 0) {
-            if (panel) panel.style.display = 'none';
+        const elements = this.app.elements;
+        if (elements.length === 0) {
+            if (this._panel) this._panel.style.display = 'none';
+            for (const row of this._rows.values()) row.item.remove();
+            this._rows.clear();
             return;
         }
-        if (panel) panel.style.display = '';
+        if (this._panel) this._panel.style.display = '';
 
-        // Show elements in reverse z-order (topmost first)
-        const sorted = this.app.elements.slice().sort((a, b) => b.zIndex - a.zIndex);
+        const selection = this.app.selectionManager;
+        const focused = document.activeElement;
+        const focusedInList = this._list.contains(focused) ? focused : null;
 
+        // Front-most layer first.
+        const sorted = elementsInFrontOrder(elements);
+        const next = new Map();
         for (const el of sorted) {
-            const item = document.createElement('div');
-            item.className = 'layer-item';
-            item.draggable = true;
-            item.dataset.elId = el.id;
-            if (this.app.selectionManager.isSelected(el)) item.classList.add('selected');
+            let row = this._rows.get(el.id);
+            if (!row || row.el !== el) {
+                row?.item.remove();
+                row = this._createRow(el);
+            }
+            this._syncRow(row, el, selection.isSelected(el));
+            next.set(el.id, row);
+        }
+        for (const [id, row] of this._rows) {
+            if (next.get(id) !== row) row.item.remove();
+        }
+        this._rows = next;
 
-            const dragHandle = document.createElement('span');
-            dragHandle.className = 'layer-drag-handle';
-            dragHandle.textContent = '⠿';
-            dragHandle.title = '拖動排序';
+        // Put rows in order, moving only the ones that are out of place.
+        let cursor = this._list.firstElementChild;
+        for (const el of sorted) {
+            const item = next.get(el.id).item;
+            if (item === cursor) cursor = cursor.nextElementSibling;
+            else this._list.insertBefore(item, cursor);
+        }
+        if (focusedInList && document.activeElement !== focusedInList && focusedInList.isConnected) {
+            focusedInList.focus({ preventScroll: true });
+        }
 
-            const colorDot = document.createElement('span');
-            colorDot.className = 'layer-color';
-            colorDot.style.background = el.color;
+        this._syncMoveButtons(elements, selection.selectedElements);
+    }
 
-            const name = document.createElement('button');
-            name.type = 'button';
-            name.className = 'layer-name';
-            const layerName = `${el.label || el.type} #${el.id}`;
+    _syncMoveButtons(elements, selectedElements) {
+        if (!this._upButton && !this._downButton) return;
+        const selected = new Set(selectedElements);
+        const indexes = elements.map((el, i) => selected.has(el) ? i : -1).filter(i => i >= 0);
+        const none = indexes.length === 0;
+        if (this._upButton) this._upButton.disabled = none || indexes.every((index, i) => index === elements.length - indexes.length + i);
+        if (this._downButton) this._downButton.disabled = none || indexes.every((index, i) => index === i);
+    }
+
+    _syncRow(row, el, isSelected) {
+        const state = row.state;
+        const layerName = `${el.label || el.type} #${el.id}`;
+        const hidden = Boolean(el.hidden);
+        const locked = Boolean(el.locked);
+        const { item, name, vis, lock, colorDot } = row.parts;
+
+        if (state.selected !== isSelected) {
+            state.selected = isSelected;
+            item.classList.toggle('selected', isSelected);
+            name.setAttribute('aria-pressed', String(isSelected));
+        }
+        if (state.name !== layerName) {
+            state.name = layerName;
             name.textContent = layerName;
             name.title = layerName;
             name.setAttribute('aria-label', `選取 ${layerName}`);
-            name.setAttribute('aria-pressed', String(this.app.selectionManager.isSelected(el)));
-
-            const vis = document.createElement('button');
-            vis.type = 'button';
-            vis.className = 'layer-visibility' + (el.hidden ? ' hidden' : '');
-            vis.textContent = el.hidden ? '◯' : '◉';
-            vis.title = el.hidden ? '顯示圖層' : '隱藏圖層';
             vis.setAttribute('aria-label', `圖層可見 ${layerName}`);
-            vis.setAttribute('aria-pressed', String(!el.hidden));
-            vis.addEventListener('click', (e) => {
-                e.stopPropagation();
-                const oldVal = el.hidden;
-                el.hidden = !el.hidden;
-                this.app.history.pushPropertyChange(el, 'hidden', oldVal, el.hidden);
-                this.app.renderer.markDirty();
-                this.update();
-            });
-
-            const lock = document.createElement('button');
-            lock.type = 'button';
-            lock.className = 'layer-lock';
-            lock.textContent = el.locked ? '🔒' : '🔓';
-            lock.title = el.locked ? '解鎖圖層' : '鎖定圖層';
             lock.setAttribute('aria-label', `圖層鎖定 ${layerName}`);
-            lock.setAttribute('aria-pressed', String(Boolean(el.locked)));
-            lock.addEventListener('click', (e) => {
-                e.stopPropagation();
-                const oldVal = el.locked;
-                if (!oldVal) this._cancelEditsForLock(el);
-                el.locked = !oldVal;
-                if (el.locked) {
-                    this.app.selectionManager.selectedElements = this.app.selectionManager.selectedElements
-                        .filter(selected => selected !== el);
-                    this.app.propertyPanel.update();
-                }
-                this.app.history.pushPropertyChange(el, 'locked', oldVal, el.locked);
-                this.app.renderer.markDirty();
-                this.update();
-            });
+        }
+        if (state.color !== el.color) {
+            state.color = el.color;
+            colorDot.style.background = el.color;
+        }
+        if (state.hidden !== hidden) {
+            state.hidden = hidden;
+            vis.classList.toggle('hidden', hidden);
+            vis.textContent = hidden ? '◯' : '◉';
+            vis.title = hidden ? '顯示圖層' : '隱藏圖層';
+            vis.setAttribute('aria-pressed', String(!hidden));
+        }
+        if (state.locked !== locked) {
+            state.locked = locked;
+            lock.textContent = locked ? '🔒' : '🔓';
+            lock.title = locked ? '解鎖圖層' : '鎖定圖層';
+            lock.setAttribute('aria-pressed', String(locked));
+        }
+    }
 
-            item.appendChild(dragHandle);
-            item.appendChild(colorDot);
-            item.appendChild(name);
-            item.appendChild(vis);
-            item.appendChild(lock);
+    _createRow(el) {
+        const item = document.createElement('div');
+        item.className = 'layer-item';
+        item.draggable = true;
+        item.dataset.elId = el.id;
 
-            // ── Click to select (with Ctrl/Shift multi-select) ─────────────────
-            item.addEventListener('click', (e) => {
-                e.stopPropagation();
-                const sel = this.app.selectionManager;
+        const dragHandle = document.createElement('span');
+        dragHandle.className = 'layer-drag-handle';
+        dragHandle.textContent = '⠿';
+        dragHandle.title = '拖動排序';
+        dragHandle.setAttribute('aria-hidden', 'true');
 
-                if (e.ctrlKey || e.metaKey) {
-                    // Ctrl+click: toggle this element in selection
-                    sel.toggleSelect(el);
-                } else if (e.shiftKey && this._lastClickedEl) {
-                    // Shift+click: range select between lastClicked and this
-                    const allEls = this.app.elements.slice().sort((a, b) => b.zIndex - a.zIndex);
-                    const fromIdx = allEls.indexOf(this._lastClickedEl);
-                    const toIdx   = allEls.indexOf(el);
-                    if (fromIdx >= 0 && toIdx >= 0) {
-                        const lo = Math.min(fromIdx, toIdx);
-                        const hi = Math.max(fromIdx, toIdx);
-                        for (let i = lo; i <= hi; i++) {
-                            if (!sel.isSelected(allEls[i])) sel.toggleSelect(allEls[i]);
-                        }
-                    }
-                } else {
-                    // Single click: exclusive select
-                    sel.select(el);
-                    this.app._focusOnElement(el);
-                }
+        const colorDot = document.createElement('span');
+        colorDot.className = 'layer-color';
 
-                this._lastClickedEl = el;
+        const name = document.createElement('button');
+        name.type = 'button';
+        name.className = 'layer-name';
+
+        const vis = document.createElement('button');
+        vis.type = 'button';
+        vis.className = 'layer-visibility';
+        vis.addEventListener('click', (e) => {
+            e.stopPropagation();
+            const oldVal = el.hidden;
+            el.hidden = !el.hidden;
+            this.app.history.pushPropertyChange(el, 'hidden', oldVal, el.hidden);
+            this.app.renderer.markDirty();
+            this.update();
+        });
+
+        const lock = document.createElement('button');
+        lock.type = 'button';
+        lock.className = 'layer-lock';
+        lock.addEventListener('click', (e) => {
+            e.stopPropagation();
+            const oldVal = el.locked;
+            if (!oldVal) this._cancelEditsForLock(el);
+            el.locked = !oldVal;
+            if (el.locked) {
+                this.app.selectionManager.selectedElements = this.app.selectionManager.selectedElements
+                    .filter(selected => selected !== el);
                 this.app.propertyPanel.update();
-                this.update();
-            });
+            }
+            this.app.history.pushPropertyChange(el, 'locked', oldVal, el.locked);
+            this.app.renderer.markDirty();
+            this.update();
+        });
 
-            // ── Drag-to-reorder ──────────────────────────────
-            item.addEventListener('dragstart', (e) => {
-                this._dragSrc = el;
-                e.dataTransfer.effectAllowed = 'move';
-                item.style.opacity = '0.4';
-            });
-            item.addEventListener('dragend', () => {
-                item.style.opacity = '';
-                this._list.querySelectorAll('.layer-item').forEach(i => i.classList.remove('drag-over'));
-            });
-            item.addEventListener('dragover', (e) => {
-                e.preventDefault();
-                e.dataTransfer.dropEffect = 'move';
-                this._list.querySelectorAll('.layer-item').forEach(i => i.classList.remove('drag-over'));
-                item.classList.add('drag-over');
-            });
-            item.addEventListener('dragleave', () => {
-                item.classList.remove('drag-over');
-            });
-            item.addEventListener('drop', (e) => {
-                e.preventDefault();
-                item.classList.remove('drag-over');
-                if (!this._dragSrc || this._dragSrc === el) return;
+        item.append(dragHandle, colorDot, name, vis, lock);
 
-                // Move dragSrc to the zIndex position of the drop target
-                const srcIdx = this.app.elements.indexOf(this._dragSrc);
-                const dstEl = el;
-                const dstIdx = this.app.elements.indexOf(dstEl);
-                if (srcIdx < 0 || dstIdx < 0) return;
+        // ── Click to select (with Ctrl/Shift multi-select) ─────────────────
+        item.addEventListener('click', (e) => {
+            e.stopPropagation();
+            const sel = this.app.selectionManager;
 
-                const oldArr = this.app.elements.slice();
-
-                this.app.elements.splice(srcIdx, 1);
-                const newDst = this.app.elements.indexOf(dstEl);
-                // The panel shows in reverse order (top=high zIndex), so dropping ON an item
-                // means the dragged item should go ABOVE it in the sorted view = higher index in array
-                this.app.elements.splice(newDst + (srcIdx > dstIdx ? 1 : 0), 0, this._dragSrc);
-                this.app.layerManager._reindex();
-                
-                if (this.app.layerManager._pushHistory) {
-                    this.app.layerManager._pushHistory(oldArr);
+            if (e.ctrlKey || e.metaKey) {
+                // Ctrl+click: toggle this element in selection
+                sel.toggleSelect(el);
+            } else if (e.shiftKey && this._lastClickedEl) {
+                // Shift+click: range select between lastClicked and this
+                const allEls = elementsInFrontOrder(this.app.elements);
+                const fromIdx = allEls.indexOf(this._lastClickedEl);
+                const toIdx   = allEls.indexOf(el);
+                if (fromIdx >= 0 && toIdx >= 0) {
+                    const lo = Math.min(fromIdx, toIdx);
+                    const hi = Math.max(fromIdx, toIdx);
+                    for (let i = lo; i <= hi; i++) {
+                        if (!sel.isSelected(allEls[i])) sel.toggleSelect(allEls[i]);
+                    }
                 }
+            } else {
+                // Single click: exclusive select
+                sel.select(el);
+                this.app._focusOnElement(el);
+            }
 
-                this._dragSrc = null;
-                this.update();
-            });
+            this._lastClickedEl = el;
+            this.app.propertyPanel.update();
+            this.update();
+        });
 
-            this._list.appendChild(item);
-        }
-        this._list.scrollTop = scrollTop;
-        if (focusedId && focusedControl) {
-            const item = [...this._list.children].find(row => row.dataset.elId === focusedId);
-            item?.querySelector(`.${focusedControl}`)?.focus({ preventScroll: true });
-        }
+        // ── Drag-to-reorder (mouse: HTML5 drag and drop) ────────────────────
+        item.addEventListener('dragstart', (e) => {
+            this._dragSrc = el;
+            e.dataTransfer.effectAllowed = 'move';
+            item.style.opacity = '0.4';
+        });
+        item.addEventListener('dragend', () => {
+            item.style.opacity = '';
+            this._clearDragOver();
+        });
+        item.addEventListener('dragover', (e) => {
+            e.preventDefault();
+            e.dataTransfer.dropEffect = 'move';
+            this._clearDragOver();
+            item.classList.add('drag-over');
+        });
+        item.addEventListener('dragleave', () => {
+            item.classList.remove('drag-over');
+        });
+        item.addEventListener('drop', (e) => {
+            e.preventDefault();
+            item.classList.remove('drag-over');
+            const source = this._dragSrc;
+            this._dragSrc = null;
+            this._reorder(source, el);
+        });
+
+        // ── Drag-to-reorder (touch / pen: pointer events on the handle) ─────
+        // HTML5 drag and drop does not fire for touch, so the handle runs its own drag session.
+        dragHandle.addEventListener('pointerdown', (e) => {
+            if (e.pointerType === 'mouse' || e.button > 0) return;
+            e.preventDefault();
+            e.stopPropagation();
+            dragHandle.setPointerCapture?.(e.pointerId);
+            this._dragSrc = el;
+            this._pointerDrag = { id: e.pointerId, target: null, handle: dragHandle };
+            item.classList.add('dragging');
+        });
+        dragHandle.addEventListener('pointermove', (e) => {
+            const drag = this._pointerDrag;
+            if (!drag || drag.id !== e.pointerId) return;
+            this._autoScroll(e.clientY);
+            const under = document.elementFromPoint(e.clientX, e.clientY)?.closest?.('.layer-item');
+            const target = under && this._list.contains(under)
+                ? this._rowElement(under) : null;
+            this._clearDragOver();
+            drag.target = target && target !== el ? target : null;
+            if (drag.target) this._rows.get(drag.target.id)?.item.classList.add('drag-over');
+        });
+        const finishPointerDrag = (e, commit) => {
+            const drag = this._pointerDrag;
+            if (!drag || drag.id !== e.pointerId) return;
+            this._pointerDrag = null;
+            this._dragSrc = null;
+            dragHandle.releasePointerCapture?.(e.pointerId);
+            item.classList.remove('dragging');
+            this._clearDragOver();
+            if (commit && drag.target) this._reorder(el, drag.target);
+        };
+        dragHandle.addEventListener('pointerup', (e) => finishPointerDrag(e, true));
+        dragHandle.addEventListener('pointercancel', (e) => finishPointerDrag(e, false));
+        dragHandle.addEventListener('click', (e) => e.stopPropagation());
+
+        return {
+            el, item,
+            parts: { item, name, vis, lock, colorDot },
+            state: {}
+        };
+    }
+
+    _rowElement(itemNode) {
+        for (const row of this._rows.values()) if (row.item === itemNode) return row.el;
+        return null;
+    }
+
+    _clearDragOver() {
+        this._list.querySelectorAll('.layer-item.drag-over').forEach(i => i.classList.remove('drag-over'));
+    }
+
+    /** Scroll the list while a pointer drag is held near its top or bottom edge. */
+    _autoScroll(clientY) {
+        const rect = this._list.getBoundingClientRect();
+        const edge = 28;
+        if (clientY < rect.top + edge) this._list.scrollTop -= 12;
+        else if (clientY > rect.bottom - edge) this._list.scrollTop += 12;
     }
 
     _cancelEditsForLock(element) {

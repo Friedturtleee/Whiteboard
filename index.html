@@ -40,8 +40,6 @@
 
     <!-- Main Canvas -->
     <canvas id="main-canvas" tabindex="0" aria-label="白板畫布"></canvas>
-    <!-- Text editing overlay -->
-
 
     <!-- Top Bar (actions) -->
     <div id="top-bar">
@@ -51,8 +49,8 @@
         <button class="top-bar-btn" id="btn-redo" data-tooltip="取消復原 (Ctrl+Shift+Z)">
             <span class="material-symbols-outlined">redo</span>
         </button>
-        <span style="width:1px;height:20px;background:var(--border-color)"></span>
-        <button class="top-bar-btn" id="btn-export-json" data-tooltip="匯出 JSON">
+        <span class="top-bar-sep" role="separator" aria-orientation="vertical"></span>
+        <button class="top-bar-btn" id="btn-export-json" data-tooltip="匯出 JSON (Ctrl+S)">
             <span class="material-symbols-outlined">download</span>
         </button>
         <button class="top-bar-btn" id="btn-import-json" data-tooltip="匯入 JSON">
@@ -64,15 +62,18 @@
         <button class="top-bar-btn" id="btn-cloud-boards" data-tooltip="帳號與雲端白板" aria-label="帳號與雲端白板">
             <span class="material-symbols-outlined">cloud</span>
         </button>
-        <span style="width:1px;height:20px;background:var(--border-color)"></span>
+        <span class="top-bar-sep" role="separator" aria-orientation="vertical"></span>
         <button class="top-bar-btn" id="btn-settings" data-tooltip="設定">
             <span class="material-symbols-outlined">settings</span>
+        </button>
+        <button class="top-bar-btn" id="btn-shortcuts" type="button" data-tooltip="快捷鍵說明 (?)" aria-haspopup="dialog">
+            <span class="material-symbols-outlined">help</span>
         </button>
     </div>
 
     <!-- Left Toolbar -->
     <div id="toolbar" role="toolbar" aria-label="繪圖工具（可捲動）" aria-orientation="vertical">
-        <button class="toolbar-btn active" data-tool="select" data-tooltip="選取 (V)">
+        <button class="toolbar-btn active" data-tool="select" data-tooltip="選取 (V，Esc 返回選取)">
             <span class="material-symbols-outlined">near_me</span>
         </button>
         <button class="toolbar-btn" data-tool="pan" data-tooltip="平移 (H)">
@@ -137,7 +138,7 @@
                     <button id="edit-selected-cells" type="button">編輯選取格</button>
                     <button id="clear-selected-cells" type="button">清空選取格</button>
                 </div>
-                <p class="selection-help">拖曳框選 · Ctrl / ⌘ 多選<br>Shift 範圍 · Enter 編輯<br>Ctrl / ⌘ C、X、V 複製／剪下／貼上格子</p>
+                <p class="selection-help">拖曳框選 · Ctrl / ⌘ 多選<br>方向鍵／Tab 移動 · Shift 範圍<br>Enter／F2 編輯 · Ctrl / ⌘ C、X、V 複製／剪下／貼上格子</p>
             </div>
         </div>
         <div class="panel-section">
@@ -147,16 +148,16 @@
                     <span class="num-label">X</span>
                     <input type="number" id="prop-x">
                     <div class="num-spinners">
-                        <button onclick="const i=this.closest('.num-field').querySelector('input');i.stepUp();i.dispatchEvent(new Event('input'))">&#9652;</button>
-                        <button onclick="const i=this.closest('.num-field').querySelector('input');i.stepDown();i.dispatchEvent(new Event('input'))">&#9662;</button>
+                        <button type="button" class="num-step" data-step="up" tabindex="-1">&#9652;</button>
+                        <button type="button" class="num-step" data-step="down" tabindex="-1">&#9662;</button>
                     </div>
                 </div>
                 <div class="num-field">
                     <span class="num-label">Y</span>
                     <input type="number" id="prop-y">
                     <div class="num-spinners">
-                        <button onclick="const i=this.closest('.num-field').querySelector('input');i.stepUp();i.dispatchEvent(new Event('input'))">&#9652;</button>
-                        <button onclick="const i=this.closest('.num-field').querySelector('input');i.stepDown();i.dispatchEvent(new Event('input'))">&#9662;</button>
+                        <button type="button" class="num-step" data-step="up" tabindex="-1">&#9652;</button>
+                        <button type="button" class="num-step" data-step="down" tabindex="-1">&#9662;</button>
                     </div>
                 </div>
             </div>
@@ -165,16 +166,16 @@
                     <span class="num-label">W</span>
                     <input type="number" id="prop-w" min="1">
                     <div class="num-spinners">
-                        <button onclick="const i=this.closest('.num-field').querySelector('input');i.stepUp();i.dispatchEvent(new Event('input'))">&#9652;</button>
-                        <button onclick="const i=this.closest('.num-field').querySelector('input');i.stepDown();i.dispatchEvent(new Event('input'))">&#9662;</button>
+                        <button type="button" class="num-step" data-step="up" tabindex="-1">&#9652;</button>
+                        <button type="button" class="num-step" data-step="down" tabindex="-1">&#9662;</button>
                     </div>
                 </div>
                 <div class="num-field">
                     <span class="num-label">H</span>
                     <input type="number" id="prop-h" min="1">
                     <div class="num-spinners">
-                        <button onclick="const i=this.closest('.num-field').querySelector('input');i.stepUp();i.dispatchEvent(new Event('input'))">&#9652;</button>
-                        <button onclick="const i=this.closest('.num-field').querySelector('input');i.stepDown();i.dispatchEvent(new Event('input'))">&#9662;</button>
+                        <button type="button" class="num-step" data-step="up" tabindex="-1">&#9652;</button>
+                        <button type="button" class="num-step" data-step="down" tabindex="-1">&#9662;</button>
                     </div>
                 </div>
             </div>
@@ -184,12 +185,13 @@
                     <input type="number" id="prop-rot" min="-360" max="360" step="1">
                     <span class="num-suffix">°</span>
                     <div class="num-spinners">
-                        <button onclick="const i=this.closest('.num-field').querySelector('input');i.stepUp();i.dispatchEvent(new Event('input'))">&#9652;</button>
-                        <button onclick="const i=this.closest('.num-field').querySelector('input');i.stepDown();i.dispatchEvent(new Event('input'))">&#9662;</button>
+                        <button type="button" class="num-step" data-step="up" tabindex="-1">&#9652;</button>
+                        <button type="button" class="num-step" data-step="down" tabindex="-1">&#9662;</button>
                     </div>
                 </div>
             </div>
-            <div class="panel-row" id="cell-size-row" style="display:none">
+            <p class="num-field-hint" id="prop-range-hint" role="alert" hidden></p>
+            <div class="panel-row" id="cell-size-row" hidden>
                 <label for="prop-cell-size">格大小</label>
                 <input type="range" id="prop-cell-size" min="24" max="80" value="42">
                 <span class="range-value" id="prop-cell-size-val">42</span>
@@ -201,7 +203,7 @@
         </div>
         <div class="panel-section">
             <div class="panel-section-title">樣式</div>
-            <div class="panel-row" id="draw-style-row" style="display:none">
+            <div class="panel-row" id="draw-style-row" hidden>
                 <label for="prop-draw-style">填充</label>
                 <select id="prop-draw-style">
                     <option value="stroke">空心</option>
@@ -224,14 +226,14 @@
                 <input type="range" id="prop-stroke-width" min="1" max="10" value="2">
                 <span class="range-value" id="prop-stroke-width-val">2</span>
             </div>
-            <div class="panel-row" id="font-size-row" style="display:none">
+            <div class="panel-row" id="font-size-row" hidden>
                 <label for="prop-font-size">字號</label>
                 <input type="range" id="prop-font-size" min="10" max="60" value="15">
                 <span class="range-value" id="prop-font-size-val">15</span>
             </div>
-            <div class="panel-row" id="font-family-row" style="display:none">
+            <div class="panel-row" id="font-family-row" hidden>
                 <label for="prop-font-family">字體</label>
-                <select id="prop-font-family" style="flex:1;font-size:11px;background:var(--bg-surface);color:var(--text-primary);border:1px solid var(--border);border-radius:4px;padding:2px 4px">
+                <select id="prop-font-family">
                     <option value="Zen Maru Gothic, sans-serif">Zen Maru Gothic</option>
                     <option value="Inter, sans-serif">Inter</option>
                     <option value="Roboto, sans-serif">Roboto</option>
@@ -241,12 +243,12 @@
                     <option value="Consolas, monospace">Consolas</option>
                 </select>
             </div>
-            <div class="panel-row" id="text-styles-row" style="display:none">
+            <div class="panel-row" id="text-styles-row" hidden>
                 <label for="prop-bold">樣式</label>
-                <div style="display:flex;gap:4px;flex:1">
-                    <button id="prop-bold" class="text-style-btn" title="粗體" style="flex:1;font-weight:bold;">粗體</button>
-                    <button id="prop-underline" class="text-style-btn" title="底線" style="flex:1;text-decoration:underline;">底線</button>
-                    <button id="prop-italic" class="text-style-btn" title="斜體" style="flex:1;font-style:italic;">斜體</button>
+                <div class="text-style-group" role="group" aria-label="文字樣式">
+                    <button id="prop-bold" type="button" class="text-style-btn" title="粗體 (切換)" aria-pressed="false">粗體</button>
+                    <button id="prop-underline" type="button" class="text-style-btn" title="底線 (切換)" aria-pressed="false">底線</button>
+                    <button id="prop-italic" type="button" class="text-style-btn" title="斜體 (切換)" aria-pressed="false">斜體</button>
                 </div>
             </div>
         </div>
@@ -254,12 +256,12 @@
     </div>
 
     <!-- Layer Panel (bottom-right) -->
-    <div id="layer-panel" style="display:none">
+    <div id="layer-panel" style="display:none"><!-- shown/hidden by LayerPanel.update() -->
         <div class="layer-panel-header">
             <span>圖層</span>
-            <div style="display:flex;gap:2px">
-                <button id="layer-up" title="上移"><span class="material-symbols-outlined">keyboard_arrow_up</span></button>
-                <button id="layer-down" title="下移"><span class="material-symbols-outlined">keyboard_arrow_down</span></button>
+            <div class="layer-panel-tools">
+                <button id="layer-up" type="button" title="上移所選圖層"><span class="material-symbols-outlined">keyboard_arrow_up</span></button>
+                <button id="layer-down" type="button" title="下移所選圖層"><span class="material-symbols-outlined">keyboard_arrow_down</span></button>
                 <button id="toggle-layers" type="button" aria-label="收合圖層" aria-expanded="true" aria-controls="layer-list"><span class="material-symbols-outlined" aria-hidden="true">expand_more</span></button>
             </div>
         </div>
@@ -268,7 +270,7 @@
     </aside>
 
     <!-- Hidden file input for JSON import -->
-    <input type="file" id="json-file-input" accept=".json" style="display:none">
+    <input type="file" id="json-file-input" accept=".json" hidden>
 
     <!-- Settings Modal -->
     <div id="settings-modal">
@@ -285,29 +287,29 @@
                 </label>
                 <div class="settings-row">
                     <span>格線間距</span>
-                    <input type="range" id="settings-grid-spacing" min="20" max="120" step="10" value="40" style="flex:1;margin:0 8px">
-                    <span id="settings-grid-spacing-val" style="min-width:28px;text-align:right;font-size:11px">40</span>
+                    <input type="range" id="settings-grid-spacing" min="20" max="120" step="10" value="40" aria-label="格線間距">
+                    <span id="settings-grid-spacing-val" class="settings-val">40</span>
                 </div>
-                <div class="settings-section-title" style="margin-top:12px">畫筆與線條</div>
+                <div class="settings-section-title">畫筆與線條</div>
                 <div class="settings-row">
                     <span>預設筆刷大小</span>
-                    <input type="range" id="settings-pen-size" min="1" max="20" step="1" value="2" style="flex:1;margin:0 8px">
-                    <span id="settings-pen-size-val" style="min-width:28px;text-align:right;font-size:11px">2</span>
+                    <input type="range" id="settings-pen-size" min="1" max="20" step="1" value="2" aria-label="預設筆刷大小">
+                    <span id="settings-pen-size-val" class="settings-val">2</span>
                 </div>
                 <div class="settings-row">
                     <span>筆刷平滑度</span>
-                    <input type="range" id="settings-pen-smoothing" min="1" max="10" step="1" value="3" style="flex:1;margin:0 8px">
-                    <span id="settings-pen-smoothing-val" style="min-width:28px;text-align:right;font-size:11px">3</span>
+                    <input type="range" id="settings-pen-smoothing" min="1" max="10" step="1" value="3" aria-label="筆刷平滑度">
+                    <span id="settings-pen-smoothing-val" class="settings-val">3</span>
                 </div>
                 <div class="settings-row">
                     <span>預設線寬</span>
-                    <input type="range" id="settings-stroke-width" min="1" max="10" step="1" value="2" style="flex:1;margin:0 8px">
-                    <span id="settings-stroke-width-val" style="min-width:28px;text-align:right;font-size:11px">2</span>
+                    <input type="range" id="settings-stroke-width" min="1" max="10" step="1" value="2" aria-label="預設線寬">
+                    <span id="settings-stroke-width-val" class="settings-val">2</span>
                 </div>
-                <div class="settings-section-title" style="margin-top:12px">其他</div>
+                <div class="settings-section-title">其他</div>
                 <div class="settings-row">
                     <span>版本</span>
-                    <span id="settings-version-display" style="font-size:11px;color:var(--text-muted)">CP WhiteBoard (檢查中...)</span>
+                    <span id="settings-version-display" class="settings-note">CP WhiteBoard (檢查中...)</span>
                 </div>
             </div>
         </div>
@@ -352,30 +354,27 @@
     <!-- ═══════════════════════════════════════
          Error Overlay  (shown on module crash)
          ═══════════════════════════════════════ -->
-    <div id="error-overlay" style="display:none">
+    <div id="error-overlay" role="alertdialog" aria-modal="true" aria-labelledby="err-title" style="display:none">
         <div class="err-bg-grid"></div>
         <div class="err-panel">
             <div class="err-header">
-                <span class="err-icon material-symbols-outlined">error</span>
+                <span class="err-icon material-symbols-outlined" aria-hidden="true">error</span>
                 <div>
-                    <div class="err-code">載入失敗</div>
+                    <div class="err-code" id="err-title">載入失敗</div>
                     <div class="err-subtitle">無法載入所需的模組檔案</div>
                 </div>
             </div>
             <div class="err-divider"></div>
             <div class="err-section-label">⚡ 錯誤詳情</div>
             <pre id="err-message" class="err-message"></pre>
-            <div class="err-section-label" style="margin-top:14px">📍 發生位置</div>
+            <div class="err-section-label err-section-spaced">📍 發生位置</div>
             <pre id="err-stack" class="err-stack"></pre>
             <div class="err-actions">
-                <button class="err-btn err-btn-primary" onclick="location.reload()">
-                    <span class="material-symbols-outlined">refresh</span> 重新載入
+                <button class="err-btn err-btn-primary" type="button" id="err-reload">
+                    <span class="material-symbols-outlined" aria-hidden="true">refresh</span> 重新載入
                 </button>
-                <button class="err-btn" onclick="
-                    localStorage.removeItem('wb_autosave');
-                    location.reload();
-                ">
-                    <span class="material-symbols-outlined">delete_sweep</span> 清除暫存並重載
+                <button class="err-btn" type="button" id="err-clear-reload">
+                    <span class="material-symbols-outlined" aria-hidden="true">delete_sweep</span> 清除暫存並重載
                 </button>
             </div>
         </div>
@@ -403,21 +402,21 @@
         position: absolute;
         inset: 0;
         background-image:
-            linear-gradient(rgba(255,80,80,.04) 1px, transparent 1px),
-            linear-gradient(90deg, rgba(255,80,80,.04) 1px, transparent 1px);
+            linear-gradient(rgba(238,123,132,.05) 1px, transparent 1px),
+            linear-gradient(90deg, rgba(238,123,132,.05) 1px, transparent 1px);
         background-size: 40px 40px;
         pointer-events: none;
     }
     .err-panel {
         position: relative;
         background: var(--bg-secondary, #252526);
-        border: 1px solid rgba(224, 108, 117, .4);
+        border: 1px solid var(--danger-line, rgba(238,123,132,.45));
         border-radius: 12px;
         padding: 30px 36px;
         max-width: 680px;
         width: calc(100% - 48px);
         box-shadow:
-            0 0 60px rgba(224,108,117,.12),
+            0 0 60px var(--danger-soft, rgba(238,123,132,.12)),
             0 8px 40px rgba(0,0,0,.6);
     }
     .err-header {
@@ -427,38 +426,38 @@
     }
     .err-icon {
         font-size: 42px;
-        color: #e06c75;
-        filter: drop-shadow(0 0 12px rgba(224,108,117,.5));
+        color: var(--danger, #ee7b84);
+        filter: drop-shadow(0 0 12px var(--danger-line, rgba(238,123,132,.45)));
     }
     .err-code {
         font-size: 22px;
         font-weight: 600;
-        color: #e06c75;
+        color: var(--danger, #ee7b84);
         letter-spacing: .5px;
     }
     .err-subtitle {
         font-size: 12px;
-        color: var(--text-muted, #707070);
+        color: var(--text-muted, #959595);
         margin-top: 2px;
     }
     .err-divider {
         height: 1px;
-        background: linear-gradient(90deg, rgba(224,108,117,.4), transparent);
+        background: linear-gradient(90deg, var(--danger-line, rgba(238,123,132,.45)), transparent);
         margin: 20px 0 16px;
     }
     .err-section-label {
         font-size: 11px;
-        color: var(--text-secondary, #a0a0a0);
+        color: var(--text-secondary, #b3b3b3);
         letter-spacing: 1px;
         text-transform: uppercase;
         margin-bottom: 8px;
     }
     .err-message {
-        background: rgba(224,108,117,.08);
-        border: 1px solid rgba(224,108,117,.25);
+        background: var(--danger-soft, rgba(238,123,132,.12));
+        border: 1px solid var(--danger-line, rgba(238,123,132,.45));
         border-radius: 6px;
         padding: 12px 16px;
-        color: #e06c75;
+        color: var(--danger, #ee7b84);
         font-family: 'Fira Code', 'JetBrains Mono', monospace;
         font-size: 13px;
         white-space: pre-wrap;
@@ -472,9 +471,9 @@
         border: 1px solid var(--border-color, #404040);
         border-radius: 6px;
         padding: 12px 16px;
-        color: var(--text-secondary, #a0a0a0);
+        color: var(--text-secondary, #b3b3b3);
         font-family: 'Fira Code', 'JetBrains Mono', monospace;
-        font-size: 11.5px;
+        font-size: 12px;
         white-space: pre-wrap;
         word-break: break-all;
         margin: 0;
@@ -483,7 +482,7 @@
         line-height: 1.65;
     }
     .err-stack .err-hl {
-        color: #e5c07b;
+        color: var(--warning, #e5c07b);
     }
     .err-actions {
         display: flex;
@@ -504,14 +503,17 @@
         cursor: pointer;
         transition: all .15s;
     }
-    .err-btn:hover { background: var(--bg-hover, #3a3a3a); border-color: #666; }
+    .err-btn:hover { background: var(--bg-hover, #3a3a3a); border-color: var(--border-strong, #5a5a5a); }
+    .err-section-spaced { margin-top: 14px; }
     .err-btn-primary {
-        background: rgba(224,108,117,.15);
-        border-color: rgba(224,108,117,.5);
-        color: #e06c75;
+        background: var(--danger-soft, rgba(238,123,132,.12));
+        border-color: var(--danger-line, rgba(238,123,132,.45));
+        color: var(--danger, #ee7b84);
     }
-    .err-btn-primary:hover { background: rgba(224,108,117,.25); }
+    .err-btn-primary:hover { background: var(--danger-soft, rgba(238,123,132,.12)); border-color: var(--danger, #ee7b84); }
     .err-btn .material-symbols-outlined { font-size: 16px; }
+    .err-btn:focus-visible { outline: 2px solid var(--focus-ring, #7fb2e5); outline-offset: 2px; }
+    @media (pointer: coarse) { .err-btn { min-height: 44px; } }
     </style>
 
     <!-- Loading Screen Controller -->
@@ -526,6 +528,7 @@
         const overlay = document.getElementById('error-overlay');
         if (!overlay) return;
         overlay.style.display = 'flex';
+        document.getElementById('err-reload')?.focus();
 
         const msgEl = document.getElementById('err-message');
         const stackEl = document.getElementById('err-stack');
@@ -548,6 +551,11 @@
 
     // ─── Catch unhandled JS errors (incl. SyntaxError in modules) ─
     window.addEventListener('error', function(e) {
+        // Failed <link>/<script>/<img> loads (blocked CDN, offline fonts, ...) fire an `error` event whose
+        // target is the element, not the window. Those are not crashes; the app.js loader reports its own failure.
+        if (e.target && e.target !== window && e.target.nodeType === 1) return;
+        // Benign browser notice, not an application error.
+        if (/ResizeObserver loop/.test(e.message || '')) return;
         const msg = e.message || '未知錯誤';
         const src = (e.filename ? e.filename.replace(location.origin, '') : '') +
                     (e.lineno ? ':' + e.lineno : '') +
@@ -562,6 +570,29 @@
         const msg = (reason && reason.message) ? reason.message : String(reason);
         const stack = (reason && reason.stack) ? reason.stack : msg;
         showError(msg, '', stack);
+    });
+
+    // ─── Error overlay buttons ────────────────────────────
+    const AUTOSAVE_KEY = 'cp_whiteboard_autosave_whiteboard';
+    document.getElementById('err-reload')?.addEventListener('click', () => location.reload());
+    document.getElementById('err-clear-reload')?.addEventListener('click', () => {
+        if (!confirm('這會刪除此瀏覽器中自動儲存的白板內容，且無法復原。\n確定要清除暫存並重新載入嗎？')) return;
+        try {
+            localStorage.removeItem(AUTOSAVE_KEY);
+            // Backups of unreadable autosaves are only removed when the user explicitly agrees.
+            const backups = [];
+            for (let i = 0; i < localStorage.length; i++) {
+                const key = localStorage.key(i);
+                if (key && key.startsWith(AUTOSAVE_KEY + '_corrupt')) backups.push(key);
+            }
+            if (backups.length && confirm('偵測到 ' + backups.length + ' 份損毀自動儲存的備份。\n是否一併刪除？（選「取消」會保留備份）')) {
+                backups.forEach(key => localStorage.removeItem(key));
+            }
+        } catch (err) {
+            alert('無法清除暫存：' + (err && err.message ? err.message : err));
+            return;
+        }
+        location.reload();
     });
 
     // ─── Loading controller ───────────────────────────────
@@ -592,15 +623,6 @@
 
         // Step 1: Wait for Fonts
         setProgress(10, '載入字型…');
-
-        const preloader = document.createElement('div');
-        preloader.style.visibility = 'hidden';
-        preloader.style.position = 'absolute';
-        preloader.innerHTML = `
-            <span style="font-family: 'Material Symbols Outlined'">icon</span>
-            <span style="font-family: 'Zen Maru Gothic', sans-serif">text</span>
-        `;
-        document.body.appendChild(preloader);
 
         const fontTimeout = setTimeout(() => {
             fontsReady = true;

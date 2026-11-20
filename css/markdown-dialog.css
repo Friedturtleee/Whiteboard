@@ -24,8 +24,8 @@
     width: min(90vw, 960px);
     height: min(80vh, 640px);
     max-height: calc(100dvh - 32px);
-    background: #111;
-    border: 1px solid #3a3a3a;
+    background: var(--bg-inset);
+    border: 1px solid var(--border-color);
     border-radius: 10px;
     box-shadow: 0 20px 60px rgba(0,0,0,0.5), 0 0 0 1px rgba(255,255,255,0.04);
     display: flex;
@@ -45,7 +45,7 @@
     align-items: center;
     justify-content: space-between;
     padding: 14px 20px;
-    border-bottom: 1px solid #303030;
+    border-bottom: 1px solid var(--border-subtle);
     flex-shrink: 0;
 }
 
@@ -53,7 +53,7 @@
     margin: 0;
     font-size: 15px;
     font-weight: 600;
-    color: #e0e0e0;
+    color: var(--text-primary);
     display: flex;
     align-items: center;
     gap: 8px;
@@ -65,7 +65,7 @@
     justify-content: center;
     width: 26px;
     height: 26px;
-    background: #292929;
+    background: var(--bg-tertiary);
     border-radius: 6px;
     font-size: 12px;
     font-weight: 700;
@@ -84,7 +84,7 @@
     flex: 1;
     display: flex;
     flex-direction: column;
-    border-right: 1px solid #303030;
+    border-right: 1px solid var(--border-subtle);
     min-width: 0;
 }
 
@@ -93,7 +93,7 @@
     font-weight: 500;
     text-transform: uppercase;
     letter-spacing: 0.6px;
-    color: #aaa;
+    color: var(--text-secondary);
     padding: 8px 14px 4px;
     flex-shrink: 0;
 }
@@ -105,7 +105,7 @@
     background: transparent;
     border: none;
     outline: none;
-    color: #e0e0e0;
+    color: var(--text-primary);
     font-family: 'Fira Code', 'JetBrains Mono', Consolas, monospace;
     font-size: 13px;
     line-height: 1.65;
@@ -115,7 +115,7 @@
 }
 
 .markdown-editor-pane textarea::placeholder {
-    color: #777;
+    color: var(--text-muted);
 }
 
 .markdown-preview-pane {
@@ -130,7 +130,7 @@
     font-weight: 500;
     text-transform: uppercase;
     letter-spacing: 0.6px;
-    color: #aaa;
+    color: var(--text-secondary);
     padding: 8px 14px 4px;
     flex-shrink: 0;
 }
@@ -143,7 +143,7 @@
     font-size: 14px;
     line-height: 1.7;
     color: #f2f2f2;
-    background: #111;
+    background: var(--bg-inset);
     min-height: 0;
     user-select: text;
     overflow-wrap: anywhere;
@@ -209,7 +209,7 @@
     .markdown-editor-pane {
         min-height: 0;
         border-right: none;
-        border-bottom: 1px solid #303030;
+        border-bottom: 1px solid var(--border-subtle);
     }
     .markdown-preview-pane { min-height: 0; }
     .markdown-dialog-header { padding: 10px 14px; }
@@ -224,7 +224,7 @@
     justify-content: flex-end;
     gap: 10px;
     padding: 12px 20px;
-    border-top: 1px solid #303030;
+    border-top: 1px solid var(--border-subtle);
     flex-shrink: 0;
 }
 
@@ -239,17 +239,17 @@
 }
 
 .markdown-dialog-footer .md-btn-cancel {
-    background: #252525;
-    color: #ddd;
+    background: var(--bg-tertiary);
+    color: var(--text-primary);
 }
 .markdown-dialog-footer .md-btn-cancel:hover {
-    background: #333;
+    background: var(--bg-hover);
     color: #fff;
 }
 
 .markdown-dialog-footer .md-btn-confirm {
     background: #f2f2f2;
-    color: #111;
+    color: var(--bg-inset);
 }
 .markdown-dialog-footer .md-btn-confirm:hover {
     background: #d5d5d5;
@@ -259,16 +259,16 @@
 .markdown-preview-content::-webkit-scrollbar { width: 6px; }
 .markdown-preview-content::-webkit-scrollbar-track { background: transparent; }
 .markdown-preview-content::-webkit-scrollbar-thumb {
-    background: #444; border-radius: 3px;
+    background: var(--border-strong); border-radius: 3px;
 }
 .markdown-preview-content::-webkit-scrollbar-thumb:hover {
-    background: #666;
+    background: var(--bg-active);
 }
 
 .markdown-editor-pane textarea::-webkit-scrollbar { width: 6px; }
 .markdown-editor-pane textarea::-webkit-scrollbar-track { background: transparent; }
 .markdown-editor-pane textarea::-webkit-scrollbar-thumb {
-    background: #444; border-radius: 3px;
+    background: var(--border-strong); border-radius: 3px;
 }
 
 /* ── KaTeX (LaTeX math) ────────────────────── */
@@ -301,4 +301,10 @@
     top: 0 !important;
     z-index: -1 !important;
     pointer-events: none !important;
+}
+
+/* ── Touch screens ─────────────────────────── */
+@media (pointer: coarse) {
+    .markdown-dialog-footer button { min-height: 44px; padding: 8px 22px; font-size: 15px; }
+    .markdown-editor-pane textarea { font-size: 16px; }
 }

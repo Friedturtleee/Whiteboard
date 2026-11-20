@@ -29,6 +29,8 @@ export class TreeElement extends Element {
         this.inputMode = 'auto';
         this.label = 'Tree';
         this.hasWeights = false;
+        // "0-based" checkbox of the input dialog (auto mode, single-node trees).
+        this.zeroBased = false;
         this._nodeValueOverrides = {};
         this._edgeWeightOverrides = {};
         this._nodePortIdsByNode = new Map();
@@ -51,6 +53,27 @@ export class TreeElement extends Element {
             return '未知的樹輸入格式。';
         }
         let result;
+
+        if (!input.trim()) {
+            // Empty input clears the tree rather than silently keeping stale
+            // nodes (and a stale inputText) from the previous build.
+            const hadRoot = Boolean(this.root);
+            this.root = null;
+            this._nextDynamicNodePortId = 0;
+            this._nodePortIdsByNode = new Map();
+            this.inputText = input;
+            this.inputMode = mode;
+            this.zeroBased = Boolean(forceZeroBased) && mode === 'auto';
+            this.hasWeights = false;
+            this._nodeValueOverrides = {};
+            this._edgeWeightOverrides = {};
+            this._relOffsetX = undefined;
+            this._relOffsetY = undefined;
+            this._offsetX = undefined;
+            this._offsetY = undefined;
+            if (hadRoot) { this.width = 300; this.height = 200; }
+            return null;
+        }
 
         if (mode === 'auto') {
             result = TreeParser.autoDetectAndParse(input, this.treeType, forceZeroBased);
@@ -90,6 +113,7 @@ export class TreeElement extends Element {
         this._nodePortIdsByNode = this._captureNodePortIds(this.root);
         this.inputText = input;
         this.inputMode = mode;
+        this.zeroBased = Boolean(forceZeroBased) && mode === 'auto';
         this.hasWeights = result.hasWeights || false;
         this._nodeValueOverrides = {};
         this._edgeWeightOverrides = {};
@@ -172,7 +196,8 @@ export class TreeElement extends Element {
             offsetY: this._getCurrentOffsets().offsetY,
             opacity: this.opacity,
             saturation: this.saturation,
-            hasWeights: this.hasWeights
+            hasWeights: this.hasWeights,
+            editingNode: this._editingNodeReference
         });
         ctx.restore();
     }
@@ -359,10 +384,6 @@ export class TreeElement extends Element {
         id = `tree@dynamic-${this._nextDynamicNodePortId++}`;
         this._nodePortIdsByNode.set(node, id);
         return id;
-    }
-
-    moveNodes(dx, dy) {
-        // No-op: offsets are now computed from this.x/this.y via _getCurrentOffsets()
     }
 
     /**
@@ -623,6 +644,7 @@ export class TreeElement extends Element {
             inputText: this.inputText,
             inputMode: this.inputMode,
             hasWeights: this.hasWeights,
+            zeroBased: this.zeroBased,
             nodeValueOverrides: { ...this._nodeValueOverrides },
             edgeWeightOverrides: { ...this._edgeWeightOverrides },
             _relOffsetX: this._relOffsetX,
@@ -657,6 +679,9 @@ export class TreeElement extends Element {
             throw new TypeError('Saved tree input mode is invalid.');
         }
         this.hasWeights = data.hasWeights || false;
+        // Absent in files saved before the flag was persisted (treated as false).
+        const savedZeroBased = data.zeroBased === true;
+        this.zeroBased = savedZeroBased;
         this._relOffsetX = data._relOffsetX;
         this._relOffsetY = data._relOffsetY;
         // Rebuild tree from saved text
@@ -667,11 +692,12 @@ export class TreeElement extends Element {
                 // parent/child rows. Prefer that interpretation when valid so
                 // undirected auto-detection cannot silently change the root.
                 error = this.buildFromText(this.inputText, 'rooted');
-                if (error) error = this.buildFromText(this.inputText, 'auto');
+                if (error) error = this.buildFromText(this.inputText, 'auto', savedZeroBased);
             } else {
-                error = this.buildFromText(this.inputText, this.inputMode);
+                error = this.buildFromText(this.inputText, this.inputMode, savedZeroBased);
             }
             if (error) throw new TypeError('Saved tree data is invalid: ' + error);
+            this.zeroBased = savedZeroBased;
             // Restore relative offsets
             if (data._relOffsetX !== undefined) {
                 this._relOffsetX = data._relOffsetX;
@@ -682,10 +708,6 @@ export class TreeElement extends Element {
         this._restoreNodeValueOverrides(nodeValueOverrides);
         this._restoreEdgeWeightOverrides(edgeWeightOverrides);
         return this;
-    }
-
-    _detectMode(text) {
-        return 'auto';
     }
 
     static fromData(data) {

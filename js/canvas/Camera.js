@@ -13,11 +13,6 @@ export class Camera {
         this.maxZoom = MAX_CAMERA_ZOOM;
     }
 
-    /** Apply camera transform to a canvas 2D context */
-    applyTransform(ctx) {
-        ctx.setTransform(this.zoom, 0, 0, this.zoom, -this.x * this.zoom, -this.y * this.zoom);
-    }
-
     /** Convert screen pixel coords to world coords */
     screenToWorld(sx, sy) {
         return {
@@ -44,6 +39,16 @@ export class Camera {
         if (!Number.isFinite(delta) || delta === 0) return;
         const factor = delta > 0 ? 1.075 : 1 / 1.075;  // 7.5% per step
         this.zoomTo(this.zoom * factor, sx, sy);
+    }
+
+    /**
+     * Zoom by a continuous multiplicative factor (>1 zooms in, <1 zooms out),
+     * keeping the world point under screen (cx, cy) fixed. Clamped to min/max zoom.
+     * Example for wheel input: camera.zoomByFactor(Math.exp(-deltaY * 0.0015), sx, sy)
+     */
+    zoomByFactor(factor, cx, cy) {
+        if (!Number.isFinite(factor) || factor <= 0 || factor === 1) return;
+        this.zoomTo(this.zoom * factor, cx, cy);
     }
 
     /** Change scale while keeping the point under the screen pivot fixed. */

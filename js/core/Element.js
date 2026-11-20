@@ -13,6 +13,26 @@ const PERSISTED_INTERNAL_FIELDS = new Set([
     '_baseWidth', '_baseHeight', '_nextNodeId', '_relOffsetX', '_relOffsetY'
 ]);
 
+// Keys that must never be written onto an instance from serialized data.
+const DENIED_DESERIALIZE_KEYS = new Set([
+    'constructor', 'prototype', '__proto__',
+    '__defineGetter__', '__defineSetter__', '__lookupGetter__', '__lookupSetter__'
+]);
+// Every property name found on the prototype chain (methods, accessors, ...).
+// Cached per prototype because deserialize() runs for every element update.
+const reservedKeyCache = new WeakMap();
+function getReservedKeys(proto) {
+    let keys = reservedKeyCache.get(proto);
+    if (!keys) {
+        keys = new Set();
+        for (let prototype = proto; prototype; prototype = Object.getPrototypeOf(prototype)) {
+            for (const key of Object.getOwnPropertyNames(prototype)) keys.add(key);
+        }
+        reservedKeyCache.set(proto, keys);
+    }
+    return keys;
+}
+
 export class Element {
     constructor(type, x = 0, y = 0, w = 100, h = 100) {
         this.id = crypto.randomUUID();
@@ -210,14 +230,14 @@ export class Element {
 
     /** Deserialize from plain object */
     deserialize(data) {
+        if (!data || typeof data !== 'object') return this;
         // Imported JSON is untrusted: don't let serialized keys replace class
         // methods/accessors or invoke Object.prototype setters such as __proto__.
-        const reservedKeys = new Set();
-        for (let prototype = Object.getPrototypeOf(this); prototype; prototype = Object.getPrototypeOf(prototype)) {
-            for (const key of Object.getOwnPropertyNames(prototype)) reservedKeys.add(key);
-        }
+        const reservedKeys = getReservedKeys(Object.getPrototypeOf(this));
         for (const [key, value] of Object.entries(data)) {
-            if (reservedKeys.has(key) || TRANSIENT_STATE_FIELDS.has(key) ||
+            if (DENIED_DESERIALIZE_KEYS.has(key) || reservedKeys.has(key) ||
+                typeof value === 'function' || typeof this[key] === 'function' ||
+                TRANSIENT_STATE_FIELDS.has(key) ||
                 (key.startsWith('_') && !PERSISTED_INTERNAL_FIELDS.has(key))) continue;
             this[key] = value;
         }

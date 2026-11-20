@@ -29,7 +29,19 @@ export class GraphElement extends Element {
      */
     buildFromText(text, directed = false, zeroBased = false, graphMode = 'edge-list') {
         const result = GraphParser.parse(text, directed, zeroBased, graphMode);
-        if (!result) return null;
+        if (!result) {
+            // Empty input clears the graph (and records the empty inputText)
+            // instead of silently keeping stale data from an earlier build.
+            this._resizeInProgress = false;
+            this.inputText = typeof text === 'string' ? text : '';
+            this.directed = directed;
+            this.zeroBased = zeroBased;
+            this.graphMode = graphMode;
+            this.nodes = new Map();
+            this.edges = [];
+            this._nextNodeId = 1;
+            return null;
+        }
         if (result.error) return result.error;
         this._resizeInProgress = false;
 
@@ -253,11 +265,6 @@ export class GraphElement extends Element {
         return nearest
             ? { ...nearest, distance: Math.sqrt(nearestDistanceSquared) }
             : null;
-    }
-
-    moveNodes(dx, dy) {
-        // This is called when the whole element is dragged — no need to move internal nodes
-        // since they are drawn relative to (this.x, this.y)
     }
 
     /**

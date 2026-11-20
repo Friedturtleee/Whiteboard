@@ -49,8 +49,11 @@ export async function checkInterface(page) {
     await fill('.modal-overlay textarea', '6 7');
     await page.evaluate(() => window.__whiteboard.textInputDialog.flushPreview());
     await page.mouse.click(5, 5);
+    assert.equal(Boolean(await page.$('.modal-overlay textarea')), true,
+        'A background click must not discard a modified dialog.');
+    await page.evaluate(() => window.__whiteboard.textInputDialog.cancel());
     assert.equal(await page.evaluate(() => window.__whiteboard.elements[0].data.flat().every(value => value === '42')), true,
-        'Dismissing a matrix dialog through its background must restore the saved data.');
+        'Cancelling a matrix dialog must restore the saved data.');
     await page.evaluate(() => {
         const app = window.__whiteboard;
         app.selectionManager.select(app.elements[0]);

@@ -3,6 +3,8 @@
  * Bounding box exactly wraps all text including leading/trailing spaces.
  */
 import { Element } from '../core/Element.js';
+import { getLocalViewport } from '../canvas/Viewport.js';
+import { measureCanvasText, getCanvasTextCacheVersion } from '../core/CanvasTextFit.js';
 
 const MAX_ELEMENT_DIMENSION = 10_000_000;
 
@@ -68,34 +70,30 @@ export class TextElement extends Element {
 
         const lines = this._getLines();
         const lineHeight = this.fontSize * 1.3;
-        const metrics = ctx.measureText('Mg');
-        const ascent = metrics.fontBoundingBoxAscent ?? this.fontSize;
-        const descent = metrics.fontBoundingBoxDescent ?? this.fontSize * 0.25;
+        const metrics = measureCanvasText(ctx, 'Mg');
+        const ascent = metrics?.fontBoundingBoxAscent ?? this.fontSize;
+        const descent = metrics?.fontBoundingBoxDescent ?? this.fontSize * 0.25;
         const baseline = (lineHeight - ascent - descent) / 2 + ascent;
 
         // Skip offscreen rows, including rotated and nonuniformly scaled text.
         let firstLine = 0, lastLine = lines.length;
-        const transform = ctx.getTransform?.();
-        if (transform && ctx.canvas) {
-            const { a, b, c, d, e, f } = transform;
-            const determinant = a * d - b * c;
-            if (Math.abs(determinant) > 1e-12) {
-                const ys = [[0, 0], [ctx.canvas.width, 0], [0, ctx.canvas.height],
-                    [ctx.canvas.width, ctx.canvas.height]]
-                    .map(([sx, sy]) => (a * (sy - f) - b * (sx - e)) / determinant);
-                firstLine = Math.max(0, Math.floor(Math.min(...ys) / lineHeight) - 1);
-                lastLine = Math.min(lines.length, Math.ceil(Math.max(...ys) / lineHeight) + 1);
-            }
+        const viewport = getLocalViewport(ctx);
+        if (viewport) {
+            firstLine = Math.max(0, Math.floor(viewport.minY / lineHeight) - 1);
+            lastLine = Math.min(lines.length, Math.ceil(viewport.maxY / lineHeight) + 1);
         }
-        for (let i = firstLine; i < lastLine; i++) {
+        const transform = ctx.getTransform?.();
+        const screenScale = transform ? Math.hypot(transform.c, transform.d) : 1;
+        const stride = Math.max(1, Math.floor(0.5 / (lineHeight * screenScale)));
+        for (let i = firstLine; i < lastLine; i += stride) {
             const lineY = i * lineHeight;
             ctx.fillText(lines[i], 0, lineY + baseline);
             
             if (this.isUnderline) {
-                const m = ctx.measureText(lines[i]);
+                const m = measureCanvasText(ctx, lines[i]);
                 ctx.beginPath();
                 ctx.moveTo(0, lineY + this.fontSize * 1.15);
-                ctx.lineTo(m.width, lineY + this.fontSize * 1.15);
+                ctx.lineTo(m?.width ?? 0, lineY + this.fontSize * 1.15);
                 ctx.strokeStyle = ctx.fillStyle;
                 ctx.lineWidth = Math.max(1, this.fontSize * 0.08);
                 ctx.stroke();
@@ -106,15 +104,39 @@ export class TextElement extends Element {
     }
 
     autoSize(ctx) {
+        const previousWidth = this.width, previousHeight = this.height;
         ctx.save();
         ctx.font = this.getFontString();
         const lines = this._getLines();
         const lineHeight = this.fontSize * 1.3;
-        let maxWidth = 0;
-        for (const line of lines) {
-            const m = ctx.measureText(line);
-            maxWidth = Math.max(maxWidth, m.width);
+        const version = getCanvasTextCacheVersion();
+        const measurementKey = `${ctx.font}|${ctx.fontKerning || ''}|${ctx.letterSpacing || ''}|${ctx.wordSpacing || ''}`;
+        const reusable = this._measureContext === ctx && this._measurementKey === measurementKey &&
+            this._measurementVersion === version;
+        const oldLines = reusable ? this._measuredLines : null;
+        const oldWidths = reusable ? this._measuredWidths : null;
+        let firstChanged = 0, oldEnd = oldLines?.length || 0, newEnd = lines.length;
+        if (oldLines) {
+            while (firstChanged < oldEnd && firstChanged < newEnd && oldLines[firstChanged] === lines[firstChanged]) firstChanged++;
+            while (oldEnd > firstChanged && newEnd > firstChanged && oldLines[oldEnd - 1] === lines[newEnd - 1]) {
+                oldEnd--; newEnd--;
+            }
         }
+        const widths = new Float64Array(lines.length);
+        if (oldWidths) {
+            widths.set(oldWidths.subarray(0, firstChanged));
+            widths.set(oldWidths.subarray(oldEnd), newEnd);
+        }
+        let maxWidth = 0;
+        for (let index = 0; index < lines.length; index++) {
+            if (index >= firstChanged && index < newEnd) widths[index] = measureCanvasText(ctx, lines[index])?.width ?? lines[index].length * this.fontSize * 0.6;
+            maxWidth = Math.max(maxWidth, widths[index]);
+        }
+        this._measureContext = ctx;
+        this._measurementKey = measurementKey;
+        this._measurementVersion = version;
+        this._measuredLines = lines;
+        this._measuredWidths = widths;
         ctx.restore();
         
         const oldScaleX = (this._baseWidth && this._baseWidth > 0) ? this.width / this._baseWidth : 1;
@@ -127,6 +149,15 @@ export class TextElement extends Element {
         this._baseHeight = newBaseH;
         this.width = Math.min(MAX_ELEMENT_DIMENSION, newBaseW * oldScaleX);
         this.height = Math.min(MAX_ELEMENT_DIMENSION, newBaseH * oldScaleY);
+        if (this.rotation) {
+            // Growing a rotated frame moves its rotation center. Compensate
+            // for that shift so the visible first character stays anchored.
+            const dx = (previousWidth - this.width) / 2;
+            const dy = (previousHeight - this.height) / 2;
+            const cos = Math.cos(this.rotation), sin = Math.sin(this.rotation);
+            this.x += dx * (1 - cos) + dy * sin;
+            this.y += dy * (1 - cos) - dx * sin;
+        }
     }
 
     serialize() {

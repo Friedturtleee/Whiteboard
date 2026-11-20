@@ -57,9 +57,16 @@ export class MermaidElement extends Element {
         this.svgString = '';
         this.img = null;
         this.label = 'Graph';
+        // Source kept verbatim when the SVG is too large to sanitize/render, so
+        // saving the board does not silently lose it. Drawn as a placeholder.
+        this.oversizedSvgSource = null;
         if (svgString) {
-            this.svgString = sanitizeSvg(svgString);
-            if (this.svgString) this._loadSvg({ fitToImage: true });
+            if (typeof svgString === 'string' && svgString.length > MAX_SVG_LENGTH) {
+                this.oversizedSvgSource = svgString;
+            } else {
+                this.svgString = sanitizeSvg(svgString);
+                if (this.svgString) this._loadSvg({ fitToImage: true });
+            }
         }
     }
 
@@ -109,9 +116,10 @@ export class MermaidElement extends Element {
         } else {
             ctx.fillStyle = 'rgba(255,255,255,0.05)';
             ctx.fillRect(x, y, w, h);
-            ctx.fillStyle = '#fff';
+            ctx.fillStyle = this.oversizedSvgSource ? '#f2a2a2' : '#fff';
             ctx.font = '12px sans-serif';
-            ctx.fillText('Rendering Graph...', x + 10, y + 20);
+            ctx.fillText(this.oversizedSvgSource ? 'SVG 過大，無法顯示' : 'Rendering Graph...',
+                x + 10, y + 20, Math.max(10, w - 20));
         }
 
         // Selection border is handled by Renderer
@@ -121,15 +129,26 @@ export class MermaidElement extends Element {
     serialize() {
         return {
             ...super.serialize(),
-            svgString: this.svgString
+            // An oversized (unrenderable) source is persisted as-is.
+            svgString: this.oversizedSvgSource ?? this.svgString
         };
     }
 
     deserialize(data) {
         super.deserialize(data);
-        this.svgString = sanitizeSvg(data.svgString);
+        this.oversizedSvgSource = null;
+        if (typeof data.svgString === 'string' && data.svgString.length > MAX_SVG_LENGTH) {
+            // Too large to sanitize/render: keep the text and show a
+            // placeholder instead of silently emptying the element.
+            this.oversizedSvgSource = data.svgString;
+            this.svgString = '';
+            this.img = null;
+            globalThis.window?.__whiteboard?.renderer.markDirty();
+        } else {
+            this.svgString = sanitizeSvg(data.svgString);
+        }
         if (this.svgString) this._loadSvg();
-        else {
+        else if (!this.oversizedSvgSource) {
             this.img = null;
             globalThis.window?.__whiteboard?.renderer.markDirty();
         }
